@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { Settings } from 'lucide-react';
 import { aiApi, type AISettings } from '@/features/ai/api';
 
 /**
@@ -71,10 +72,9 @@ export default function AIConfigBanner() {
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
-          fontSize: 16,
         }}
       >
-        ⚙
+        <Settings size={16} strokeWidth={1.85} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, color: 'var(--chat-text-primary)' }}>

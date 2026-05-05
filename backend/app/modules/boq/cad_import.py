@@ -16,18 +16,40 @@ Workflow:
 import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Converter mapping: file extension -> converter executable name
-CONVERTERS: dict[str, str] = {
+# Converter mapping per platform.
+#
+# Windows: GitHub-bundled `*.exe` from `cad2data-Revit-IFC-DWG-DGN`.
+# Linux:   apt-installed ELF binary at `/usr/bin/{Format}Exporter` (no
+#          extension, CapitalCamelCase) from the signed apt repo at
+#          `pkg.datadrivenconstruction.io`. The .deb packages
+#          (`ddc-rvtconverter` etc.) drop exactly one file each — the
+#          binary itself — and apt resolves the shared-lib runtime
+#          (`ddc-deps-kernel`, `ddc-deps-revit`, `ddc-thirdparty`).
+_WINDOWS_CONVERTERS: dict[str, str] = {
     "rvt": "RvtExporter.exe",
     "ifc": "IfcExporter.exe",
     "dwg": "DwgExporter.exe",
     "dgn": "DgnExporter.exe",
 }
+_LINUX_CONVERTERS: dict[str, str] = {
+    "rvt": "RvtExporter",
+    "ifc": "IfcExporter",
+    "dwg": "DwgExporter",
+    "dgn": "DgnExporter",
+}
+
+# Active mapping for the running platform — kept under the legacy name
+# `CONVERTERS` so external callers (and the takeoff router) don't need
+# to know about platform branching.
+CONVERTERS: dict[str, str] = (
+    _LINUX_CONVERTERS if sys.platform.startswith("linux") else _WINDOWS_CONVERTERS
+)
 
 SUPPORTED_CAD_EXTENSIONS: set[str] = set(CONVERTERS.keys())
 
@@ -127,10 +149,25 @@ def find_converter(extension: str) -> Path | None:
     if per_format_windows not in search_paths:
         search_paths.insert(0, per_format_windows)
 
-    # Linux apt install puts the binaries on PATH under ddc-* names.
-    # We probe these locations BEFORE walking search_paths so a
-    # system-installed converter is found instantly.
+    # Linux apt install puts the binaries on PATH. The .deb packages
+    # at `pkg.datadrivenconstruction.io` (apt v18.0.0.0, amd64+arm64)
+    # ship exactly one file each — `/usr/bin/{Format}Exporter`
+    # (CapitalCamelCase, no extension). We probe these locations
+    # BEFORE walking the rest of `search_paths` so a system-installed
+    # converter is found instantly with no environment fiddling.
+    #
+    # The legacy `ddc-{ext}converter` names are kept as fallbacks for
+    # users who installed from older instructions or symlinked the
+    # binary manually. `linux_exe` is the *real* binary name; `exe_name`
+    # at this point may still be a Windows `.exe` if the module was
+    # imported on Windows but is being asked about a Linux install (the
+    # cross-platform smoke-test scenario is unusual but cheap to cover).
+    linux_exe = _LINUX_CONVERTERS.get(extension, exe_name.removesuffix(".exe"))
     linux_apt_candidates = [
+        Path("/usr/bin") / linux_exe,
+        Path("/usr/local/bin") / linux_exe,
+        # Legacy probe paths from earlier instructions — kept for users
+        # who hand-symlinked the binary under the apt-package name.
         Path("/usr/bin") / f"ddc-{extension}converter",
         Path("/usr/local/bin") / f"ddc-{extension}converter",
     ]
@@ -231,6 +268,14 @@ _WINDOWS_DLL_LOAD_FAILURES: frozenset[int] = frozenset(
     }
 )
 
+# Linux ld.so failure markers. When a shared dependency (`libQt6Core.so.6`
+# or one of the `ddc-deps-*` packages) is missing, glibc's `ld.so` writes
+# a line like `RvtExporter: error while loading shared libraries: <name>`
+# to stderr and exits with status 127. We match the substring (locale-
+# independent — glibc keeps the English text even on translated systems).
+_LINUX_LDSO_FAILURE_MARKER = b"error while loading shared libraries"
+_LINUX_LDSO_EXIT_CODE = 127
+
 
 def smoke_test_converter(extension: str, force: bool = False) -> ConverterHealth:
     """Quick health check: spawn the converter binary and verify it loads.
@@ -299,6 +344,39 @@ def smoke_test_converter(extension: str, force: bool = False) -> ConverterHealth
                 "suggested_actions": [
                     "reinstall_converter",
                     "install_vc_redist",
+                    "manual_install_from_github",
+                ],
+                "checked_at": now,
+            }
+        elif (
+            sys.platform.startswith("linux")
+            and rc == _LINUX_LDSO_EXIT_CODE
+            and _LINUX_LDSO_FAILURE_MARKER in (proc.stderr or b"")
+        ):
+            # Linux ld.so wrote "error while loading shared libraries: ..."
+            # — surface the exact missing-library line so the user sees
+            # which `ddc-deps-*` package is missing (or wasn't installed
+            # by `apt install` because the source wasn't added).
+            stderr_text = (proc.stderr or b"").decode("utf-8", errors="replace")
+            missing_line = next(
+                (
+                    line.strip()
+                    for line in stderr_text.splitlines()
+                    if "error while loading shared libraries" in line
+                ),
+                stderr_text.strip()[:200],
+            )
+            result = {
+                "status": "failed",
+                "message": (
+                    f"{exe_path.name} cannot load — a shared library "
+                    f"dependency is missing. {missing_line}\n\n"
+                    f"Reinstall the converter so apt resolves "
+                    f"`ddc-deps-kernel`, `ddc-deps-revit`, "
+                    f"`ddc-thirdparty` and the rest of the SDK runtime."
+                ),
+                "suggested_actions": [
+                    "reinstall_converter",
                     "manual_install_from_github",
                 ],
                 "checked_at": now,

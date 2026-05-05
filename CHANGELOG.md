@@ -5,6 +5,35 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] — 2026-05-05
+
+### Performance
+- `/costs` page load 120× faster — composite `(region, is_active, code)` index drops the per-region keyset scan from 6 s to 1 ms on 55K-row catalogues; COUNT(*) from 3 s to 6 ms.
+- `/v1/costs/?lite=1` slim-payload mode strips `components` (~31 KB/row) and `metadata.variants` (~6 KB/row), shrinking a 10-row page from 235 KB to 18 KB. Frontend list now lazy-fetches the full item via `/v1/costs/{id}` only when a row is expanded.
+
+### Added
+- Header `ThemeToggle` button — single icon next to avatar that cycles light → dark → system.
+- Header `HelpMenu` (`?` icon) consolidates 6 buttons (Docs, GitHub, Send feedback, Report issue, Report a bug, Email) behind one popover.
+- Sidebar pinned section, search-as-jumper bar, two-key keyboard shortcuts (G then D/P/B/C/M/A/,) with inline kbd hints, hover-arrow affordance, stagger animation.
+- Linux CAD converters auto-discovered at `/usr/bin/{Format}Exporter` (RVT/IFC/DWG/DGN); install endpoint detects `/etc/apt/sources.list.d/ddc.list` and surfaces a one-line install or full apt setup accordingly.
+- Smoke test surfaces `error while loading shared libraries` (exit 127) with the missing-lib name so users know which `ddc-deps-*` package to reinstall.
+
+### Changed
+- Sidebar active state — single winning route now highlighted (was: parent + child both lit on `/bim/rules`); active background bumped from `oe-blue/[0.08]` to `oe-blue/[0.14]` with a 2 px left bar and inset hairline.
+- Header `ProjectSwitcher` — bigger 36 px hit-target, always tinted, dashed CTA + pulsing dot when no project, solid blue-subtle + folder square + bold name when active.
+- Header right side reorganized into 4 zones (Search · Notifications+Help · Account) with hairline dividers.
+- Avatar in user menu now has gradient + drop-shadow + animated online dot (matches the rest of the chrome).
+- Header bottom is now a soft hairline gradient instead of a hard 1 px border.
+- All decorative emojis in `/bim/rules`, `/chat` data panel, BOQ grid, BIM filter panel, AI config banner, match panel, and project detail replaced with lucide icons. Country flags and i18n locale flags untouched.
+
+### Fixed
+- `app/modules/takeoff/router.py` — `uuid.UUID(...)` reference fixed to use the local alias (`_uuid.UUID(...)`); previous code raised `NameError` at runtime.
+- `MatchSuggestionsPanel` test mocks updated to include `listLoadedDatabases` / `setProjectCatalog` so `CatalogBindingBar` mounts in tests.
+
+### Internal
+- Migration `v283_costs_region_active_index` — inspector-guarded composite index on `oe_costs_item(region, is_active, code)`. New DBs get it via `Base.metadata.create_all()` from updated `__table_args__`.
+- New backend tests `tests/unit/test_cad_import_linux.py` (8) cover the Linux converter probe + `ld.so` failure heuristic.
+
 ## [2.8.8] — 2026-05-04
 
 ### Added

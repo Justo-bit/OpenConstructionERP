@@ -530,7 +530,7 @@ function ProjectHealthBar({
             {checks.map((check) => (
               <div
                 key={check.key}
-                title={check.label + (check.done ? ' ✓' : '')}
+                title={check.label + (check.done ? ' (done)' : '')}
                 className={`h-1.5 flex-1 max-w-[60px] rounded-full transition-colors ${
                   check.done ? (isComplete ? 'bg-emerald-500' : 'bg-oe-blue') : 'bg-surface-secondary'
                 }`}

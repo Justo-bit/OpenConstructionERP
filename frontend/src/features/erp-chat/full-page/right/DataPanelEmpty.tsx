@@ -1,4 +1,15 @@
 import { useTranslation } from 'react-i18next';
+import {
+  BarChart3,
+  ClipboardList,
+  CalendarDays,
+  ShieldCheck,
+  AlertTriangle,
+  CircleDollarSign,
+  Sparkles,
+  Lightbulb,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface DataPanelEmptyProps {
   onSuggestion?: (text: string) => void;
@@ -15,9 +26,14 @@ interface DataPanelEmptyProps {
 export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
   const { t } = useTranslation();
 
-  const TOOL_CATEGORIES = [
+  const TOOL_CATEGORIES: Array<{
+    icon: LucideIcon;
+    title: string;
+    desc: string;
+    examples: string[];
+  }> = [
     {
-      icon: '📊',
+      icon: BarChart3,
       title: t('chat.cat_projects_title', { defaultValue: 'Projects & Portfolio‌⁠‍' }),
       desc: t('chat.cat_projects_desc', {
         defaultValue:
@@ -30,7 +46,7 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
       ],
     },
     {
-      icon: '📋',
+      icon: ClipboardList,
       title: t('chat.cat_boq_title', { defaultValue: 'BOQ & Estimation' }),
       desc: t('chat.cat_boq_desc', {
         defaultValue:
@@ -43,7 +59,7 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
       ],
     },
     {
-      icon: '📅',
+      icon: CalendarDays,
       title: t('chat.cat_schedule_title', { defaultValue: 'Schedule & Critical Path' }),
       desc: t('chat.cat_schedule_desc', {
         defaultValue:
@@ -56,7 +72,7 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
       ],
     },
     {
-      icon: '✓',
+      icon: ShieldCheck,
       title: t('chat.cat_validation_title', { defaultValue: 'Validation & Quality' }),
       desc: t('chat.cat_validation_desc', {
         defaultValue:
@@ -69,7 +85,7 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
       ],
     },
     {
-      icon: '⚠',
+      icon: AlertTriangle,
       title: t('chat.cat_risk_title', { defaultValue: 'Risk & Cost Model' }),
       desc: t('chat.cat_risk_desc', {
         defaultValue:
@@ -82,7 +98,7 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
       ],
     },
     {
-      icon: '💰',
+      icon: CircleDollarSign,
       title: t('chat.cat_costs_title', { defaultValue: 'Cost Database (CWICR)' }),
       desc: t('chat.cat_costs_desc', {
         defaultValue:
@@ -122,11 +138,11 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 28,
+              color: 'var(--chat-accent)',
               marginBottom: 16,
             }}
           >
-            ✨
+            <Sparkles size={28} strokeWidth={1.75} />
           </div>
           <h1
             style={{
@@ -251,7 +267,9 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
             marginBottom: 20,
           }}
         >
-          {TOOL_CATEGORIES.map((cat) => (
+          {TOOL_CATEGORIES.map((cat) => {
+            const CatIcon = cat.icon;
+            return (
             <div
               key={cat.title}
               style={{
@@ -264,7 +282,20 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}
               >
-                <span style={{ fontSize: 18 }}>{cat.icon}</span>
+                <span
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    background: 'var(--chat-surface-2)',
+                    color: 'var(--chat-accent)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <CatIcon size={15} strokeWidth={1.85} />
+                </span>
                 <span
                   style={{
                     fontSize: 13,
@@ -319,7 +350,8 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
                 ))}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Tip footer */}
@@ -332,14 +364,19 @@ export default function DataPanelEmpty({ onSuggestion }: DataPanelEmptyProps) {
             fontSize: 12,
             color: 'var(--chat-text-secondary)',
             lineHeight: 1.6,
-            textAlign: 'center',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
           }}
         >
-          💡{' '}
-          {t('chat.empty_tip', {
-            defaultValue:
-              'Tip: Select a project at the top to scope the AI to that project. Without selection, the AI sees your whole portfolio.',
-          })}
+          <Lightbulb size={14} strokeWidth={1.85} style={{ color: 'var(--chat-accent)', flexShrink: 0 }} />
+          <span>
+            {t('chat.empty_tip', {
+              defaultValue:
+                'Tip: Select a project at the top to scope the AI to that project. Without selection, the AI sees your whole portfolio.',
+            })}
+          </span>
         </div>
       </div>
     </div>

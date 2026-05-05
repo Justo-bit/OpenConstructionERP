@@ -23,6 +23,8 @@ import {
   FileBox,
   CheckCircle2,
   ExternalLink,
+  Check,
+  AlertTriangle,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
@@ -2099,7 +2101,7 @@ function InlineNumberInput({
                 : 'border-emerald-300 text-emerald-600 dark:text-emerald-400 font-semibold'
             }`}
           >
-            {isNaN(livePreview) ? '⚠' : '= ' + fmt.format(livePreview)}
+            {isNaN(livePreview) ? <AlertTriangle size={10} strokeWidth={2} /> : '= ' + fmt.format(livePreview)}
           </span>
         )}
       </span>
@@ -2591,7 +2593,7 @@ function ResourceTypePicker({
                 <span className="text-content-primary uppercase tracking-wider font-medium">
                   {getResourceTypeLabel(rt.value, t)}
                 </span>
-                {selected && <span className="ml-auto text-oe-blue text-[10px]">✓</span>}
+                {selected && <Check size={11} strokeWidth={2.5} className="ml-auto text-oe-blue" />}
               </button>
             );
           })}
@@ -2950,7 +2952,7 @@ function CurrencyOption({
       <span className={`font-mono uppercase tracking-wide ${custom ? 'text-amber-800 dark:text-amber-200 font-bold' : 'text-content-primary'}`}>
         {code}
       </span>
-      {selected && <span className="ml-auto text-[10px] text-oe-blue">✓</span>}
+      {selected && <Check size={11} strokeWidth={2.5} className="ml-auto text-oe-blue" />}
     </button>
   );
 }
@@ -3605,7 +3607,7 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
                 code: resourceCurrency,
               })}
             >
-              ⚠ {ctx.t('boq.resource_no_fx_short', { defaultValue: 'set FX' })}
+              <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> {ctx.t('boq.resource_no_fx_short', { defaultValue: 'set FX' })}
             </button>
           ) : (
             <span
@@ -3617,7 +3619,7 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
                 code: resourceCurrency,
               })}
             >
-              ⚠ no FX
+              <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> no FX
             </span>
           )
         )}

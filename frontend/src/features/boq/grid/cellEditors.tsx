@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { AlertTriangle, X as XIcon } from 'lucide-react';
 import type { ICellEditorParams } from 'ag-grid-community';
 import { AutocompleteInput } from '../AutocompleteInput';
 import type { CostAutocompleteItem } from '../api';
@@ -383,7 +384,9 @@ export const FormulaCellEditor = forwardRef(
               <span className="text-content-tertiary">numeric input</span>
             )}
             {preview.kind === 'err' && (
-              <span className="text-rose-600 dark:text-rose-400">⚠ {preview.m}</span>
+              <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                <AlertTriangle size={11} strokeWidth={2} /> {preview.m}
+              </span>
             )}
           </div>
         )}
@@ -402,7 +405,7 @@ export const FormulaCellEditor = forwardRef(
                 className="text-content-quaternary hover:text-content-primary"
                 aria-label="Close help"
               >
-                ✕
+                <XIcon size={12} strokeWidth={2.25} />
               </button>
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[10px]">

@@ -1,266 +1,1204 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Variant 2 · Split Hero + Demo Video · OpenConstructionERP Login</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    body { font-family: 'Inter', system-ui, sans-serif; }
-    .font-display { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; letter-spacing: -0.025em; }
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenConstructionERP · Sign in</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f7f7f4;
+        --bg-elev: #ffffff;
+        --bg-sunk: #f1f1ed;
+        --line: #e8e8e2;
+        --line-strong: #d8d8d0;
+        --ink: #14140f;
+        --ink-2: #2c2c25;
+        --ink-3: #5e5e54;
+        --ink-4: #8a8a7e;
+        --accent: #1f3d2b;
+        --accent-soft: #d8e4d0;
+        --accent-bg: #ecf0e3;
+        --warn: #b46a16;
+        --err: #b73a3a;
+        --shadow-1: 0 1px 2px rgba(20, 20, 15, 0.04), 0 1px 3px rgba(20, 20, 15, 0.05);
+        --shadow-2: 0 8px 24px rgba(20, 20, 15, 0.06), 0 2px 6px rgba(20, 20, 15, 0.04);
+        --shadow-3: 0 24px 56px rgba(20, 20, 15, 0.08), 0 4px 14px rgba(20, 20, 15, 0.05);
+        --r-sm: 6px;
+        --r-md: 10px;
+        --r-lg: 14px;
+        --r-xl: 20px;
+        --__rev-c: '4443432d4357494352';
+        --__lc-rev: 0x4f452d3236;
+      }
 
-    /* Hero gradient with subtle grid */
-    .hero-bg {
-      background:
-        radial-gradient(circle at 20% 10%, rgba(255,255,255,0.10) 0%, transparent 50%),
-        radial-gradient(circle at 80% 80%, rgba(255,255,255,0.08) 0%, transparent 50%),
-        linear-gradient(135deg, #0a1f44 0%, #1d3a8a 35%, #2563eb 70%, #06b6d4 100%);
-    }
-    .hero-grid {
-      background-image:
-        linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
-      background-size: 40px 40px;
-      mask-image: radial-gradient(ellipse at center, black 50%, transparent 100%);
-    }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
 
-    /* Language tab strip — sticky-feeling */
-    .lang-strip { background: rgba(0,0,0,0.25); backdrop-filter: blur(12px); }
-    .lang-tab { transition: all .15s ease; }
-    .lang-tab.active { background: rgba(255,255,255,0.18); color: white; box-shadow: inset 0 -2px 0 #06d4ff; }
-    .lang-tab:hover { background: rgba(255,255,255,0.10); }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      button {
+        font-family: inherit;
+        cursor: pointer;
+      }
 
-    /* Video card hover */
-    .video-card { transition: transform .25s ease, box-shadow .25s ease; }
-    .video-card:hover { transform: translateY(-3px); box-shadow: 0 24px 50px -12px rgba(0,0,0,0.45); }
+      /* ── Top language strip ──────────────────────────────────── */
+      .langbar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--line);
+      }
+      .langbar-inner {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 12px 32px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        font-size: 15px;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .brand-mark {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: var(--ink);
+        color: var(--bg);
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        font-size: 13px;
+        letter-spacing: -0.04em;
+      }
+      .brand-mark span:nth-child(2) {
+        color: var(--accent-soft);
+      }
+      .brand-tag {
+        font-weight: 500;
+        color: var(--ink-3);
+        font-size: 12px;
+        margin-left: 4px;
+        padding-left: 12px;
+        border-left: 1px solid var(--line-strong);
+      }
+      .lang-quick {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+        flex-wrap: wrap;
+      }
+      .lang-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: transparent;
+        border: 1px solid transparent;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-3);
+        transition: all 0.15s ease;
+      }
+      .lang-pill:hover {
+        background: var(--bg-sunk);
+        color: var(--ink);
+      }
+      .lang-pill.is-active {
+        background: var(--accent-bg);
+        border-color: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .lang-pill .flag {
+        font-size: 13px;
+      }
+      .lang-more-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        background: var(--bg-elev);
+        font-size: 12px;
+        color: var(--ink-2);
+        transition: all 0.15s ease;
+      }
+      .lang-more-btn:hover {
+        border-color: var(--ink-3);
+        color: var(--ink);
+      }
+      .lang-more-btn .chev {
+        transition: transform 0.2s ease;
+      }
+      .lang-more-btn.is-open .chev {
+        transform: rotate(180deg);
+      }
+      .lang-panel {
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--line);
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease;
+      }
+      .lang-panel.is-open {
+        max-height: 600px;
+      }
+      .lang-panel-inner {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 20px 32px 24px;
+      }
+      .lang-search {
+        width: 100%;
+        max-width: 340px;
+        padding: 9px 12px 9px 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-md);
+        background: var(--bg);
+        font-size: 13px;
+        color: var(--ink);
+        outline: none;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235e5e54' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: 12px center;
+      }
+      .lang-search:focus {
+        border-color: var(--ink-3);
+      }
+      .lang-groups {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px 24px;
+      }
+      .lang-group h5 {
+        margin: 0 0 8px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--ink-4);
+      }
+      .lang-group .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 8px;
+        border-radius: var(--r-sm);
+        font-size: 13px;
+        color: var(--ink-2);
+        cursor: pointer;
+      }
+      .lang-group .row:hover {
+        background: var(--bg-sunk);
+        color: var(--ink);
+      }
+      .lang-group .row .flag {
+        font-size: 14px;
+      }
+      .lang-group .row .native {
+        margin-left: auto;
+        color: var(--ink-4);
+        font-size: 12px;
+      }
+      .lang-group .row.is-active {
+        background: var(--accent-bg);
+        color: var(--accent);
+        font-weight: 600;
+      }
 
-    /* Floating screenshot mock */
-    .float-mock { animation: float 6s ease-in-out infinite; }
-    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+      /* ── Main two-column layout ──────────────────────────────── */
+      .stage {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 36px 32px 56px;
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(380px, 0.85fr);
+        gap: 48px;
+        align-items: start;
+      }
+      @media (max-width: 1080px) {
+        .stage {
+          grid-template-columns: 1fr;
+          gap: 32px;
+        }
+      }
 
-    /* Form field focus */
-    .field-input:focus { box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
+      /* ── LEFT: product hero ──────────────────────────────────── */
+      .hero-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 11px;
+        border-radius: 999px;
+        background: var(--accent-bg);
+        color: var(--accent);
+        border: 1px solid var(--accent-soft);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .hero-eyebrow .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .hero h1 {
+        font-size: 46px;
+        line-height: 1.05;
+        margin: 18px 0 14px;
+        font-weight: 800;
+        letter-spacing: -0.025em;
+        color: var(--ink);
+      }
+      .hero h1 em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      .hero p.lead {
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--ink-3);
+        max-width: 540px;
+        margin: 0 0 28px;
+      }
 
-    /* Demo button */
-    .demo-row { transition: all .15s ease; }
-    .demo-row:hover { background: rgba(37,99,235,0.06); border-color: #2563eb; }
+      /* Preview card with tabs */
+      .preview {
+        background: var(--bg-elev);
+        border: 1px solid var(--line);
+        border-radius: var(--r-xl);
+        box-shadow: var(--shadow-3);
+        overflow: hidden;
+      }
+      .preview-chrome {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #fafaf6 0%, #f4f4ee 100%);
+      }
+      .preview-chrome .dot-r {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .preview-chrome .dot-r:nth-child(1) {
+        background: #e07a72;
+      }
+      .preview-chrome .dot-r:nth-child(2) {
+        background: #e0c172;
+      }
+      .preview-chrome .dot-r:nth-child(3) {
+        background: #82b58a;
+      }
+      .preview-chrome .url {
+        margin-left: 12px;
+        flex: 1;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11.5px;
+        color: var(--ink-4);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        padding: 5px 10px;
+        border-radius: 6px;
+        max-width: 320px;
+      }
+      .preview-tabs {
+        display: flex;
+        gap: 0;
+        padding: 0 14px;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--line);
+      }
+      .preview-tab {
+        padding: 11px 14px;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: var(--ink-3);
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        position: relative;
+        transition: color 0.15s ease;
+      }
+      .preview-tab:hover {
+        color: var(--ink);
+      }
+      .preview-tab.is-active {
+        color: var(--ink);
+        border-bottom-color: var(--accent);
+        font-weight: 600;
+      }
+      .preview-body {
+        background: var(--bg-elev);
+        padding: 22px;
+        min-height: 380px;
+      }
 
-    /* Marquee logos */
-    .marquee { overflow: hidden; mask-image: linear-gradient(90deg, transparent, black 12%, black 88%, transparent); }
-    .marquee-track { display: flex; gap: 32px; animation: scroll 28s linear infinite; }
-    @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-  </style>
-</head>
-<body class="bg-white text-slate-900">
+      /* BOQ panel */
+      .boq-row {
+        display: grid;
+        grid-template-columns: 30px 1fr 80px 90px 110px;
+        gap: 12px;
+        padding: 9px 10px;
+        align-items: center;
+        font-size: 12.5px;
+        border-bottom: 1px solid var(--line);
+        animation: slidein 0.5s ease both;
+      }
+      @keyframes slidein {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .boq-row:nth-child(1) {
+        animation-delay: 0.05s;
+      }
+      .boq-row:nth-child(2) {
+        animation-delay: 0.1s;
+      }
+      .boq-row:nth-child(3) {
+        animation-delay: 0.15s;
+      }
+      .boq-row:nth-child(4) {
+        animation-delay: 0.2s;
+      }
+      .boq-row:nth-child(5) {
+        animation-delay: 0.25s;
+      }
+      .boq-row.head {
+        background: transparent;
+        font-weight: 600;
+        font-size: 11px;
+        color: var(--ink-4);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border-bottom: 1.5px solid var(--line-strong);
+        animation: none;
+      }
+      .boq-row .ord {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--ink-4);
+      }
+      .boq-row .desc {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .boq-row .qty,
+      .boq-row .rate,
+      .boq-row .total {
+        text-align: right;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+      }
+      .boq-row .total {
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .boq-summary {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .totals-card {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 14px 16px;
+      }
+      .totals-card .row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12.5px;
+        padding: 4px 0;
+      }
+      .totals-card .row .l {
+        color: var(--ink-3);
+      }
+      .totals-card .row .v {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 500;
+        color: var(--ink);
+      }
+      .totals-card .row.total-line {
+        margin-top: 6px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+        font-size: 14px;
+      }
+      .totals-card .row.total-line .v {
+        font-weight: 700;
+        color: var(--accent);
+      }
+      .donut-card {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 14px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .donut-card svg {
+        flex-shrink: 0;
+      }
+      .donut-legend {
+        display: grid;
+        gap: 5px;
+        font-size: 11.5px;
+      }
+      .donut-legend .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink-2);
+      }
+      .donut-legend .row .sw {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+      }
 
-  <!-- ── LANG STRIP : top of page, full width, very visible ── -->
-  <div class="lang-strip text-white sticky top-0 z-50">
-    <div class="max-w-[1480px] mx-auto px-4 sm:px-6 py-2 flex items-center gap-3 text-sm flex-wrap">
-      <span class="text-[11px] font-bold uppercase tracking-wider text-white/60 mr-1">🌐 Language</span>
-      <button class="lang-tab active px-3 py-1.5 rounded-md text-[12px] font-semibold">🇬🇧 English</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇩🇪 Deutsch</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇫🇷 Français</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇪🇸 Español</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇮🇹 Italiano</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇵🇱 Polski</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇷🇺 Русский</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇨🇳 中文</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80">🇯🇵 日本語</button>
-      <button class="lang-tab px-3 py-1.5 rounded-md text-[12px] font-medium text-white/80 hidden md:inline-flex">+11 more</button>
+      /* Schedule (Gantt) */
+      .gantt {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 6px 12px;
+        align-items: center;
+        font-size: 12px;
+      }
+      .gantt .l {
+        color: var(--ink-2);
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .gantt .b {
+        height: 14px;
+        border-radius: 3px;
+        position: relative;
+        background: var(--bg-sunk);
+      }
+      .gantt .b::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        border-radius: 3px;
+      }
+      .gantt .b.b1::after {
+        left: 0%;
+        width: 18%;
+        background: #5b8c6b;
+      }
+      .gantt .b.b2::after {
+        left: 12%;
+        width: 28%;
+        background: #5b8c6b;
+      }
+      .gantt .b.b3::after {
+        left: 24%;
+        width: 22%;
+        background: #c98c4a;
+      }
+      .gantt .b.b4::after {
+        left: 30%;
+        width: 30%;
+        background: #c98c4a;
+      }
+      .gantt .b.b5::after {
+        left: 46%;
+        width: 25%;
+        background: #b73a3a;
+      }
+      .gantt .b.b6::after {
+        left: 60%;
+        width: 22%;
+        background: #6c83b5;
+      }
+      .gantt .b.b7::after {
+        left: 70%;
+        width: 22%;
+        background: #6c83b5;
+      }
+      .gantt .b.b8::after {
+        left: 78%;
+        width: 22%;
+        background: #6c83b5;
+      }
+      .gantt-legend {
+        margin-top: 14px;
+        display: flex;
+        gap: 14px;
+        font-size: 11px;
+        color: var(--ink-3);
+        flex-wrap: wrap;
+      }
+      .gantt-legend .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .gantt-legend .sw {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+      }
 
-      <div class="ml-auto flex items-center gap-2">
-        <a href="https://github.com/datadrivenconstruction/OpenConstructionERP"
-           class="flex items-center gap-2 rounded-md px-3 py-1.5 bg-white/12 hover:bg-white/20 text-[12px] font-semibold">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.63 0-12 5.37-12 12 0 5.30 3.44 9.80 8.21 11.39.6.11.79-.26.79-.58v-2.23c-3.34.73-4.03-1.42-4.03-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.20.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.30 3.49 1 .11-.78.42-1.30.76-1.60-2.66-.30-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.30-.54-1.52.12-3.18 0 0 1.01-.32 3.30 1.23.96-.27 1.98-.40 3-.40 1.02 0 2.05.13 3.01.40 2.29-1.55 3.30-1.23 3.30-1.23.65 1.65.24 2.87.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.48 5.92.43.37.82 1.10.82 2.22v3.29c0 .32.19.69.80.58C20.57 21.79 24 17.30 24 12c0-6.63-5.37-12-12-12z"/></svg>
-          <span class="hidden sm:inline">Star on GitHub</span>
-          <span class="px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 text-[10px] font-bold">★ 1.2k</span>
-        </a>
+      /* Cost panel */
+      .kpi-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .kpi {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 14px 16px;
+      }
+      .kpi .lbl {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ink-4);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .kpi .val {
+        font-size: 22px;
+        font-weight: 700;
+        margin-top: 4px;
+        color: var(--ink);
+        font-family: 'JetBrains Mono', monospace;
+      }
+      .kpi .delta {
+        font-size: 11.5px;
+        color: var(--ink-3);
+        margin-top: 3px;
+      }
+      .kpi .delta.up {
+        color: #5b8c6b;
+      }
+      .kpi .delta.dn {
+        color: var(--err);
+      }
+      .scurve {
+        margin-top: 14px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        padding: 14px 14px 4px;
+      }
+
+      /* AI panel */
+      .chat {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .chat .bubble {
+        max-width: 78%;
+        padding: 9px 13px;
+        border-radius: 14px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .chat .bubble.u {
+        align-self: flex-end;
+        background: var(--accent);
+        color: #fff;
+        border-bottom-right-radius: 4px;
+      }
+      .chat .bubble.a {
+        align-self: flex-start;
+        background: var(--bg);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-bottom-left-radius: 4px;
+      }
+      .chat-context {
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        font-size: 11.5px;
+        color: var(--ink-3);
+      }
+      .chat-context .k {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .preview.hidden,
+      .panel.hidden {
+        display: none;
+      }
+
+      /* ── RIGHT: sign-in card ──────────────────────────────────── */
+      .signin-col {
+        position: sticky;
+        top: 80px;
+      }
+      .signin {
+        background: var(--bg-elev);
+        border: 1px solid var(--line);
+        border-radius: var(--r-xl);
+        padding: 28px 28px 24px;
+        box-shadow: var(--shadow-2);
+      }
+      .signin h2 {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 4px;
+        letter-spacing: -0.015em;
+        color: var(--ink);
+      }
+      .signin .sub {
+        font-size: 13px;
+        color: var(--ink-3);
+        margin: 0 0 20px;
+      }
+      label.field {
+        display: block;
+        margin-bottom: 14px;
+      }
+      label.field .lbl {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink-2);
+        margin-bottom: 6px;
+      }
+      label.field input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-md);
+        background: var(--bg);
+        font-size: 13.5px;
+        color: var(--ink);
+        outline: none;
+        transition: border-color 0.15s ease;
+      }
+      label.field input:focus {
+        border-color: var(--accent);
+        background: var(--bg-elev);
+      }
+      .row-helper {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--ink-3);
+        margin-bottom: 18px;
+      }
+      .row-helper label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+      .row-helper a:hover {
+        color: var(--accent);
+      }
+      .btn-primary {
+        width: 100%;
+        padding: 11px;
+        border-radius: var(--r-md);
+        background: var(--ink);
+        color: var(--bg-elev);
+        border: none;
+        font-size: 13.5px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        transition: background 0.15s ease;
+      }
+      .btn-primary:hover {
+        background: var(--accent);
+      }
+      .divider {
+        position: relative;
+        text-align: center;
+        margin: 18px 0;
+        font-size: 11px;
+        color: var(--ink-4);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .divider::before,
+      .divider::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        width: calc(50% - 64px);
+        height: 1px;
+        background: var(--line);
+      }
+      .divider::before {
+        left: 0;
+      }
+      .divider::after {
+        right: 0;
+      }
+      .demo-grid {
+        display: grid;
+        gap: 8px;
+      }
+      .demo-btn {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: var(--r-md);
+        text-align: left;
+        transition: all 0.15s ease;
+      }
+      .demo-btn:hover {
+        border-color: var(--accent);
+        background: var(--bg-elev);
+      }
+      .demo-btn .av {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent-bg);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .demo-btn .meta {
+        flex: 1;
+        min-width: 0;
+      }
+      .demo-btn .who {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .demo-btn .role {
+        font-size: 11.5px;
+        color: var(--ink-3);
+      }
+      .demo-btn .arr {
+        color: var(--ink-4);
+        flex-shrink: 0;
+      }
+
+      /* Footer */
+      footer.foot {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 22px 32px 36px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 12px;
+        color: var(--ink-4);
+        flex-wrap: wrap;
+      }
+      footer.foot a:hover {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body data-build-rev="4443432d4357494352-4f452d32303236">
+    <header class="langbar">
+      <div class="langbar-inner">
+        <div class="brand">
+          <span class="brand-mark"><span>O</span><span>E</span></span>
+          <span>OpenConstructionERP</span>
+          <span class="brand-tag">Cost engineering · BOQ · 4D · 5D · BIM</span>
+        </div>
+        <nav class="lang-quick" aria-label="Quick language">
+          <button class="lang-pill is-active" data-lang="en"><span class="flag">🇬🇧</span>EN</button>
+          <button class="lang-pill" data-lang="de"><span class="flag">🇩🇪</span>DE</button>
+          <button class="lang-pill" data-lang="fr"><span class="flag">🇫🇷</span>FR</button>
+          <button class="lang-pill" data-lang="es"><span class="flag">🇪🇸</span>ES</button>
+          <button class="lang-pill" data-lang="it"><span class="flag">🇮🇹</span>IT</button>
+          <button class="lang-pill" data-lang="ru"><span class="flag">🇷🇺</span>RU</button>
+          <button class="lang-pill" data-lang="zh"><span class="flag">🇨🇳</span>中文</button>
+          <button class="lang-pill" data-lang="ja"><span class="flag">🇯🇵</span>日本語</button>
+          <button class="lang-more-btn" id="langMoreBtn" type="button">
+            All 20 languages
+            <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <div class="lang-panel" id="langPanel">
+      <div class="lang-panel-inner">
+        <input type="search" class="lang-search" id="langSearch" placeholder="Search by name, code, or native script…" />
+        <div class="lang-groups" id="langGroups">
+          <div class="lang-group" data-region="europe">
+            <h5>Europe</h5>
+            <div class="row is-active" data-lang="en"><span class="flag">🇬🇧</span>English<span class="native">English</span></div>
+            <div class="row" data-lang="de"><span class="flag">🇩🇪</span>German<span class="native">Deutsch</span></div>
+            <div class="row" data-lang="fr"><span class="flag">🇫🇷</span>French<span class="native">Français</span></div>
+            <div class="row" data-lang="es"><span class="flag">🇪🇸</span>Spanish<span class="native">Español</span></div>
+            <div class="row" data-lang="it"><span class="flag">🇮🇹</span>Italian<span class="native">Italiano</span></div>
+            <div class="row" data-lang="pt"><span class="flag">🇵🇹</span>Portuguese<span class="native">Português</span></div>
+            <div class="row" data-lang="nl"><span class="flag">🇳🇱</span>Dutch<span class="native">Nederlands</span></div>
+            <div class="row" data-lang="pl"><span class="flag">🇵🇱</span>Polish<span class="native">Polski</span></div>
+          </div>
+          <div class="lang-group" data-region="cis">
+            <h5>CIS</h5>
+            <div class="row" data-lang="ru"><span class="flag">🇷🇺</span>Russian<span class="native">Русский</span></div>
+            <div class="row" data-lang="uk"><span class="flag">🇺🇦</span>Ukrainian<span class="native">Українська</span></div>
+            <div class="row" data-lang="kk"><span class="flag">🇰🇿</span>Kazakh<span class="native">Қазақ</span></div>
+            <div class="row" data-lang="tr"><span class="flag">🇹🇷</span>Turkish<span class="native">Türkçe</span></div>
+          </div>
+          <div class="lang-group" data-region="asia">
+            <h5>Asia</h5>
+            <div class="row" data-lang="zh"><span class="flag">🇨🇳</span>Chinese<span class="native">中文</span></div>
+            <div class="row" data-lang="ja"><span class="flag">🇯🇵</span>Japanese<span class="native">日本語</span></div>
+            <div class="row" data-lang="ko"><span class="flag">🇰🇷</span>Korean<span class="native">한국어</span></div>
+            <div class="row" data-lang="hi"><span class="flag">🇮🇳</span>Hindi<span class="native">हिन्दी</span></div>
+            <div class="row" data-lang="vi"><span class="flag">🇻🇳</span>Vietnamese<span class="native">Tiếng Việt</span></div>
+          </div>
+          <div class="lang-group" data-region="me">
+            <h5>Middle East</h5>
+            <div class="row" data-lang="ar"><span class="flag">🇸🇦</span>Arabic<span class="native">العربية</span></div>
+            <div class="row" data-lang="fa"><span class="flag">🇮🇷</span>Persian<span class="native">فارسی</span></div>
+            <div class="row" data-lang="he"><span class="flag">🇮🇱</span>Hebrew<span class="native">עברית</span></div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ── MAIN GRID ── -->
-  <div class="grid lg:grid-cols-2 min-h-[calc(100vh-44px)]">
-
-    <!-- ── LEFT : hero with video ── -->
-    <section class="hero-bg relative overflow-hidden text-white px-8 lg:px-14 py-10 lg:py-12 flex flex-col">
-      <div class="absolute inset-0 hero-grid opacity-60"></div>
-
-      <!-- Logo -->
-      <a href="#" class="relative z-10 flex items-center gap-2.5 mb-10">
-        <div class="h-10 w-10 rounded-xl bg-white text-blue-700 flex items-center justify-center font-extrabold text-sm shadow-lg">OE</div>
-        <span class="font-display text-[18px] font-extrabold">
-          Open<span class="text-cyan-300">Construction</span><span class="text-white/50 font-bold">ERP</span>
-        </span>
-        <span class="ml-2 text-[10px] font-bold uppercase tracking-wider text-emerald-300 bg-emerald-400/15 border border-emerald-300/30 px-2 py-0.5 rounded-full">v2.8.7</span>
-      </a>
-
-      <div class="relative z-10 max-w-xl">
-        <span class="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/15 px-3 py-1.5 text-[11px] font-medium mb-5">
-          <span class="relative flex h-2 w-2">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-60"></span>
-            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
-          </span>
-          100% open source · AGPL-3.0 · runs on your laptop
-        </span>
-
-        <h1 class="font-display text-[44px] xl:text-[58px] font-extrabold leading-[1.04] mb-5">
-          Estimate, schedule, tender —<br/>
-          <span class="bg-gradient-to-r from-cyan-300 via-sky-200 to-emerald-300 bg-clip-text text-transparent">all in one place.</span>
-        </h1>
-        <p class="text-lg text-white/75 leading-relaxed">
-          The free, open-source alternative to iTWO, HeavyBid and Sage Estimating.
-          Built by estimators, for estimators.
+    <main class="stage">
+      <section class="hero">
+        <span class="hero-eyebrow"><span class="dot"></span>Welcome back</span>
+        <h1>Estimate, schedule, tender — <em>all in one place.</em></h1>
+        <p class="lead">
+          Pick up where you left off. Your projects, BIM models, BOQs, and
+          requirements load automatically once you sign in.
         </p>
 
-        <!-- Demo video card -->
-        <a href="https://youtube.com/@datadrivenconstruction" target="_blank" rel="noopener"
-           class="video-card mt-7 block rounded-2xl overflow-hidden border border-white/15 bg-white/5 backdrop-blur-md max-w-lg shadow-2xl">
-          <div class="relative aspect-video bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-700">
-            <!-- Fake YouTube screenshot placeholder -->
-            <div class="absolute inset-0 opacity-25 bg-[radial-gradient(circle_at_30%_30%,white,transparent_50%)]"></div>
-            <!-- Floating screen mock -->
-            <div class="float-mock absolute inset-x-8 bottom-6 top-8 rounded-lg bg-white/95 shadow-xl overflow-hidden">
-              <div class="h-4 bg-slate-100 flex items-center gap-1 px-2">
-                <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
-                <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+        <article class="preview" aria-label="Product preview">
+          <header class="preview-chrome">
+            <span class="dot-r"></span><span class="dot-r"></span><span class="dot-r"></span>
+            <span class="url">your-workspace / overview</span>
+          </header>
+          <nav class="preview-tabs" role="tablist">
+            <button class="preview-tab is-active" data-tab="boq">BOQ</button>
+            <button class="preview-tab" data-tab="schedule">4D Schedule</button>
+            <button class="preview-tab" data-tab="cost">5D Cost</button>
+            <button class="preview-tab" data-tab="ai">AI Assistant</button>
+          </nav>
+          <div class="preview-body">
+            <div class="panel" id="panel-boq">
+              <div class="boq-row head">
+                <span></span><span>Description</span><span class="qty">Qty</span><span class="rate">Rate €</span><span class="total">Total €</span>
               </div>
-              <div class="p-2 grid grid-cols-3 gap-1.5 text-[7px] text-slate-700">
-                <div class="col-span-3 flex items-center gap-1"><span class="font-bold">📋 BOQ</span><span class="text-slate-400">· One Canary Square</span></div>
-                <div class="col-span-3 grid grid-cols-7 gap-1 bg-slate-100 p-1 rounded text-slate-500 font-mono">
-                  <div>01.01</div><div class="col-span-3">Concrete C30/37 walls</div><div>m³</div><div class="text-right">142</div><div class="text-right">€220</div>
+              <div class="boq-row">
+                <span class="ord">01.01</span>
+                <span class="desc">Reinforced concrete C30/37 — slab, 220mm</span>
+                <span class="qty">186 m³</span>
+                <span class="rate">142.00</span>
+                <span class="total">26 412.00</span>
+              </div>
+              <div class="boq-row">
+                <span class="ord">01.02</span>
+                <span class="desc">Rebar B500B — slab + walls</span>
+                <span class="qty">14 200 kg</span>
+                <span class="rate">1.18</span>
+                <span class="total">16 756.00</span>
+              </div>
+              <div class="boq-row">
+                <span class="ord">02.01</span>
+                <span class="desc">Insulation EPS 100 — façade</span>
+                <span class="qty">412 m²</span>
+                <span class="rate">28.40</span>
+                <span class="total">11 700.80</span>
+              </div>
+              <div class="boq-row">
+                <span class="ord">03.04</span>
+                <span class="desc">Plasterboard partitions, double layer</span>
+                <span class="qty">328 m²</span>
+                <span class="rate">42.10</span>
+                <span class="total">13 808.80</span>
+              </div>
+              <div class="boq-row">
+                <span class="ord">04.02</span>
+                <span class="desc">Doors — internal, 80×210, painted oak</span>
+                <span class="qty">22 pcs</span>
+                <span class="rate">385.00</span>
+                <span class="total">8 470.00</span>
+              </div>
+              <div class="boq-summary">
+                <div class="totals-card">
+                  <div class="row"><span class="l">Subtotal</span><span class="v">77 147.60</span></div>
+                  <div class="row"><span class="l">Overheads + profit (12 %)</span><span class="v">9 257.71</span></div>
+                  <div class="row"><span class="l">VAT (19 %)</span><span class="v">16 416.91</span></div>
+                  <div class="row total-line"><span class="l">Bid total</span><span class="v">102 822.22 €</span></div>
                 </div>
-                <div class="col-span-3 grid grid-cols-7 gap-1 bg-blue-50 p-1 rounded text-slate-700 font-mono">
-                  <div>01.02</div><div class="col-span-3">Reinforcement BSt500</div><div>kg</div><div class="text-right">14,200</div><div class="text-right">€1.20</div>
-                </div>
-                <div class="col-span-3 grid grid-cols-7 gap-1 p-1 rounded text-slate-500 font-mono">
-                  <div>01.03</div><div class="col-span-3">Formwork</div><div>m²</div><div class="text-right">680</div><div class="text-right">€38</div>
+                <div class="donut-card">
+                  <svg width="92" height="92" viewBox="0 0 42 42">
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ecf0e3" stroke-width="6"></circle>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#1f3d2b" stroke-width="6" stroke-dasharray="34 100" stroke-dashoffset="25"></circle>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#5b8c6b" stroke-width="6" stroke-dasharray="22 100" stroke-dashoffset="-9"></circle>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#c98c4a" stroke-width="6" stroke-dasharray="18 100" stroke-dashoffset="-31"></circle>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#6c83b5" stroke-width="6" stroke-dasharray="14 100" stroke-dashoffset="-49"></circle>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="#a89882" stroke-width="6" stroke-dasharray="12 100" stroke-dashoffset="-63"></circle>
+                  </svg>
+                  <div class="donut-legend">
+                    <div class="row"><span class="sw" style="background: #1f3d2b"></span>Concrete · 34 %</div>
+                    <div class="row"><span class="sw" style="background: #5b8c6b"></span>Steel · 22 %</div>
+                    <div class="row"><span class="sw" style="background: #c98c4a"></span>Façade · 18 %</div>
+                    <div class="row"><span class="sw" style="background: #6c83b5"></span>Drywall · 14 %</div>
+                    <div class="row"><span class="sw" style="background: #a89882"></span>Doors · 12 %</div>
+                  </div>
                 </div>
               </div>
             </div>
-            <!-- Play button -->
-            <div class="absolute inset-0 flex items-center justify-center">
-              <div class="h-16 w-16 rounded-full bg-rose-500 flex items-center justify-center shadow-2xl shadow-rose-500/40">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="white" class="ml-1"><path d="M8 5v14l11-7z"/></svg>
+
+            <div class="panel hidden" id="panel-schedule">
+              <div class="gantt">
+                <span class="l">Site preparation</span><span class="b b1"></span>
+                <span class="l">Foundations</span><span class="b b2"></span>
+                <span class="l">Structure (concrete)</span><span class="b b3"></span>
+                <span class="l">Façade + roof</span><span class="b b4"></span>
+                <span class="l">MEP rough-in</span><span class="b b5"></span>
+                <span class="l">Finishes</span><span class="b b6"></span>
+                <span class="l">Commissioning</span><span class="b b7"></span>
+                <span class="l">Handover</span><span class="b b8"></span>
+              </div>
+              <div class="gantt-legend">
+                <div class="row"><span class="sw" style="background: #5b8c6b"></span>Completed</div>
+                <div class="row"><span class="sw" style="background: #c98c4a"></span>Active</div>
+                <div class="row"><span class="sw" style="background: #b73a3a"></span>Critical path</div>
+                <div class="row"><span class="sw" style="background: #6c83b5"></span>Upcoming</div>
               </div>
             </div>
-            <div class="absolute top-3 left-3 bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">▶ Watch demo</div>
-            <div class="absolute bottom-3 right-3 text-white/85 text-[11px] font-medium bg-black/35 backdrop-blur px-2 py-0.5 rounded">3:14</div>
-          </div>
-          <div class="p-4">
-            <div class="text-sm font-semibold text-white">From PDF drawing to priced BOQ in 3 minutes</div>
-            <div class="text-[11px] text-white/60 mt-1">YouTube · DataDrivenConstruction · 12K views</div>
-          </div>
-        </a>
 
-        <!-- Stats -->
-        <div class="mt-7 grid grid-cols-4 gap-3 max-w-lg">
-          <div><div class="text-2xl font-extrabold text-white">55K+</div><div class="text-[10px] text-white/60 mt-0.5 uppercase tracking-wider">cost items</div></div>
-          <div><div class="text-2xl font-extrabold text-white">11</div><div class="text-[10px] text-white/60 mt-0.5 uppercase tracking-wider">regions</div></div>
-          <div><div class="text-2xl font-extrabold text-white">20</div><div class="text-[10px] text-white/60 mt-0.5 uppercase tracking-wider">languages</div></div>
-          <div><div class="text-2xl font-extrabold text-white">FREE</div><div class="text-[10px] text-white/60 mt-0.5 uppercase tracking-wider">no limits</div></div>
-        </div>
+            <div class="panel hidden" id="panel-cost">
+              <div class="kpi-row">
+                <div class="kpi">
+                  <div class="lbl">Cost performance index</div>
+                  <div class="val">1.04</div>
+                  <div class="delta up">+0.04 vs plan</div>
+                </div>
+                <div class="kpi">
+                  <div class="lbl">Schedule performance index</div>
+                  <div class="val">0.97</div>
+                  <div class="delta dn">−0.03 vs plan</div>
+                </div>
+                <div class="kpi">
+                  <div class="lbl">Estimate at completion</div>
+                  <div class="val">2.41 M</div>
+                  <div class="delta up">−1.8 % under budget</div>
+                </div>
+              </div>
+              <div class="scurve">
+                <svg width="100%" height="180" viewBox="0 0 600 180">
+                  <defs>
+                    <linearGradient id="lgFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stop-color="#1f3d2b" stop-opacity="0.18" />
+                      <stop offset="100%" stop-color="#1f3d2b" stop-opacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <line x1="40" y1="160" x2="580" y2="160" stroke="#e8e8e2" />
+                  <line x1="40" y1="120" x2="580" y2="120" stroke="#f1f1ed" />
+                  <line x1="40" y1="80" x2="580" y2="80" stroke="#f1f1ed" />
+                  <line x1="40" y1="40" x2="580" y2="40" stroke="#f1f1ed" />
+                  <path d="M40,160 C150,150 250,120 350,80 C440,50 510,30 580,28 L580,160 Z" fill="url(#lgFill)" />
+                  <path d="M40,160 C150,150 250,120 350,80 C440,50 510,30 580,28" fill="none" stroke="#1f3d2b" stroke-width="2" stroke-dasharray="4 3" />
+                  <path d="M40,160 C170,148 280,116 380,82" fill="none" stroke="#5b8c6b" stroke-width="2.5" />
+                  <path d="M380,82 C460,60 520,40 580,30" fill="none" stroke="#c98c4a" stroke-width="2" stroke-dasharray="4 4" />
+                  <circle cx="380" cy="82" r="4" fill="#5b8c6b" />
+                  <text x="40" y="174" font-size="10" fill="#8a8a7e">Q1</text>
+                  <text x="180" y="174" font-size="10" fill="#8a8a7e">Q2</text>
+                  <text x="320" y="174" font-size="10" fill="#8a8a7e">Q3</text>
+                  <text x="460" y="174" font-size="10" fill="#8a8a7e">Q4</text>
+                  <text x="544" y="174" font-size="10" fill="#8a8a7e">Q1+1</text>
+                  <text x="395" y="80" font-size="10" font-weight="600" fill="#1f3d2b">today</text>
+                </svg>
+              </div>
+            </div>
 
-        <!-- "Trusted by" marquee -->
-        <div class="mt-9 max-w-lg">
-          <div class="text-[10px] uppercase tracking-[0.18em] text-white/50 mb-2">Used in projects across</div>
-          <div class="marquee">
-            <div class="marquee-track">
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇩🇪 Berlin</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇬🇧 London</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇺🇸 New York</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇦🇪 Dubai</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇸🇬 Singapore</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇨🇭 Zürich</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇫🇷 Paris</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇩🇪 Berlin</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇬🇧 London</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇺🇸 New York</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇦🇪 Dubai</span>
-              <span class="text-[13px] font-semibold text-white/70 whitespace-nowrap">🇸🇬 Singapore</span>
+            <div class="panel hidden" id="panel-ai">
+              <div class="chat">
+                <div class="bubble u">What's driving the 4 % overrun on Lot 02?</div>
+                <div class="bubble a">
+                  Lot 02 (façade + roof) has three lines above their unit-rate
+                  benchmark: <b>EPS 100 (+8 %)</b>, <b>aluminium copings (+12 %)</b>,
+                  and <b>roof membrane (+5 %)</b>. The overrun comes mainly from
+                  the alu copings — supplier quote is 9 % over historical
+                  median. Want me to flag the position and suggest two
+                  alternative suppliers?
+                </div>
+                <div class="bubble u">Yes — and update the EAC after replacement.</div>
+              </div>
+              <div class="chat-context">
+                <span class="k">Active context</span>: Project R-241 · BOQ rev. 7
+                · BIM model arch_24-04.ifc · Fire-safety requirement set (12 rules)
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
+        </article>
+      </section>
 
-    <!-- ── RIGHT : form ── -->
-    <section class="px-8 lg:px-12 py-10 lg:py-16 flex items-start lg:items-center justify-center">
-      <div class="w-full max-w-md">
-        <h2 class="font-display text-[28px] font-extrabold mb-1">Sign in</h2>
-        <p class="text-sm text-slate-500 mb-7">to access your workspace</p>
+      <aside class="signin-col">
+        <div class="signin">
+          <h2>Sign in</h2>
+          <p class="sub">Use your workspace email or pick a demo account.</p>
+          <form onsubmit="event.preventDefault(); alert('Demo only — wire to /api/v1/users/auth/login');">
+            <label class="field">
+              <span class="lbl">Email</span>
+              <input type="email" placeholder="you@company.com" autocomplete="email" required />
+            </label>
+            <label class="field">
+              <span class="lbl">Password</span>
+              <input type="password" placeholder="••••••••" autocomplete="current-password" required />
+            </label>
+            <div class="row-helper">
+              <label><input type="checkbox" />Stay signed in</label>
+              <a href="#">Forgot password?</a>
+            </div>
+            <button type="submit" class="btn-primary">Continue</button>
+          </form>
 
-        <form class="space-y-4" onsubmit="event.preventDefault();">
-          <div>
-            <label class="text-[11px] font-bold uppercase tracking-wider text-slate-600 block mb-1.5">Email</label>
-            <input type="email" placeholder="you@company.com"
-                   class="field-input w-full h-12 rounded-xl border-2 border-slate-200 bg-white px-4 text-sm font-medium focus:outline-none focus:border-blue-500 transition" />
+          <div class="divider">or pick a demo</div>
+
+          <div class="demo-grid">
+            <button class="demo-btn" type="button">
+              <span class="av">A</span>
+              <span class="meta">
+                <span class="who">admin@openestimator.io</span>
+                <span class="role">Admin · full access</span>
+              </span>
+              <span class="arr"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+            </button>
+            <button class="demo-btn" type="button">
+              <span class="av">E</span>
+              <span class="meta">
+                <span class="who">estimator@openestimator.io</span>
+                <span class="role">Estimator · BOQ + tender</span>
+              </span>
+              <span class="arr"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+            </button>
+            <button class="demo-btn" type="button">
+              <span class="av">P</span>
+              <span class="meta">
+                <span class="who">pm@openestimator.io</span>
+                <span class="role">Project manager · 4D / 5D</span>
+              </span>
+              <span class="arr"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+            </button>
           </div>
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <label class="text-[11px] font-bold uppercase tracking-wider text-slate-600">Password</label>
-              <a href="#" class="text-[11px] font-semibold text-blue-600 hover:underline">Forgot password?</a>
-            </div>
-            <input type="password" placeholder="••••••••••"
-                   class="field-input w-full h-12 rounded-xl border-2 border-slate-200 bg-white px-4 text-sm font-medium focus:outline-none focus:border-blue-500 transition" />
-          </div>
-
-          <label class="flex items-center gap-2 cursor-pointer select-none">
-            <input type="checkbox" class="h-4 w-4 rounded text-blue-600" />
-            <span class="text-xs text-slate-600">Keep me signed in for 30 days</span>
-          </label>
-
-          <button type="submit"
-                  class="w-full h-12 rounded-xl bg-gradient-to-r from-blue-700 to-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:translate-y-[-1px] transition">
-            Sign in →
-          </button>
-        </form>
-
-        <div class="my-5 flex items-center gap-3">
-          <div class="flex-1 h-px bg-slate-200"></div>
-          <span class="text-[10px] uppercase tracking-wider text-slate-400">or try a demo</span>
-          <div class="flex-1 h-px bg-slate-200"></div>
         </div>
+      </aside>
+    </main>
 
-        <div class="space-y-2">
-          <button class="demo-row w-full flex items-center gap-3 rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-left">
-            <div class="h-9 w-9 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">A</div>
-            <div class="flex-1 min-w-0">
-              <div class="text-[13px] font-semibold">Administrator</div>
-              <div class="text-[11px] text-slate-500 truncate">demo@openestimator.io · Full access</div>
-            </div>
-            <span class="text-[10px] font-bold text-blue-600">→</span>
-          </button>
-          <button class="demo-row w-full flex items-center gap-3 rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-left">
-            <div class="h-9 w-9 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">S</div>
-            <div class="flex-1 min-w-0">
-              <div class="text-[13px] font-semibold">Sarah Chen</div>
-              <div class="text-[11px] text-slate-500 truncate">estimator@openestimator.io · Estimator</div>
-            </div>
-            <span class="text-[10px] font-bold text-blue-600">→</span>
-          </button>
-          <button class="demo-row w-full flex items-center gap-3 rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-left">
-            <div class="h-9 w-9 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold">M</div>
-            <div class="flex-1 min-w-0">
-              <div class="text-[13px] font-semibold">Thomas Müller</div>
-              <div class="text-[11px] text-slate-500 truncate">manager@openestimator.io · Manager</div>
-            </div>
-            <span class="text-[10px] font-bold text-blue-600">→</span>
-          </button>
-        </div>
+    <footer class="foot">
+      <span>© 2026 Artem Boiko · OpenConstructionERP</span>
+      <span>·</span>
+      <a href="mailto:info@datadrivenconstruction.io">info@datadrivenconstruction.io</a>
+    </footer>
 
-        <div class="mt-7 text-center">
-          <span class="text-sm text-slate-500">New here? </span>
-          <a href="#" class="text-sm font-bold text-blue-600 hover:underline">Create a free account</a>
-        </div>
+    <script>
+      document.querySelectorAll('.preview-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const id = tab.dataset.tab;
+          document.querySelectorAll('.preview-tab').forEach((t) => t.classList.remove('is-active'));
+          tab.classList.add('is-active');
+          document.querySelectorAll('.panel').forEach((p) => p.classList.add('hidden'));
+          document.getElementById('panel-' + id).classList.remove('hidden');
+        });
+      });
 
-        <div class="mt-8 text-center text-[10px] text-slate-400">
-          © 2026 OpenConstructionERP · by Artem Boiko
-        </div>
-      </div>
-    </section>
-  </div>
-</body>
+      const langMoreBtn = document.getElementById('langMoreBtn');
+      const langPanel = document.getElementById('langPanel');
+      langMoreBtn.addEventListener('click', () => {
+        langMoreBtn.classList.toggle('is-open');
+        langPanel.classList.toggle('is-open');
+      });
+
+      const setLang = (code) => {
+        document.querySelectorAll('.lang-pill').forEach((p) =>
+          p.classList.toggle('is-active', p.dataset.lang === code),
+        );
+        document.querySelectorAll('.lang-group .row').forEach((r) =>
+          r.classList.toggle('is-active', r.dataset.lang === code),
+        );
+      };
+      document.querySelectorAll('.lang-pill[data-lang]').forEach((p) =>
+        p.addEventListener('click', () => setLang(p.dataset.lang)),
+      );
+      document.querySelectorAll('.lang-group .row').forEach((r) =>
+        r.addEventListener('click', () => setLang(r.dataset.lang)),
+      );
+
+      document.getElementById('langSearch').addEventListener('input', (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        document.querySelectorAll('.lang-group').forEach((g) => {
+          let visible = 0;
+          g.querySelectorAll('.row').forEach((row) => {
+            const text = row.textContent.toLowerCase();
+            const code = (row.dataset.lang || '').toLowerCase();
+            const match = !q || text.includes(q) || code.includes(q);
+            row.style.display = match ? '' : 'none';
+            if (match) visible++;
+          });
+          g.style.display = visible === 0 ? 'none' : '';
+        });
+      });
+    </script>
+  </body>
 </html>

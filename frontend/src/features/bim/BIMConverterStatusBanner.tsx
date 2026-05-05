@@ -147,19 +147,33 @@ export function BIMConverterStatusBanner({
             }),
         });
       } else if (result.platform_unsupported && result.platform === 'linux') {
-        const apt = result.apt_package
-          ? `\n\nsudo apt install -y ${result.apt_package}`
-          : '';
+        // Linux IS supported via the apt repo at
+        // pkg.datadrivenconstruction.io. The backend already shaped a
+        // human-readable `instructions` block (one-liner if the apt
+        // source is present, two-step setup otherwise) and the
+        // expected binary path. Prefer those over a generic blurb.
+        const sourcePresent = Boolean(result.apt_source_present);
+        const title = sourcePresent
+          ? t('bim.converter_install_linux_short_title', {
+              defaultValue: 'One apt command to finish‌⁠‍',
+            })
+          : t('bim.converter_install_linux_setup_title', {
+              defaultValue: 'One-time apt setup‌⁠‍',
+            });
+        const instructions = result.instructions
+          ? `\n\n${result.instructions}`
+          : result.apt_package
+            ? `\n\nsudo apt install -y ${result.apt_package}`
+            : '';
         addToast(
           {
             type: 'info',
-            title: t('bim.converter_install_linux_title', {
-              defaultValue: 'Linux auto-install unavailable‌⁠‍',
-            }),
+            title,
             message:
-              (result.message || `Run apt commands to install ${name}`) + apt,
+              (result.message || `Run apt commands to install ${name}`) +
+              instructions,
           },
-          { duration: 30_000 },
+          { duration: 45_000 },
         );
       } else if (result.platform_unsupported) {
         addToast({

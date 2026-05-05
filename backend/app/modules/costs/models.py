@@ -19,6 +19,11 @@ class CostItem(Base):
         # Indexes for common filter combinations in search()
         Index("ix_costs_source_region", "source", "region"),
         Index("ix_costs_is_active", "is_active"),
+        # Covers the per-region keyset-paginated search hot path:
+        # ``WHERE region=? AND is_active=? ORDER BY code, id LIMIT N``.
+        # Without this composite the planner picks ix_costs_is_active and
+        # sorts 55K rows in a temp B-tree — 6 s vs 1 ms with the index.
+        Index("ix_costs_region_active_code", "region", "is_active", "code"),
     )
 
     code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)

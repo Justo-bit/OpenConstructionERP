@@ -171,6 +171,15 @@ export interface BIMConverterInstallResult {
   /** Linux only — apt package name and a copy-pasteable script. */
   apt_package?: string;
   instructions?: string;
+  /** Linux only — true if `/etc/apt/sources.list.d/ddc.list` already
+   *  exists, i.e. the user has the DDC apt source and only needs a
+   *  single `apt install` line. The toast renders a shorter title in
+   *  that case. */
+  apt_source_present?: boolean;
+  /** Linux only — predicted binary path after install
+   *  (e.g. `/usr/bin/RvtExporter`). Surfaced in the toast so the user
+   *  knows where the .deb will land before running apt. */
+  expected_binary_path?: string | null;
   /** Whether the post-install smoke test passed (Windows only). */
   smoke_test_passed?: boolean;
   platform?: string;

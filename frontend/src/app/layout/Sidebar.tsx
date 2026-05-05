@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { LogoWithText } from '@/shared/ui';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -20,6 +20,7 @@ import {
   Info,
   TrendingUp,
   ChevronDown,
+  ChevronRight,
   Ruler,
   Sparkles,
   MessageSquare,
@@ -45,12 +46,16 @@ import {
   BrainCircuit,
   SlidersHorizontal,
   Plus,
+  Search,
+  Pin,
+  PinOff,
   type LucideIcon,
 } from 'lucide-react';
 import { useModuleStore } from '@/stores/useModuleStore';
 import { UpdateNotification } from '@/shared/ui/UpdateChecker';
 import { useViewModeStore } from '@/stores/useViewModeStore';
 import { useRecentStore } from '@/stores/useRecentStore';
+import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { getModuleNavItems } from '@/modules/_registry';
 import { APP_VERSION } from '@/shared/lib/version';
 import { useSidebarBadges } from '@/shared/hooks/useSidebarBadges';
@@ -217,8 +222,20 @@ const bottomNav: NavItem[] = [
   { labelKey: 'nav.about', to: '/about', icon: Info },
 ];
 
+/** Flat lookup of every NavItem in the sidebar, keyed by `to`. The
+ *  Pinned section uses this to resolve a stored route string into a
+ *  full NavItem (with icon, labelKey, badge etc.) without duplicating
+ *  the source-of-truth list. */
+const ALL_NAV_ITEMS: Record<string, NavItem> = (() => {
+  const map: Record<string, NavItem> = {};
+  for (const group of navGroups) for (const item of group.items) map[item.to] = item;
+  for (const item of bottomNav) map[item.to] = item;
+  return map;
+})();
+
 // localStorage key for collapsed state
 const COLLAPSED_KEY = 'oe_sidebar_collapsed';
+const PINNED_KEY = 'oe_sidebar_pinned';
 
 function readCollapsedState(): Record<string, boolean> {
   try {
@@ -238,11 +255,116 @@ function writeCollapsedState(state: Record<string, boolean>) {
   }
 }
 
+function readPinned(): string[] {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === 'string');
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+function writePinned(arr: string[]) {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(arr));
+  } catch {
+    /* ignore */
+  }
+}
+
+// Two-key keyboard shortcuts for the most-trafficked routes. The
+// sequence is `G` then a single letter — same convention Linear and
+// GitHub use, so muscle memory transfers. We surface the hint inline
+// next to the item so users can discover the shortcut without docs.
+const KBD_HINTS: Record<string, string> = {
+  '/': 'G D',
+  '/projects': 'G P',
+  '/boq': 'G B',
+  '/costs': 'G C',
+  '/bim': 'G M',
+  '/ai-estimate': 'G A',
+  '/settings': 'G ,',
+};
+const KBD_BY_LETTER: Record<string, string> = {
+  d: '/',
+  p: '/projects',
+  b: '/boq',
+  c: '/costs',
+  m: '/bim',
+  a: '/ai-estimate',
+  ',': '/settings',
+};
+
+/** Compute the single best-matching nav route for the current location.
+ *  React Router's NavLink uses prefix matching, which lights up BOTH
+ *  `/bim` and `/bim/rules` when the user is on `/bim/rules`. We pick
+ *  the most specific match instead — query-aware exact match wins,
+ *  then plain pathname match, then the longest prefix among nav items.
+ *  Returns the chosen item's `to` string, or null when nothing matches.
+ */
+function pickActiveRoute(
+  location: { pathname: string; search: string },
+  routes: string[],
+): string | null {
+  const currentParams = new URLSearchParams(location.search);
+
+  // 1) Query-aware exact match — `/takeoff?tab=measurements` wins over
+  //    `/takeoff` and over the broader `/takeoff?tab=...` siblings when
+  //    every required param value is present in the current URL.
+  const queryMatches = routes
+    .filter((r) => r.includes('?'))
+    .filter((r) => {
+      const [pathname, qs] = r.split('?');
+      if (location.pathname !== pathname) return false;
+      const want = new URLSearchParams(qs);
+      for (const [k, v] of want) {
+        if (currentParams.get(k) !== v) return false;
+      }
+      return true;
+    });
+  if (queryMatches.length > 0) {
+    return queryMatches.sort((a, b) => b.length - a.length)[0]!;
+  }
+
+  // 2) Plain pathname matches: exact wins; otherwise longest prefix.
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const route of routes) {
+    if (route.includes('?')) continue;
+    if (route === location.pathname) {
+      if (route.length > bestLen) {
+        best = route;
+        bestLen = route.length;
+      }
+      continue;
+    }
+    if (route !== '/' && location.pathname.startsWith(route + '/')) {
+      if (route.length > bestLen) {
+        best = route;
+        bestLen = route.length;
+      }
+    } else if (route === '/' && location.pathname === '/') {
+      if (route.length > bestLen) {
+        best = route;
+        bestLen = route.length;
+      }
+    }
+  }
+  return best;
+}
+
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { isModuleEnabled } = useModuleStore();
   const isAdvanced = useViewModeStore((s) => s.isAdvanced);
   const badgeCounts = useSidebarBadges();
+  const openSearch = useGlobalSearchStore((s) => s.openModal);
 
   // Map route paths → open-item counts for sidebar badges
   const badgeMap: Record<string, number> = {
@@ -261,25 +383,143 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     return initial;
   });
 
+  // Pinned routes — small starter section above the first group. Users
+  // pin/unpin via the small icon-button that appears on item hover.
+  const [pinned, setPinned] = useState<string[]>(() => readPinned());
+
   // Persist collapsed state to localStorage
   useEffect(() => {
     writeCollapsedState(collapsed);
   }, [collapsed]);
 
+  // Persist pinned state to localStorage
+  useEffect(() => {
+    writePinned(pinned);
+  }, [pinned]);
+
   const toggleGroup = useCallback((groupId: string) => {
     setCollapsed((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
   }, []);
 
+  const togglePin = useCallback((route: string) => {
+    setPinned((prev) =>
+      prev.includes(route) ? prev.filter((p) => p !== route) : [...prev, route],
+    );
+  }, []);
+
+  // ── Two-key navigation shortcuts (G then X) ──────────────────────────
+  // Linear/GitHub-style. We listen at document level for the leading
+  // `G`, then within 1.5 s any single letter from KBD_BY_LETTER fires
+  // the matching navigation. Ignores all keystrokes that originate
+  // from text fields so it doesn't conflict with form input.
+  const firstKeyRef = useRef<string | null>(null);
+  const firstKeyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const clearFirst = () => {
+      firstKeyRef.current = null;
+      if (firstKeyTimerRef.current != null) {
+        window.clearTimeout(firstKeyTimerRef.current);
+        firstKeyTimerRef.current = null;
+      }
+    };
+
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const editable = (e.target as HTMLElement | null)?.isContentEditable;
+      if (editable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const key = e.key.toLowerCase();
+
+      if (firstKeyRef.current === 'g') {
+        const route = KBD_BY_LETTER[key];
+        if (route) {
+          e.preventDefault();
+          navigate(route);
+        }
+        clearFirst();
+        return;
+      }
+
+      if (key === 'g') {
+        firstKeyRef.current = 'g';
+        firstKeyTimerRef.current = window.setTimeout(clearFirst, 1500);
+      }
+    };
+
+    document.addEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      clearFirst();
+    };
+  }, [navigate]);
+
+  // Resolve pinned route strings into full NavItems (skipping any
+  // routes that are no longer in the registry — e.g. a module the user
+  // pinned earlier has been disabled).
+  const pinnedItems: NavItem[] = pinned
+    .map((route) => ALL_NAV_ITEMS[route])
+    .filter((item): item is NavItem => Boolean(item));
+
+  // Pick a single winning route for highlighting. Without this, both
+  // `/bim` (parent) and `/bim/rules` (child) would render as "active"
+  // because `/bim/rules` starts with `/bim/`. We hand the chosen
+  // string down to every `SidebarItem` so only one row lights up.
+  const activeRoute = pickActiveRoute(location, Object.keys(ALL_NAV_ITEMS));
+
   return (
     <aside
       data-tour="sidebar"
-      className={clsx(
-        'flex h-full w-sidebar flex-col',
-        'border-r border-border-light bg-surface-primary',
-      )}
+      className="oe-sidebar relative flex h-full w-sidebar flex-col bg-surface-primary"
+      style={{
+        // Right-edge depth — 1px hairline + a soft 12px fade. Replaces
+        // the hard `border-r border-border-light` for a Linear/Vercel
+        // feel: definition without rigidity.
+        boxShadow:
+          '1px 0 0 rgba(15, 23, 42, 0.05), 4px 0 12px -8px rgba(15, 23, 42, 0.06)',
+      }}
     >
+      {/* Page-scoped CSS — sidebar-only animations. Defined inline to
+          keep this component fully self-contained. */}
+      <style>{`
+        @keyframes oeStaggerIn {
+          0%   { opacity: 0; transform: translateY(-4px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .oe-sidebar .oe-stagger {
+          animation: oeStaggerIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+        }
+        /* Hover-arrow: a subtle right-pointing chevron that fades in
+           on hover — hints "click to navigate" without taking space
+           when idle. The opacity transition keeps the layout stable. */
+        .oe-sidebar a .oe-hover-arrow {
+          opacity: 0;
+          transform: translateX(-4px);
+          transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        .oe-sidebar a:hover .oe-hover-arrow,
+        .oe-sidebar a:focus-visible .oe-hover-arrow {
+          opacity: 0.55;
+          transform: translateX(0);
+        }
+        /* Pin button on items — invisible until item is hovered, then
+           fades in from the right. Click does not navigate (handled by
+           preventDefault + stopPropagation in the handler). */
+        .oe-sidebar a .oe-pin-btn {
+          opacity: 0;
+          transition: opacity 0.18s ease, color 0.18s ease;
+        }
+        .oe-sidebar a:hover .oe-pin-btn,
+        .oe-sidebar a:focus-within .oe-pin-btn,
+        .oe-sidebar a .oe-pin-btn[data-pinned="true"] {
+          opacity: 1;
+        }
+      `}</style>
+
       {/* Logo + mobile close button */}
-      <div className="flex h-header items-center justify-between px-5 border-b border-border-light">
+      <div className="relative flex h-header items-center justify-between px-5">
         <a href="https://openconstructionerp.com/?utm_source=app" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">
           <LogoWithText size="xs" />
         </a>
@@ -292,10 +532,65 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <X size={16} />
           </button>
         )}
+        {/* Soft hairline separator instead of a hard 1px border. */}
+        <div className="absolute bottom-0 left-4 right-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+      </div>
+
+      {/* Search-as-jumper — Linear-style. Triggers the existing global
+          semantic-search palette. Keeps the visible affordance for
+          users who don't know the ⌘K shortcut, while still surfacing
+          it for those who do. */}
+      <div className="px-3 pt-3 pb-1">
+        <button
+          type="button"
+          onClick={() => openSearch()}
+          className="group flex w-full items-center gap-2 rounded-md border border-border-light bg-surface-secondary/60 px-2.5 py-1.5 text-[12px] text-content-tertiary hover:border-content-quaternary/30 hover:bg-surface-secondary hover:text-content-secondary transition-colors"
+          aria-label={t('search.open', { defaultValue: 'Open search' })}
+        >
+          <Search size={13} strokeWidth={1.75} className="shrink-0" />
+          <span className="truncate">
+            {t('search.placeholder', { defaultValue: 'Search…' })}
+          </span>
+          <kbd className="ms-auto hidden sm:inline-flex items-center gap-0.5 rounded border border-border-light bg-surface-primary px-1 py-px text-[9px] font-medium text-content-quaternary group-hover:text-content-tertiary">
+            ⌘K
+          </kbd>
+        </button>
       </div>
 
       {/* Main navigation — grouped with collapsible headers */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3" data-engine="cwicr">
+      <nav className="flex-1 overflow-y-auto px-3 pt-2 pb-3" data-engine="cwicr">
+        {/* Pinned section — appears at the top when the user has
+            pinned at least one item. No collapsible chevron; just a
+            small label + the pinned items in their stored order. */}
+        {pinnedItems.length > 0 && (
+          <div className="mb-2">
+            <div className="mt-2 mb-0.5 flex items-center gap-1.5 px-2.5">
+              <Pin size={9} strokeWidth={2.25} className="text-content-quaternary" />
+              <span className="text-2xs font-medium uppercase tracking-wider text-content-tertiary">
+                {t('nav.pinned', { defaultValue: 'Pinned' })}
+              </span>
+            </div>
+            <ul className="space-y-0.5">
+              {pinnedItems.map((item, i) => (
+                <li
+                  key={item.to}
+                  className="oe-stagger"
+                  style={{ animationDelay: `${i * 18}ms` }}
+                >
+                  <SidebarItem
+                    item={item}
+                    label={t(item.labelKey)}
+                    onClick={onClose}
+                    badge={badgeMap[item.to]}
+                    isPinned={true}
+                    onTogglePin={togglePin}
+                    activeRoute={activeRoute}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {navGroups.map((group) => {
           // Hide entire group in simple mode if flagged
           if (group.hideInSimple && !isAdvanced) return null;
@@ -335,13 +630,20 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               onToggle={() => toggleGroup(group.id)}
             >
               <ul className="space-y-0.5">
-                {visibleItems.map((item) => (
-                  <li key={item.to}>
+                {visibleItems.map((item, i) => (
+                  <li
+                    key={item.to}
+                    className="oe-stagger"
+                    style={{ animationDelay: `${i * 18}ms` }}
+                  >
                     <SidebarItem
                       item={item}
                       label={t(item.labelKey)}
                       onClick={onClose}
                       badge={badgeMap[item.to]}
+                      isPinned={pinned.includes(item.to)}
+                      onTogglePin={togglePin}
+                      activeRoute={activeRoute}
                     />
                   </li>
                 ))}
@@ -375,8 +677,10 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         </li>
       </nav>
 
-      {/* Bottom navigation */}
-      <div className="border-t border-border-light px-3 py-2 bg-black/[0.04] dark:bg-white/[0.03]">
+      {/* Bottom navigation — soft hairline separator instead of a hard
+          1px border; subtle paper-tint background. */}
+      <div className="relative px-3 py-2 bg-black/[0.02] dark:bg-white/[0.02]">
+        <div className="absolute top-0 left-3 right-3 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
         <ul className="space-y-0.5">
           {bottomNav.map((item) => (
             <li key={item.to}>
@@ -384,6 +688,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 item={item}
                 label={t(item.labelKey)}
                 onClick={onClose}
+                isPinned={pinned.includes(item.to)}
+                onTogglePin={togglePin}
+                activeRoute={activeRoute}
               />
             </li>
           ))}
@@ -425,15 +732,17 @@ function NavGroupSection({
         onClick={onToggle}
         aria-expanded={!isCollapsed}
         aria-label={isCollapsed ? t('common.expand_section', { defaultValue: 'Expand {{label}}‌⁠‍', label }) : t('common.collapse_section', { defaultValue: 'Collapse {{label}}‌⁠‍', label })}
-        className="mt-2 mb-0.5 flex w-full items-center justify-between px-2.5 group cursor-pointer"
+        className="mt-3 mb-0.5 flex w-full items-center justify-between px-2.5 group cursor-pointer"
       >
         <span className="text-2xs font-medium uppercase tracking-wider text-content-tertiary group-hover:text-content-secondary transition-colors">
           {label}
         </span>
         <ChevronDown
           size={12}
+          strokeWidth={2}
           className={clsx(
-            'text-content-tertiary group-hover:text-content-secondary transition-all duration-150',
+            'text-content-quaternary group-hover:text-content-secondary',
+            'transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]',
             isCollapsed && '-rotate-90',
           )}
         />
@@ -443,31 +752,38 @@ function NavGroupSection({
   );
 }
 
-function SidebarItem({ item, label, onClick, badge: numericBadge }: { item: NavItem; label: string; onClick?: () => void; badge?: number }) {
+function SidebarItem({
+  item,
+  label,
+  onClick,
+  badge: numericBadge,
+  isPinned,
+  onTogglePin,
+  activeRoute,
+}: {
+  item: NavItem;
+  label: string;
+  onClick?: () => void;
+  badge?: number;
+  isPinned?: boolean;
+  onTogglePin?: (route: string) => void;
+  activeRoute?: string | null;
+}) {
+  const { t } = useTranslation();
   const Icon = item.icon;
-  const location = useLocation();
+  const kbdHint = KBD_HINTS[item.to];
 
-  // For links with query params (e.g. /takeoff?tab=measurements), check both
-  // pathname and query string to determine active state. Without this, all
-  // links sharing the same pathname would appear active simultaneously.
-  const hasQuery = item.to.includes('?');
-  const computeActive = (routerIsActive: boolean): boolean => {
-    if (!hasQuery) return routerIsActive;
-    const [pathname, queryString] = item.to.split('?');
-    if (location.pathname !== pathname) return false;
-    const itemParams = new URLSearchParams(queryString);
-    const currentParams = new URLSearchParams(location.search);
-    for (const [key, value] of itemParams.entries()) {
-      if (currentParams.get(key) !== value) return false;
-    }
-    return true;
+  const handlePinClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onTogglePin?.(item.to);
   };
 
-  // Pre-compute active state for badge styling (avoids children-as-function)
-  const routerIsActive =
-    location.pathname === item.to ||
-    (!hasQuery && item.to !== '/' && location.pathname.startsWith(item.to + '/'));
-  const isActive = computeActive(routerIsActive);
+  // Single source of truth for active state — Sidebar picks one winning
+  // route across all visible items, so only the most-specific match
+  // lights up (no more "/bim" + "/bim/rules" both glowing blue).
+  const isActive = activeRoute === item.to;
+  const hasQuery = item.to.includes('?');
 
   return (
       <NavLink
@@ -476,22 +792,31 @@ function SidebarItem({ item, label, onClick, badge: numericBadge }: { item: NavI
         onClick={onClick}
         title={label}
         {...(item.tourId ? { 'data-tour': item.tourId } : {})}
-        className={({ isActive: ria }) => {
-          const active = computeActive(ria);
+        className={() => {
+          const active = isActive;
           return clsx(
-            'flex items-center gap-2 rounded-md px-2.5 py-[5px]',
-            'text-[13px] font-medium transition-all duration-fast ease-oe',
+            // 2px transparent left border on every item — when active
+            // it flips to oe-blue. No layout shift between states. The
+            // accent bar is the entire visual change for "active",
+            // alongside the subtle background tint and bolded label.
+            // This is the Linear/Vercel pattern — solid, calm, fast.
+            'relative flex items-center gap-2 rounded-md pl-[10px] pr-2.5 py-1',
+            'text-[13px] transition-colors duration-fast ease-oe',
+            'border-l-2 border-transparent',
             item.highlight && !active
-              ? 'bg-gradient-to-r from-[#7c3aed]/10 to-[#0ea5e9]/10 text-[#6d28d9] hover:from-[#7c3aed]/15 hover:to-[#0ea5e9]/15'
+              ? 'font-medium bg-gradient-to-r from-[#7c3aed]/10 to-[#0ea5e9]/10 text-[#6d28d9] hover:from-[#7c3aed]/15 hover:to-[#0ea5e9]/15'
               : active
-                ? 'bg-oe-blue-subtle text-oe-blue'
-                : 'text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
+                ? 'font-semibold border-oe-blue bg-oe-blue/[0.14] text-oe-blue shadow-[inset_0_0_0_1px_rgba(0,122,255,0.06)] dark:bg-oe-blue/25'
+                : 'font-medium text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
           );
         }}
       >
-        <Icon size={16} strokeWidth={1.75} className="shrink-0" />
+        <Icon size={16} strokeWidth={isActive ? 2 : 1.75} className="shrink-0" />
         <span className="truncate">{label}</span>
-        {numericBadge != null && numericBadge > 0 && (
+        {/* Right-side trailing area: numeric badge / item badge / kbd
+            hint / pin button — only one occupies the `ms-auto` slot at
+            a time so the row never wraps. */}
+        {numericBadge != null && numericBadge > 0 ? (
           <span
             className={clsx(
               'ms-auto flex h-4 min-w-[1.25rem] items-center justify-center rounded-full text-2xs font-bold px-1 transition-colors',
@@ -502,13 +827,9 @@ function SidebarItem({ item, label, onClick, badge: numericBadge }: { item: NavI
           >
             {numericBadge > 99 ? '99+' : numericBadge}
           </span>
-        )}
-        {item.badge && (
+        ) : item.badge ? (
           <span
             className={clsx(
-              // BETA badge: tiny, subtle, lowercase, neutral grey.
-              // Reads as "this module is still in development" without
-              // visually competing for the user's attention.
               item.badge === 'BETA'
                 ? 'ms-auto text-[9px] font-medium uppercase tracking-wide px-1.5 py-px rounded text-content-quaternary bg-surface-tertiary/60 dark:bg-surface-tertiary/40'
                 : item.highlight
@@ -518,6 +839,47 @@ function SidebarItem({ item, label, onClick, badge: numericBadge }: { item: NavI
           >
             {item.badge === 'BETA' ? 'beta' : item.badge}
           </span>
+        ) : kbdHint ? (
+          // Two-key shortcut hint — Linear-style. Letter-spaced caps,
+          // tabular numerals, very low contrast so it doesn't compete
+          // with the label. Hidden on the active item to reduce noise.
+          <span
+            className={clsx(
+              'ms-auto hidden lg:inline-flex items-center gap-0.5 text-[9px] font-medium tracking-wide tabular-nums',
+              isActive ? 'text-oe-blue/60' : 'text-content-quaternary',
+            )}
+          >
+            {kbdHint}
+          </span>
+        ) : (
+          // Hover-only arrow, fades in via CSS rule on the parent.
+          <ChevronRight
+            size={12}
+            className="oe-hover-arrow ms-auto shrink-0 text-content-tertiary"
+          />
+        )}
+        {/* Pin / unpin button — only shown when the item supports it
+            (any item with an onTogglePin handler). Visible on hover or
+            persistently when pinned. Click does not navigate. */}
+        {onTogglePin && (
+          <button
+            type="button"
+            onClick={handlePinClick}
+            data-pinned={isPinned ? 'true' : undefined}
+            aria-label={
+              isPinned
+                ? t('nav.unpin', { defaultValue: 'Unpin {{label}}', label })
+                : t('nav.pin', { defaultValue: 'Pin {{label}}', label })
+            }
+            title={isPinned ? t('nav.unpin', { defaultValue: 'Unpin' }) : t('nav.pin', { defaultValue: 'Pin' })}
+            className={clsx(
+              'oe-pin-btn ms-1 flex h-4 w-4 shrink-0 items-center justify-center rounded',
+              'text-content-quaternary hover:text-oe-blue hover:bg-oe-blue/10',
+              isPinned && 'text-oe-blue',
+            )}
+          >
+            {isPinned ? <PinOff size={10} strokeWidth={2} /> : <Pin size={10} strokeWidth={2} />}
+          </button>
         )}
       </NavLink>
   );

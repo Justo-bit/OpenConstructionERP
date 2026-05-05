@@ -1857,7 +1857,7 @@ function ChartsTab({ sessionId, describe }: { sessionId: string; describe: Descr
             >
               {stringCols.map((c) => (
                 <option key={c.name} value={c.name}>
-                  {c.name} ({c.unique}{c.unique >= 100 ? ' ⚠︎' : ''})
+                  {c.name} ({c.unique}{c.unique >= 100 ? ' (!)' : ''})
                 </option>
               ))}
             </select>

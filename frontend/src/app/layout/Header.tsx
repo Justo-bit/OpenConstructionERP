@@ -2,12 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Search, ChevronDown, LogOut, User, Settings, Menu, MessageSquarePlus, FolderOpen, CheckCircle2, XCircle, Bug, BookOpen, Loader2, Upload } from 'lucide-react';
+import { Search, ChevronDown, ChevronRight, LogOut, User, Settings, Menu, MessageSquarePlus, FolderOpen, CheckCircle2, XCircle, Bug, BookOpen, Loader2, Upload, HelpCircle, Mail, ExternalLink, Github, Sun, Moon, Monitor } from 'lucide-react';
 import clsx from 'clsx';
 import { SUPPORTED_LANGUAGES, getLanguageByCode } from '../i18n';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useUploadQueueStore } from '@/stores/useUploadQueueStore';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
+import { useThemeStore } from '@/stores/useThemeStore';
 import { CountryFlag } from '@/shared/ui';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
 import { apiGet } from '@/shared/lib/api';
@@ -70,12 +71,16 @@ export function Header({ title, onMenuClick }: HeaderProps) {
   return (
     <header
       className={clsx(
-        'sticky top-0 z-30',
+        'sticky top-0 z-30 relative',
         'flex h-header items-center justify-between gap-3 px-4 sm:px-6 lg:px-8',
-        'border-b border-border-light bg-surface-primary/80 backdrop-blur-xl',
+        'bg-surface-primary/80 backdrop-blur-xl',
       )}
     >
-      {/* Left: mobile menu + title */}
+      {/* Soft hairline at the bottom — replaces a hard 1px border for
+          a calmer Linear/Vercel-style separation from the page below. */}
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
+      {/* ── Zone 1 (Workspace): mobile menu + project breadcrumb + title ── */}
       <div className="flex items-center gap-3 min-w-0">
         {onMenuClick && (
           <button
@@ -86,253 +91,311 @@ export function Header({ title, onMenuClick }: HeaderProps) {
             <Menu size={20} />
           </button>
         )}
-        {translatedTitle && (
-          <h1 className="hidden lg:block text-base font-semibold text-content-primary truncate sm:text-lg">{translatedTitle}</h1>
-        )}
 
-        {/* Active project switcher */}
+        {/* Active project switcher (rendered first so the breadcrumb
+            reads left-to-right as ProjectName › PageTitle). */}
         <ProjectSwitcher />
+
+        {translatedTitle && (
+          <>
+            {/* Breadcrumb separator — only shown on lg+ where the page
+                title is visible. Subtle chevron so it reads as
+                "ProjectName › PageTitle" hierarchy. */}
+            <ChevronRight
+              size={14}
+              strokeWidth={1.75}
+              className="hidden lg:block shrink-0 text-content-quaternary/60"
+              aria-hidden
+            />
+            <h1 className="hidden lg:block text-base font-semibold text-content-primary truncate sm:text-lg">{translatedTitle}</h1>
+          </>
+        )}
       </div>
 
-      {/* Right */}
-      <div className="flex items-center gap-1.5">
-        {/* GitHub repo */}
-        <a
-          href="https://github.com/datadrivenconstruction/OpenConstructionERP"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={clsx(
-            'hidden lg:flex h-8 items-center gap-1.5 rounded-lg px-2.5',
-            'text-xs font-medium',
-            'text-content-tertiary border border-border-light',
-            'transition-all duration-fast ease-oe',
-            'hover:bg-surface-secondary hover:text-content-secondary',
-          )}
-          title="GitHub repository"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          <span className="hidden lg:inline">GitHub</span>
-        </a>
-
-        {/* Search — opens CommandPalette */}
+      {/* Right side — three zones separated by hairline dividers.
+          Zone 2: Search · Zone 3: Notifications + Help · Zone 4: Account
+          (Upload + Language + User). Each zone has internal `gap-1`,
+          dividers between zones are 1px hairlines. */}
+      <div className="flex items-center gap-2">
+        {/* ── Zone 2 (Search) ──────────────────────────────────────── */}
         <button
           onClick={openCommandPalette}
           className={clsx(
-            'hidden sm:flex h-9 items-center gap-2 rounded-lg px-3',
-            'border border-border bg-surface-secondary',
+            'hidden sm:flex h-8 items-center gap-2 rounded-lg px-3',
+            'border border-border-light bg-surface-secondary/60',
             'text-sm text-content-tertiary',
-            'transition-all duration-fast ease-oe',
-            'hover:border-content-tertiary hover:text-content-secondary',
+            'transition-colors duration-fast ease-oe',
+            'hover:border-content-quaternary/30 hover:bg-surface-secondary hover:text-content-secondary',
             'w-40 md:w-44 lg:w-56',
           )}
         >
-          <Search size={15} strokeWidth={1.75} />
-          <span>{t('common.search')}</span>
-          <kbd className="ml-auto text-2xs text-content-tertiary font-mono bg-surface-primary border border-border-light rounded px-1.5 py-0.5">
-            /
+          <Search size={14} strokeWidth={1.75} className="shrink-0" />
+          <span className="truncate">{t('common.search')}</span>
+          <kbd className="ml-auto inline-flex items-center gap-0.5 rounded border border-border-light bg-surface-primary px-1 py-px text-[9px] font-medium text-content-quaternary">
+            ⌘K
           </kbd>
         </button>
 
-        {/* Mobile search icon */}
+        {/* Mobile search icon — collapses the search bar on tiny screens. */}
         <button
           onClick={openCommandPalette}
           aria-label={t('common.search', { defaultValue: 'Search‌⁠‍' })}
-          className="flex sm:hidden h-8 w-8 items-center justify-center rounded-lg text-content-secondary hover:bg-surface-secondary"
+          className="flex sm:hidden h-8 w-8 items-center justify-center rounded-lg text-content-secondary hover:bg-surface-secondary transition-colors"
         >
-          <Search size={17} />
+          <Search size={16} />
         </button>
 
-        {/* Notification bell */}
+        {/* Hairline divider between Zone 2 and Zone 3. */}
+        <div className="hidden sm:block h-4 w-px bg-border-light/70" aria-hidden />
+
+        {/* ── Zone 3 (Notifications + Help) ───────────────────────── */}
         <NotificationBell />
+        <HelpMenu />
 
-        {/* Direct "Report Issue" button — surfaced at the top level so users
-             don't have to discover the More menu. The mailto fallback stays
-             inside the More popover below. */}
-        <button
-          type="button"
-          onClick={() => {
-            const blob = exportErrorReport();
-            const blobUrl = URL.createObjectURL(blob);
-            const dl = document.createElement('a');
-            dl.href = blobUrl;
-            dl.download = `openconstructionerp-report-${new Date().toISOString().slice(0, 10)}.json`;
-            dl.click();
-            URL.revokeObjectURL(blobUrl);
-            const params = new URLSearchParams({
-              report: 'true',
-              app_version: APP_VERSION,
-              platform: navigator.userAgent.includes('Win') ? 'Windows' : navigator.userAgent.includes('Mac') ? 'macOS' : 'Linux',
-            });
-            window.open(`https://openconstructionerp.com/contact.html?${params}`, '_blank');
-          }}
-          className={clsx(
-            'hidden sm:flex h-8 items-center gap-1.5 rounded-lg px-2.5',
-            'text-xs font-medium',
-            'text-content-tertiary transition-colors',
-            'hover:bg-surface-secondary hover:text-content-secondary',
-          )}
-          title={t('feedback.report_issue', { defaultValue: 'Report Issue‌⁠‍' })}
-          aria-label={t('feedback.report_issue', { defaultValue: 'Report Issue‌⁠‍' })}
-        >
-          <Bug size={14} />
-          <span className="hidden md:inline">{t('feedback.report_issue', { defaultValue: 'Report Issue‌⁠‍' })}</span>
-        </button>
+        {/* Hairline divider between Zone 3 and Zone 4. */}
+        <div className="hidden sm:block h-4 w-px bg-border-light/70" aria-hidden />
 
-        {/* More popover — keeps the email fallback discoverable but uncluttered. */}
-        <details className="relative hidden sm:block group">
-          <summary
-            className={clsx(
-              'flex h-8 w-8 items-center justify-center rounded-lg cursor-pointer list-none',
-              'text-content-tertiary transition-colors',
-              'hover:bg-surface-secondary hover:text-content-secondary',
-              'group-open:bg-surface-secondary group-open:text-content-secondary',
-            )}
-            title={t('common.more', { defaultValue: 'More' })}
-            aria-label={t('common.more', { defaultValue: 'More' })}
-          >
-            <span className="text-base leading-none font-bold select-none">⋯</span>
-          </summary>
-          <div
-            role="menu"
-            className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-border-light bg-surface-elevated shadow-lg animate-scale-in py-1 z-40"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                // Variant A: Download JSON file
-                const blob = exportErrorReport();
-                const blobUrl = URL.createObjectURL(blob);
-                const dl = document.createElement('a');
-                dl.href = blobUrl;
-                dl.download = `openconstructionerp-report-${new Date().toISOString().slice(0, 10)}.json`;
-                dl.click();
-                URL.revokeObjectURL(blobUrl);
-
-                // Variant B: Open form with URL params
-                // Internal-only: log error count for self-debugging (not exposed to URL).
-                console.info('[Feedback] Report submitted with error count:', getErrorCount());
-                const params = new URLSearchParams({
-                  report: 'true',
-                  app_version: APP_VERSION,
-                  platform: navigator.userAgent.includes('Win') ? 'Windows' : navigator.userAgent.includes('Mac') ? 'macOS' : 'Linux',
-                });
-                window.open(`https://openconstructionerp.com/contact.html?${params}`, '_blank');
-
-                // Variant C: Direct POST (best-effort, non-blocking)
-                const reportBlob = exportErrorReport();
-                reportBlob.text().then((text) => {
-                  const data = JSON.parse(text);
-                  fetch('https://formsubmit.co/ajax/info@datadrivenconstruction.io', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-                    body: JSON.stringify({
-                      _subject: 'Bug Report from OpenConstructionERP App',
-                      'App Version': data.app_version || APP_VERSION,
-                      'Error Count': data.total_errors || 0,
-                      Platform: data.platform || '',
-                      Locale: data.locale || '',
-                      'Session Minutes': data.session_duration_minutes || 0,
-                      'Pages Visited': (data.pages_visited || []).join(', '),
-                      Errors: JSON.stringify(data.entries?.slice(0, 10) || [], null, 2),
-                    }),
-                  }).catch(() => { /* silent — form is primary channel */ });
-                }).catch(() => {});
-              }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
-              title={t('feedback.report_issue', { defaultValue: 'Report Issue' })}
-            >
-              <Bug size={14} className="text-content-tertiary" />
-              {t('feedback.report_issue', { defaultValue: 'Report Issue' })}
-            </button>
-            <a
-              role="menuitem"
-              href="mailto:info@datadrivenconstruction.io?subject=OpenConstructionERP%20Issue%20Report"
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
-              title={t('header.email_issue', { defaultValue: 'Email an issue to the team' })}
-            >
-              {/* mail icon */}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="text-content-tertiary">
-                <rect width="20" height="16" x="2" y="4" rx="2" />
-                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-              </svg>
-              {t('header.email_issues', { defaultValue: 'Email Issues' })}
-            </a>
-          </div>
-        </details>
-
-        {/* Documentation link */}
-        <a
-          href="https://openconstructionerp.com/docs.html"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={clsx(
-            'hidden sm:flex h-8 items-center gap-1.5 rounded-lg px-2.5',
-            'text-xs font-medium',
-            'text-oe-blue border border-oe-blue/20 bg-oe-blue/[0.04]',
-            'transition-all duration-fast ease-oe',
-            'hover:bg-oe-blue/10 hover:border-oe-blue/40',
-          )}
-          title={t('nav.docs', { defaultValue: 'Documentation' })}
-        >
-          <BookOpen size={14} />
-          <span className="hidden lg:inline">{t('nav.docs', { defaultValue: 'Docs' })}</span>
-        </a>
-
-        {/* Feedback — Variant A (optional file) + B (URL params) */}
-        <button
-          type="button"
-          onClick={() => {
-            // Variant A: Download log if errors exist
-            if (getErrorCount() > 0) {
-              const blob = exportErrorReport();
-              const blobUrl = URL.createObjectURL(blob);
-              const dl = document.createElement('a');
-              dl.href = blobUrl;
-              dl.download = `openconstructionerp-log-${new Date().toISOString().slice(0, 10)}.json`;
-              dl.click();
-              URL.revokeObjectURL(blobUrl);
-            }
-            // Variant B: Open feedback form with params
-            // Internal-only: log error count for self-debugging (not exposed to URL).
-            console.info('[Feedback] Form opened with error count:', getErrorCount());
-            const params = new URLSearchParams({
-              feedback: 'true',
-              app_version: APP_VERSION,
-            });
-            window.open(`https://openconstructionerp.com/contact.html?${params}`, '_blank');
-          }}
-          className={clsx(
-            'flex h-8 items-center gap-1.5 rounded-lg px-2.5',
-            'text-xs font-medium',
-            'bg-amber-50 text-amber-700 border border-amber-200',
-            'dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800',
-            'transition-all duration-fast ease-oe',
-            'hover:bg-amber-100 hover:border-amber-300',
-            'dark:hover:bg-amber-900/30',
-          )}
-          title={t('feedback.title', { defaultValue: 'Send Feedback' })}
-          aria-label={t('feedback.title', { defaultValue: 'Send Feedback' })}
-        >
-          <MessageSquarePlus size={14} strokeWidth={1.75} />
-          <span className="hidden sm:inline">{t('feedback.title', { defaultValue: 'Feedback' })}</span>
-        </button>
-
-        {/* Upload queue indicator */}
+        {/* ── Zone 4 (Account) ─────────────────────────────────────── */}
         <UploadQueueIndicator />
-
-        <div className="w-px h-5 bg-border-light mx-1 hidden sm:block" />
-
-        {/* Language */}
         <LanguageSwitcher
           currentLang={currentLang}
           onSelect={(code) => i18n.changeLanguage(code)}
         />
-
-        {/* User menu */}
+        <ThemeToggle />
         <UserMenu />
       </div>
     </header>
+  );
+}
+
+/* ── Theme Toggle ──────────────────────────────────────────────────────── */
+
+/** Single icon-button that cycles light → dark → system. The icon swaps
+ *  to mirror the *current* theme, not the *next* one (Linear/Vercel
+ *  convention) — users glance at it to see what mode they're in,
+ *  click to advance. Lives in Zone 4 next to the avatar so theme +
+ *  identity sit together. */
+function ThemeToggle() {
+  const { t } = useTranslation();
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
+
+  const cycle = () => {
+    if (theme === 'light') setTheme('dark');
+    else if (theme === 'dark') setTheme('system');
+    else setTheme('light');
+  };
+
+  const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
+  const label =
+    theme === 'light'
+      ? t('settings.theme_light', { defaultValue: 'Light theme' })
+      : theme === 'dark'
+        ? t('settings.theme_dark', { defaultValue: 'Dark theme' })
+        : t('settings.theme_system', { defaultValue: 'System theme' });
+
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      aria-label={label}
+      title={label}
+      className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg text-content-tertiary hover:bg-surface-secondary hover:text-content-secondary transition-colors"
+    >
+      <Icon size={16} strokeWidth={1.75} />
+    </button>
+  );
+}
+
+/* ── Help Menu (consolidated docs / GitHub / feedback / bug-report) ─── */
+
+/** Single `?` icon button at top-right that opens a popover with every
+ *  help / feedback / external-link action consolidated. Replaces what
+ *  was previously six separate header buttons (GitHub, Docs, Report
+ *  Issue, More, Feedback, Email Issues). One discoverable menu reads
+ *  cleaner than six visually competing buttons. */
+function HelpMenu() {
+  const { t } = useTranslation();
+  const addToast = useToastStore((s) => s.addToast);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open]);
+
+  // Open the contact form pre-tagged as "Send Feedback". Mirrors the
+  // pre-consolidation amber-Feedback button (which used to live in the
+  // header). Downloads the in-session error log if there are any
+  // errors so the user can attach it.
+  const handleFeedback = () => {
+    setOpen(false);
+    if (getErrorCount() > 0) {
+      const blob = exportErrorReport();
+      const blobUrl = URL.createObjectURL(blob);
+      const dl = document.createElement('a');
+      dl.href = blobUrl;
+      dl.download = `openconstructionerp-log-${new Date().toISOString().slice(0, 10)}.json`;
+      dl.click();
+      URL.revokeObjectURL(blobUrl);
+    }
+    const params = new URLSearchParams({
+      feedback: 'true',
+      app_version: APP_VERSION,
+    });
+    window.open(`https://openconstructionerp.com/contact.html?${params}`, '_blank');
+  };
+
+  // Download the JSON error report and open the contact form pre-tagged
+  // as a Report Issue. Mirrors the pre-consolidation top-level Bug
+  // button + the Report Issue item in the legacy More popover.
+  const handleReportIssue = () => {
+    setOpen(false);
+    const blob = exportErrorReport();
+    const blobUrl = URL.createObjectURL(blob);
+    const dl = document.createElement('a');
+    dl.href = blobUrl;
+    dl.download = `openconstructionerp-report-${new Date().toISOString().slice(0, 10)}.json`;
+    dl.click();
+    URL.revokeObjectURL(blobUrl);
+    const params = new URLSearchParams({
+      report: 'true',
+      app_version: APP_VERSION,
+      platform: navigator.userAgent.includes('Win') ? 'Windows' : navigator.userAgent.includes('Mac') ? 'macOS' : 'Linux',
+    });
+    window.open(`https://openconstructionerp.com/contact.html?${params}`, '_blank');
+  };
+
+  // GitHub-issue with the last captured error pre-filled. Same flow as
+  // the pre-consolidation "Report a bug" item from the user menu.
+  const handleReportBug = () => {
+    setOpen(false);
+    const { url, body } = buildBugReportUrl(t);
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    void navigator.clipboard.writeText(body).then(
+      () => {
+        addToast({
+          type: 'info',
+          title: t('app.report_bug_not_configured', { defaultValue: 'Bug reporting is not configured' }),
+          message: t('app.report_bug_copied', { defaultValue: 'Report contents copied to clipboard' }),
+        });
+      },
+      () => {
+        addToast({
+          type: 'warning',
+          title: t('app.report_bug_not_configured', { defaultValue: 'Bug reporting is not configured' }),
+        });
+      },
+    );
+  };
+
+  return (
+    <div className="relative hidden sm:block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={clsx(
+          'flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
+          'text-content-tertiary hover:bg-surface-secondary hover:text-content-secondary',
+          open && 'bg-surface-secondary text-content-secondary',
+        )}
+        title={t('nav.help', { defaultValue: 'Help & feedback' })}
+        aria-label={t('nav.help', { defaultValue: 'Help & feedback' })}
+      >
+        <HelpCircle size={16} strokeWidth={1.75} />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1.5 w-60 rounded-xl border border-border-light bg-surface-elevated shadow-lg animate-scale-in py-1 z-40"
+        >
+          {/* External resources */}
+          <a
+            role="menuitem"
+            href="https://openconstructionerp.com/docs.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <BookOpen size={14} className="text-content-tertiary shrink-0" />
+            <span className="flex-1">{t('nav.docs', { defaultValue: 'Documentation' })}</span>
+            <ExternalLink size={11} className="text-content-quaternary shrink-0" />
+          </a>
+          <a
+            role="menuitem"
+            href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <Github size={14} className="text-content-tertiary shrink-0" />
+            <span className="flex-1">{t('nav.github', { defaultValue: 'GitHub repository' })}</span>
+            <ExternalLink size={11} className="text-content-quaternary shrink-0" />
+          </a>
+
+          <div className="my-1 border-t border-border-light" role="separator" />
+
+          {/* Feedback / report flows */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleFeedback}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <MessageSquarePlus size={14} className="text-content-tertiary shrink-0" />
+            <span>{t('feedback.title', { defaultValue: 'Send feedback' })}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleReportIssue}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <Bug size={14} className="text-content-tertiary shrink-0" />
+            <span>{t('feedback.report_issue', { defaultValue: 'Report issue' })}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleReportBug}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <Bug size={14} className="text-content-tertiary shrink-0" />
+            <span>{t('app.report_bug', { defaultValue: 'Report a bug (with logs)' })}</span>
+          </button>
+          <a
+            role="menuitem"
+            href="mailto:info@datadrivenconstruction.io?subject=OpenConstructionERP%20Issue%20Report"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
+          >
+            <Mail size={14} className="text-content-tertiary shrink-0" />
+            <span>{t('header.email_issues', { defaultValue: 'Email the team' })}</span>
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -473,42 +536,9 @@ function UserMenu() {
   const navigate = useNavigate();
   const logout = useAuthStore((s) => s.logout);
   const userEmail = useAuthStore((s) => s.userEmail);
-  const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const userInitial = userEmail ? userEmail.charAt(0).toUpperCase() : 'U';
-
-  const handleReportBug = useCallback(() => {
-    setOpen(false);
-    const { url, body } = buildBugReportUrl(t);
-    if (url) {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    // No repo configured — fall back to clipboard + toast.
-    const fallback = async () => {
-      try {
-        await navigator.clipboard.writeText(body);
-        addToast({
-          type: 'info',
-          title: t('app.report_bug_not_configured', {
-            defaultValue: 'Bug reporting is not configured',
-          }),
-          message: t('app.report_bug_copied', {
-            defaultValue: 'Report contents copied to clipboard',
-          }),
-        });
-      } catch {
-        addToast({
-          type: 'warning',
-          title: t('app.report_bug_not_configured', {
-            defaultValue: 'Bug reporting is not configured',
-          }),
-        });
-      }
-    };
-    void fallback();
-  }, [t, addToast]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -534,17 +564,37 @@ function UserMenu() {
         aria-expanded={open}
         aria-haspopup="true"
         className={clsx(
-          'flex h-8 w-8 items-center justify-center rounded-full',
-          'bg-oe-blue text-xs font-semibold text-white',
+          'relative flex h-8 w-8 items-center justify-center rounded-full',
+          'bg-gradient-to-br from-oe-blue to-[#38bdf8] text-xs font-semibold text-white',
+          'shadow-[0_1px_3px_rgba(0,122,255,0.25)]',
           'transition-all duration-fast ease-oe',
-          'hover:opacity-80',
+          'hover:opacity-90 hover:shadow-[0_2px_6px_rgba(0,122,255,0.35)]',
         )}
+        title={userEmail ?? undefined}
+        aria-label={t('auth.account', { defaultValue: 'Account menu' })}
       >
         {userInitial}
+        {/* Online status dot — bottom-right of the avatar. Matches the
+            UserBadge in the sidebar so the two surfaces feel coherent. */}
+        <span
+          aria-hidden
+          className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5 items-center justify-center"
+        >
+          <span className="absolute inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400/70 animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-surface-primary" />
+        </span>
       </button>
 
       {open && (
-        <div role="menu" className="absolute right-0 top-full mt-1.5 w-44 rounded-xl border border-border-light bg-surface-elevated shadow-lg animate-scale-in py-1">
+        <div role="menu" className="absolute right-0 top-full mt-1.5 w-48 rounded-xl border border-border-light bg-surface-elevated shadow-lg animate-scale-in py-1">
+          {userEmail && (
+            <>
+              <div className="px-3 py-1.5 text-2xs text-content-tertiary truncate" title={userEmail}>
+                {userEmail}
+              </div>
+              <div className="my-1 border-t border-border-light" role="separator" />
+            </>
+          )}
           <button
             role="menuitem"
             onClick={() => { setOpen(false); navigate('/settings'); }}
@@ -560,15 +610,6 @@ function UserMenu() {
           >
             <Settings size={14} className="text-content-tertiary" />
             {t('nav.settings', 'Settings')}
-          </button>
-          <div className="my-1 border-t border-border-light" role="separator" />
-          <button
-            role="menuitem"
-            onClick={handleReportBug}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-content-primary hover:bg-surface-secondary transition-colors"
-          >
-            <Bug size={14} className="text-content-tertiary" />
-            {t('app.report_bug', { defaultValue: 'Report a bug' })}
           </button>
           <div className="my-1 border-t border-border-light" role="separator" />
           <button
@@ -721,16 +762,20 @@ function ProjectSwitcher() {
 
   return (
     <div className="relative hidden sm:block" ref={ref}>
-      {/* Split-button: left half jumps to the active project's detail page,
-          right half (chevron) opens the switcher dropdown. When no project
-          is active we fall back to a single "Select Project" button that
-          opens the dropdown (no navigation target). */}
+      {/* Split-button — visibly the most-used surface in the app. Left half
+          opens the active project's detail; right half (chevron) opens
+          the switcher dropdown. Two distinct visual modes:
+            • No project active → dashed pill + pulsing dot + clear CTA
+            • Project active   → solid blue-subtle bg + folder square +
+                                 bold project name
+          Taller h-9 hit-target, always tinted, never blends into the
+          chrome — this is the breadcrumb root, it should anchor the eye. */}
       <div
         className={clsx(
-          'flex items-center rounded-lg border transition-all max-w-[240px] overflow-hidden',
+          'flex items-stretch rounded-lg border transition-all max-w-[260px] overflow-hidden',
           activeProjectId
-            ? 'bg-oe-blue-subtle text-oe-blue border-oe-blue/20 hover:bg-oe-blue/10 hover:border-oe-blue/30'
-            : 'text-content-tertiary border-border-light hover:text-content-primary hover:bg-surface-secondary hover:border-border',
+            ? 'bg-oe-blue-subtle border-oe-blue/30 hover:bg-oe-blue/10 hover:border-oe-blue/50 shadow-[0_1px_2px_rgba(0,122,255,0.05)]'
+            : 'border-dashed border-oe-blue/40 bg-oe-blue/[0.04] hover:bg-oe-blue/[0.08] hover:border-oe-blue/60',
         )}
       >
         <button
@@ -742,28 +787,49 @@ function ProjectSwitcher() {
               setOpen(true);
             }
           }}
-          className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-medium min-w-0"
+          className={clsx(
+            'flex items-center gap-2 pl-1.5 pr-2 h-9 text-[13px] min-w-0',
+            activeProjectId ? 'text-oe-blue' : 'text-oe-blue/85 hover:text-oe-blue',
+          )}
           title={activeProjectId
             ? t('projects.open_current', { defaultValue: 'Open this project' })
             : t('schedule.select_project', { defaultValue: 'Select Project' })}
         >
-          <FolderOpen size={13} className="shrink-0" />
-          <span className="text-content-quaternary shrink-0">
-            {t('common.project', { defaultValue: 'Projekt' })}:
-          </span>
-          <span className="truncate">
+          {/* Leading icon square — colored tile in active mode; pulsing
+              dot in CTA mode so the eye is drawn to "act here". */}
+          {activeProjectId ? (
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-oe-blue/15 shrink-0">
+              <FolderOpen size={13} strokeWidth={2} />
+            </span>
+          ) : (
+            <span aria-hidden className="flex h-6 w-6 items-center justify-center shrink-0">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-2 w-2 rounded-full bg-oe-blue/60 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-oe-blue" />
+              </span>
+            </span>
+          )}
+          <span className={clsx(
+            'truncate',
+            activeProjectId ? 'font-semibold' : 'font-medium',
+          )}>
             {activeProjectName || t('schedule.select_project', { defaultValue: 'Select Project' })}
           </span>
         </button>
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="flex items-center px-1.5 py-1 border-l border-current/15 hover:bg-current/5"
+          className={clsx(
+            'flex items-center px-2 border-l transition-colors',
+            activeProjectId
+              ? 'border-oe-blue/20 text-oe-blue/70 hover:bg-oe-blue/10 hover:text-oe-blue'
+              : 'border-oe-blue/25 border-dashed text-oe-blue/60 hover:bg-oe-blue/10 hover:text-oe-blue',
+          )}
           title={t('schedule.switch_project', { defaultValue: 'Switch Project' })}
           aria-label={t('schedule.switch_project', { defaultValue: 'Switch Project' })}
         >
-          <ChevronDown size={12} className={clsx(
-            'shrink-0 text-content-quaternary transition-transform duration-fast',
+          <ChevronDown size={13} strokeWidth={2.25} className={clsx(
+            'shrink-0 transition-transform duration-fast',
             open && 'rotate-180',
           )} />
         </button>

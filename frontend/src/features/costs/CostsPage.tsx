@@ -67,6 +67,10 @@ interface CostItem {
   region: string | null;
   classification: Record<string, string>;
   components: CostComponent[];
+  /** Slim payloads (`?lite=1`) ship `components` as an empty array and
+   *  carry the original count in this field so list UIs can still gate
+   *  the "has breakdown" badge without paying for the full array. */
+  components_count?: number;
   metadata_: CostItemMetadata;
   source: string;
 }
@@ -427,6 +431,11 @@ function buildSearchUrl(
   if (category) params.set('category', category);
   params.set('limit', String(PAGE_SIZE));
   params.set('offset', String(offset));
+  // Slim payload — CWICR rows can be 38 KB each (31 KB components + 6.6 KB
+  // metadata); the list view doesn't render either. The expanded row
+  // lazily fetches the full item via /v1/costs/{id} when opened, so we
+  // pay the full-payload cost only once per drill-in.
+  params.set('lite', '1');
   return `/v1/costs/?${params.toString()}`;
 }
 
@@ -1054,7 +1063,14 @@ export function CostsPage() {
                 <tbody className="divide-y divide-border-light">
                   {sortedItems.map((item) => {
                     const isExpanded = expandedId === item.id;
-                    const hasComponents = item.components && item.components.length > 0;
+                    // Backend trims `components` from the list payload but
+                    // exposes a `components_count` integer when running in
+                    // lite mode; fall back to the array length so non-lite
+                    // callers still work.
+                    const componentsCount =
+                      item.components_count ??
+                      (item.components ? item.components.length : 0);
+                    const hasComponents = componentsCount > 0;
                     return (
                       <CostItemRow
                         key={item.id}
@@ -2133,7 +2149,21 @@ function CostItemRow({
   t: ReturnType<typeof import('react-i18next').useTranslation>['t'];
 }) {
   const { confirm, ...confirmProps } = useConfirm();
-  const meta = item.metadata_ ?? {};
+
+  // Lazy-fetch full item only when the row is opened. The list query
+  // runs in lite mode (no components, trimmed metadata) for speed; the
+  // expanded panel needs the full document for breakdowns + variants,
+  // so we hit /v1/costs/{id} the first time the user drills in. Cached
+  // by react-query keyed on item.id, so re-expanding is instant.
+  const { data: fullItem } = useQuery<CostItem>({
+    queryKey: ['costs', 'detail', item.id],
+    queryFn: () => apiGet<CostItem>(`/v1/costs/${item.id}`),
+    enabled: isExpanded,
+    staleTime: 5 * 60_000,
+  });
+  const detail: CostItem = fullItem ?? item;
+
+  const meta = detail.metadata_ ?? {};
   const laborCost = meta.labor_cost ?? 0;
   const equipmentCost = meta.equipment_cost ?? 0;
   const materialCost = meta.material_cost ?? 0;
@@ -2149,8 +2179,8 @@ function CostItemRow({
   const isExpandable = hasComponents || hasVariants;
 
   // Classify components by type
-  const materials = (item.components ?? []).filter((c) => c.type === 'material');
-  const machines = (item.components ?? []).filter((c) => c.type === 'equipment' || c.type === 'operator' || c.type === 'electricity');
+  const materials = (detail.components ?? []).filter((c) => c.type === 'material');
+  const machines = (detail.components ?? []).filter((c) => c.type === 'equipment' || c.type === 'operator' || c.type === 'electricity');
 
   // Classification breadcrumb. Backend mirrors `category` into
   // `category_localized` when a known locale is in use (CWICR ships
@@ -2213,7 +2243,7 @@ function CostItemRow({
             )}
             {hasComponents && (
               <span className="text-2xs text-content-quaternary shrink-0">
-                {item.components.length} res.
+                {(item.components_count ?? item.components.length)} res.
               </span>
             )}
           </div>
@@ -2436,7 +2466,7 @@ function CostItemRow({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-light">
-                    {item.components.map((comp, i) => {
+                    {detail.components.map((comp, i) => {
                       const TYPE_COLOR_MAP: Record<string, string> = {
                         labor: 'text-amber-700 bg-amber-50',
                         material: 'text-green-700 bg-green-50',
@@ -2507,7 +2537,7 @@ function CostItemRow({
                     </div>
                   ))}
 
-                  <div className="flex justify-between"><span className="text-content-quaternary">Components</span><span className="text-content-secondary">{item.components?.length || 0} resources</span></div>
+                  <div className="flex justify-between"><span className="text-content-quaternary">Components</span><span className="text-content-secondary">{(item.components_count ?? detail.components?.length ?? 0)} resources</span></div>
                 </div>
               </details>
             </div>

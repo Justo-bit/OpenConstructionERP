@@ -685,30 +685,66 @@ async def install_converter(
 
         if platform.startswith("linux"):
             # Linux: surface apt instructions instead of auto-installing.
-            # We do not write to /etc/apt or sudo from a web handler.
+            # We do not write to /etc/apt or sudo from a web handler —
+            # that needs root and a privilege-elevation policy we
+            # don't ship by default.
+            #
+            # The apt repo at `pkg.datadrivenconstruction.io` is signed,
+            # serves amd64+arm64, and the `.deb` packages drop a single
+            # ELF binary into `/usr/bin/{Format}Exporter`. find_converter()
+            # picks it up automatically on the next status poll.
             apt_pkg = _LINUX_APT_PACKAGES.get(converter_id, f"ddc-{converter_id}converter")
-            instructions = (
-                f"# Add the DDC apt source (one-time)\n"
-                f"echo 'deb [trusted=yes] https://pkg.datadrivenconstruction.io stable main' "
-                f"| sudo tee /etc/apt/sources.list.d/ddc.list\n"
-                f"sudo apt update\n"
-                f"# Install the {meta['name']}\n"
-                f"sudo apt install -y {apt_pkg}"
-            )
+            linux_binary_name = (meta["exe"] or "").removesuffix(".exe")
+            binary_path = f"/usr/bin/{linux_binary_name}" if linux_binary_name else None
+
+            # Detect whether the user has already added the DDC apt
+            # source. If yes, we can skip the source-setup lines and
+            # surface a one-line install command instead.
+            apt_source_path = Path("/etc/apt/sources.list.d/ddc.list")
+            source_already_present = apt_source_path.exists()
+
+            if source_already_present:
+                instructions = f"sudo apt update && sudo apt install -y {apt_pkg}"
+                short_message = (
+                    f"DDC apt source already configured. Run "
+                    f"`sudo apt install -y {apt_pkg}` to install "
+                    f"{meta['name']}. find_converter picks it up "
+                    f"automatically on the next status poll — no service "
+                    f"restart needed."
+                )
+            else:
+                instructions = (
+                    f"# 1. Add the DDC apt source (one-time setup)\n"
+                    f"echo 'deb [trusted=yes] https://pkg.datadrivenconstruction.io stable main' "
+                    f"| sudo tee /etc/apt/sources.list.d/ddc.list\n"
+                    f"sudo apt update\n\n"
+                    f"# 2. Install the {meta['name']} (lands at {binary_path or '/usr/bin/'})\n"
+                    f"sudo apt install -y {apt_pkg}"
+                )
+                short_message = (
+                    f"One-time apt setup for {meta['name']}. Copy the "
+                    f"two-step `instructions` into a root terminal — apt "
+                    f"resolves the SDK shared libraries automatically and "
+                    f"drops the binary at {binary_path or '/usr/bin/'}. "
+                    f"find_converter picks it up on the next status poll, "
+                    f"no service restart needed."
+                )
+
             return {
                 "converter_id": converter_id,
                 "installed": False,
                 "platform": "linux",
+                # `platform_unsupported` is kept for backwards-compat with
+                # frontend toast logic, but it's misleading now — Linux IS
+                # supported, just via a one-time apt setup. The frontend
+                # banner branches on `platform === 'linux'` to render the
+                # softer "One-time apt setup" wording.
                 "platform_unsupported": True,
                 "apt_package": apt_pkg,
+                "apt_source_present": source_already_present,
+                "expected_binary_path": binary_path,
                 "instructions": instructions,
-                "message": (
-                    f"Linux auto-install is not supported for {meta['name']}. "
-                    f"Run the apt commands in `instructions` (or copy/paste "
-                    f"them into a root terminal). Once the package is in place "
-                    f"the converter is picked up automatically — no service "
-                    f"restart needed."
-                ),
+                "message": short_message,
             }
 
         # macOS / other — no DDC build available
@@ -768,14 +804,38 @@ async def uninstall_converter(
             detail=f"Unknown converter: '{converter_id}'",
         )
 
+    import sys
+
     exe_name: str = meta["exe"]
     removed = False
 
-    # Build list of candidate paths to check. The new installer drops
-    # files into a per-format folder ({ext}_windows/) so its bundled
-    # Qt6 DLLs don't collide with other converters; older builds may
-    # still have files at the install root or in arbitrary subdirs,
-    # so we sweep all of those too.
+    # Linux: the converter was apt-installed under `/usr/bin/`, so we
+    # can't delete it from a web handler (no root, and `dpkg --remove`
+    # needs to update the package database). Surface `apt remove`
+    # instructions and let the user run them.
+    platform = sys.platform.lower()
+    if platform.startswith("linux"):
+        apt_pkg = _LINUX_APT_PACKAGES.get(
+            converter_id, f"ddc-{converter_id}converter"
+        )
+        return {
+            "converter_id": converter_id,
+            "removed": False,
+            "platform": "linux",
+            "apt_package": apt_pkg,
+            "instructions": f"sudo apt remove -y {apt_pkg}",
+            "message": (
+                f"Run `sudo apt remove -y {apt_pkg}` to uninstall "
+                f"{meta['name']}. The status poll picks up the change "
+                f"automatically; no service restart needed."
+            ),
+        }
+
+    # Windows uninstall: sweep the install dir for the binary + bundled
+    # plugin folders. The new installer drops files into a per-format
+    # folder ({ext}_windows/) so its bundled Qt6 DLLs don't collide
+    # with other converters; older builds may still have files at the
+    # install root or in arbitrary subdirs, so we sweep all of those.
     candidates: list[Path] = [_CONVERTER_INSTALL_DIR / exe_name]
     per_format_root = _CONVERTER_INSTALL_DIR / f"{converter_id}_windows"
     if per_format_root.exists():
@@ -2802,7 +2862,7 @@ async def delete_document(
     raw_pid = getattr(doc, "project_id", None)
     if raw_pid:
         try:
-            pid = uuid.UUID(str(raw_pid))
+            pid = _uuid.UUID(str(raw_pid))
         except (ValueError, TypeError):
             pid = None
         if pid is not None:

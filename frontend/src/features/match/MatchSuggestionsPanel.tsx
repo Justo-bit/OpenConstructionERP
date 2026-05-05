@@ -795,8 +795,8 @@ function CatalogBindingBar({
                       {db.count.toLocaleString()}
                     </span>
                     {db.vectorized_count > 0 ? (
-                      <span className="ml-auto text-[10px] text-emerald-700 dark:text-emerald-300">
-                        ✓ {db.vectorized_count.toLocaleString()} vec
+                      <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300">
+                        <Check size={10} strokeWidth={2.5} /> {db.vectorized_count.toLocaleString()} vec
                       </span>
                     ) : (
                       <span className="ml-auto text-[10px] text-amber-700 dark:text-amber-300">

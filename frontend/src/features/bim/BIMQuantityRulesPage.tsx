@@ -44,6 +44,14 @@ import {
   Upload,
   Download,
   CheckCircle2,
+  LayoutPanelTop,
+  Layers3,
+  DoorOpen,
+  AppWindow,
+  Flame,
+  Thermometer,
+  Construction,
+  type LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -154,7 +162,7 @@ function blankForm(): RuleFormState {
  */
 interface QuantityRulePreset {
   id: string;
-  emoji: string;
+  icon: LucideIcon;
   title: string;
   subtitle: string;
   patch: Partial<RuleFormState>;
@@ -163,7 +171,7 @@ interface QuantityRulePreset {
 const QUANTITY_RULES_PRESETS: QuantityRulePreset[] = [
   {
     id: 'walls-area',
-    emoji: '🧱',
+    icon: LayoutPanelTop,
     title: 'Walls — area',
     subtitle: 'Auto-create one BOQ position per wall type, sized by surface area (m²).',
     patch: {
@@ -176,7 +184,7 @@ const QUANTITY_RULES_PRESETS: QuantityRulePreset[] = [
   },
   {
     id: 'slabs-volume',
-    emoji: '🟦',
+    icon: Layers3,
     title: 'Slabs — concrete volume',
     subtitle: 'Roll up floor / slab elements into a concrete pour position (m³).',
     patch: {
@@ -189,7 +197,7 @@ const QUANTITY_RULES_PRESETS: QuantityRulePreset[] = [
   },
   {
     id: 'doors-count',
-    emoji: '🚪',
+    icon: DoorOpen,
     title: 'Doors — count',
     subtitle: 'Count every door element and create one supply-and-install position.',
     patch: {
@@ -202,7 +210,7 @@ const QUANTITY_RULES_PRESETS: QuantityRulePreset[] = [
   },
   {
     id: 'windows-count',
-    emoji: '🪟',
+    icon: AppWindow,
     title: 'Windows — count',
     subtitle: 'Count windows and create a glazing position priced per piece.',
     patch: {
@@ -1587,7 +1595,7 @@ function RequirementRuleEditor({
  */
 interface RequirementPack {
   id: string;
-  emoji: string;
+  icon: LucideIcon;
   title: string;
   subtitle: string;
   rules: AddRequirementPayload[];
@@ -1600,7 +1608,7 @@ interface RequirementPack {
 const REQUIREMENTS_PRESET_PACKS: RequirementPack[] = [
   {
     id: 'fire-safety',
-    emoji: '🔥',
+    icon: Flame,
     title: 'Fire safety basics',
     subtitle: 'Walls and doors must declare a fire rating; structural columns must match a code-compliant pattern.',
     rules: [
@@ -1638,7 +1646,7 @@ const REQUIREMENTS_PRESET_PACKS: RequirementPack[] = [
   },
   {
     id: 'thermal',
-    emoji: '🌡️',
+    icon: Thermometer,
     title: 'Thermal performance',
     subtitle: 'Exterior walls and roofs must hit U-value targets; windows must declare U-value.',
     rules: [
@@ -1676,7 +1684,7 @@ const REQUIREMENTS_PRESET_PACKS: RequirementPack[] = [
   },
   {
     id: 'structural',
-    emoji: '🏗️',
+    icon: Construction,
     title: 'Structural integrity',
     subtitle: 'Structural elements must declare a material grade and load-bearing flag.',
     rules: [
@@ -2284,7 +2292,9 @@ function RequirementsTabContent({
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            {REQUIREMENTS_PRESET_PACKS.map((pack) => (
+            {REQUIREMENTS_PRESET_PACKS.map((pack) => {
+              const PackIcon = pack.icon;
+              return (
               <button
                 key={pack.id}
                 type="button"
@@ -2292,7 +2302,9 @@ function RequirementsTabContent({
                 onClick={() => installPackMut.mutate(pack)}
                 className="group flex flex-col items-start gap-2 rounded-lg border border-border-light bg-surface-primary p-4 text-left transition hover:-translate-y-0.5 hover:border-oe-blue/60 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
               >
-                <span className="text-2xl leading-none">{pack.emoji}</span>
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-oe-blue/10 text-oe-blue group-hover:bg-oe-blue group-hover:text-white transition-colors">
+                  <PackIcon size={18} strokeWidth={1.85} />
+                </span>
                 <span className="text-sm font-semibold text-content-primary group-hover:text-oe-blue">
                   {pack.title}
                 </span>
@@ -2307,7 +2319,8 @@ function RequirementsTabContent({
                   })}
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-content-tertiary">
@@ -2998,14 +3011,18 @@ export function BIMQuantityRulesPage() {
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {QUANTITY_RULES_PRESETS.map((preset) => (
+              {QUANTITY_RULES_PRESETS.map((preset) => {
+                const PresetIcon = preset.icon;
+                return (
                 <button
                   key={preset.id}
                   type="button"
                   onClick={() => openCreateFromPreset(preset)}
                   className="group flex flex-col items-start gap-2 rounded-lg border border-border-light bg-surface-primary p-4 text-left transition hover:-translate-y-0.5 hover:border-oe-blue/60 hover:shadow-md"
                 >
-                  <span className="text-2xl leading-none">{preset.emoji}</span>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-oe-blue/10 text-oe-blue group-hover:bg-oe-blue group-hover:text-white transition-colors">
+                    <PresetIcon size={18} strokeWidth={1.85} />
+                  </span>
                   <span className="text-sm font-semibold text-content-primary group-hover:text-oe-blue">
                     {preset.title}
                   </span>
@@ -3019,7 +3036,8 @@ export function BIMQuantityRulesPage() {
                     })}
                   </span>
                 </button>
-              ))}
+                );
+              })}
             </div>
 
             <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-content-tertiary">

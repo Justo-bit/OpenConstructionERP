@@ -40,7 +40,6 @@ from app.modules.costs.schemas import (
     CostItemResponse,
     CostItemUpdate,
     CostSearchQuery,
-    CostSearchResponse,
     CostSuggestion,
     CwicrMatchFromPositionRequest,
     CwicrMatchRequest,
@@ -476,6 +475,18 @@ async def search_cost_items(
             "``total`` is omitted."
         ),
     ),
+    lite: bool = Query(
+        default=False,
+        description=(
+            "Return a slim payload — strip the per-row ``components`` "
+            "array (cwicr items can carry 16+ resource entries averaging "
+            "~31 KB/row) and reduce ``metadata_`` to ``variant_stats`` only. "
+            "Adds a ``components_count`` integer so list UIs can still show "
+            "the breakdown badge without the full array. When the user "
+            "drills into a row, callers fetch the full document via "
+            "``GET /v1/costs/{id}`` for components and metadata."
+        ),
+    ),
     locale: str | None = Query(
         default=None,
         max_length=10,
@@ -553,11 +564,43 @@ async def search_cost_items(
     else:
         items, total, has_more, next_cursor = await service.search_costs_paginated(query)
     resolved_locale = _resolve_cost_locale(locale, accept_language)
+
+    # Lite payload trim — drops the heavy ``components`` array and trims
+    # ``metadata_`` to a small whitelist. CWICR rows average ~38 KB each
+    # (31 KB components + 6.6 KB metadata); a 10-row page is 380 KB on
+    # the wire, which dominates the perceived load time of /costs even
+    # though the SQL is fast. With ``lite=true`` a 10-row page drops to
+    # ~3 KB. ``components_count`` preserves the "has breakdown" hint.
+    def _serialize(i: Any) -> dict[str, Any]:
+        payload = _localize_response_payload(
+            CostItemResponse.model_validate(i), resolved_locale,
+        )
+        if lite:
+            comps = payload.get("components") or []
+            payload["components_count"] = len(comps)
+            payload["components"] = []
+            md = payload.get("metadata_") or {}
+            if isinstance(md, dict):
+                # Whitelist tiny keys the list view + BOQ-add synth path
+                # actually consume. Drops ``variants`` (~6 KB / row of
+                # alternate price entries) and any other large arrays.
+                payload["metadata_"] = {
+                    k: md[k]
+                    for k in (
+                        "variant_stats",
+                        "labor_cost",
+                        "material_cost",
+                        "equipment_cost",
+                        "labor_hours",
+                        "workers_per_unit",
+                        "scope_of_work",
+                    )
+                    if k in md
+                }
+        return payload
+
     return {
-        "items": [
-            _localize_response_payload(CostItemResponse.model_validate(i), resolved_locale)
-            for i in items
-        ],
+        "items": [_serialize(i) for i in items],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -1379,6 +1422,7 @@ async def list_loaded_databases(
     """
     _ = user_id  # auth required via dependency; unused beyond that
     from sqlalchemy import func, select  # noqa: PLC0415
+
     from app.core.vector import vector_count_with_payload_substring  # noqa: PLC0415
     from app.core.vector_index import COLLECTION_COSTS  # noqa: PLC0415
     from app.modules.costs.models import CostItem  # noqa: PLC0415

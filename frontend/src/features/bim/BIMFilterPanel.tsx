@@ -37,6 +37,8 @@ import {
   CheckSquare,
   FileText,
   Focus,
+  Check,
+  Plus,
 } from 'lucide-react';
 import type { BIMElementGroup } from './api';
 import type { BIMElementData } from '@/shared/ui/BIMViewer';
@@ -1362,7 +1364,7 @@ export default function BIMFilterPanel({
                               : t('bim.select_category', { defaultValue: 'Filter by this category' })
                           }
                         >
-                          {active ? '✓' : '+'}
+                          {active ? <Check size={11} strokeWidth={2.5} /> : <Plus size={11} strokeWidth={2} />}
                         </button>
                       </div>
                       {isOpen && (
@@ -1447,7 +1449,7 @@ export default function BIMFilterPanel({
                                 })
                           }
                         >
-                          {allOn ? '✓' : '+'}
+                          {allOn ? <Check size={11} strokeWidth={2.5} /> : <Plus size={11} strokeWidth={2} />}
                         </button>
                       </div>
                       {isOpen && (

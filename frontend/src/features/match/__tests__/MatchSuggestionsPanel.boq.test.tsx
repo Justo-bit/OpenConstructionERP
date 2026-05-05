@@ -30,6 +30,11 @@ vi.mock('../api', () => ({
   matchElement: vi.fn(),
   submitMatchFeedback: vi.fn(),
   acceptMatch: vi.fn(),
+  // CatalogBindingBar (added in v2.8.x) reads loaded catalogues + writes
+  // the active selection back. Stub both with empty defaults so the
+  // panel mounts without firing real network requests.
+  listLoadedDatabases: vi.fn().mockResolvedValue([]),
+  setProjectCatalog: vi.fn().mockResolvedValue({}),
 }));
 
 import { matchElement, submitMatchFeedback, acceptMatch } from '../api';
