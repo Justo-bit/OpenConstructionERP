@@ -55,6 +55,41 @@ class ChangeOrderRepository:
 
         return orders, total
 
+    async def list_for_owner(
+        self,
+        owner_id: uuid.UUID,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        status: str | None = None,
+    ) -> tuple[list[ChangeOrder], int]:
+        """List change orders across every project owned by the given user.
+
+        Used when the API caller omits ``project_id``: we scope to the
+        caller's own projects rather than 422-ing.
+        """
+        from app.modules.projects.models import Project
+
+        base = (
+            select(ChangeOrder)
+            .join(Project, Project.id == ChangeOrder.project_id)
+            .where(Project.owner_id == owner_id)
+        )
+        if status is not None:
+            base = base.where(ChangeOrder.status == status)
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        stmt = (
+            base.order_by(ChangeOrder.created_at.desc())
+            .options(selectinload(ChangeOrder.items))
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all()), total
+
     async def create(self, order: ChangeOrder) -> ChangeOrder:
         """Insert a new change order."""
         self.session.add(order)

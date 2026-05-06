@@ -601,7 +601,7 @@ function ImportContactsModal({
                   })}
             </p>
             <p className="text-xs text-content-quaternary mt-1">
-              {t('contacts.file_types', { defaultValue: '.xlsx, .csv — max 10 MB' })}
+              {t('contacts.file_types', { defaultValue: '.xlsx, .csv' })}
             </p>
           </div>
 
@@ -1087,27 +1087,54 @@ export function ContactsPage() {
             />
           </div>
 
-          {/* Type filter */}
-          <div className="relative">
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value as ContactType | '')}
-              className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-44"
+          {/* Type filter — visible chip group (Probe-D P2-9). Was a hidden
+              select; promoted to chips so the 4 contact types are
+              discoverable at a glance and don't blend into the wall of
+              buttons elsewhere on the page. Only 4 types so no
+              "Show more" is needed; if CONTACT_TYPES grows beyond 6
+              the >6 entries should collapse behind a "More (N)" chip. */}
+          <div
+            role="group"
+            aria-label={t('contacts.filter_by_type', { defaultValue: 'Filter by contact type' })}
+            data-testid="contacts-type-chips"
+            className="flex flex-wrap items-center gap-1.5"
+          >
+            <button
+              type="button"
+              data-testid="contacts-type-chip-all"
+              onClick={() => setTypeFilter('')}
+              aria-pressed={typeFilter === ''}
+              className={clsx(
+                'h-8 px-3 rounded-full border text-xs font-medium transition-colors',
+                typeFilter === ''
+                  ? 'border-oe-blue bg-oe-blue text-white'
+                  : 'border-border bg-surface-primary text-content-secondary hover:border-border-light hover:text-content-primary',
+              )}
             >
-              <option value="">
-                {t('contacts.filter_all_types', { defaultValue: 'All Types' })}
-              </option>
-              {CONTACT_TYPES.map((ct) => (
-                <option key={ct} value={ct}>
+              {t('contacts.filter_all_types', { defaultValue: 'All Types' })}
+            </button>
+            {CONTACT_TYPES.map((ct) => {
+              const active = typeFilter === ct;
+              return (
+                <button
+                  key={ct}
+                  type="button"
+                  data-testid={`contacts-type-chip-${ct}`}
+                  onClick={() => setTypeFilter(active ? '' : ct)}
+                  aria-pressed={active}
+                  className={clsx(
+                    'h-8 px-3 rounded-full border text-xs font-medium transition-colors',
+                    active
+                      ? 'border-oe-blue bg-oe-blue text-white'
+                      : 'border-border bg-surface-primary text-content-secondary hover:border-border-light hover:text-content-primary',
+                  )}
+                >
                   {t(`contacts.type_${ct}`, {
                     defaultValue: ct.charAt(0).toUpperCase() + ct.slice(1),
                   })}
-                </option>
-              ))}
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-content-tertiary">
-              <ChevronDown size={14} />
-            </div>
+                </button>
+              );
+            })}
           </div>
 
           {/* Country filter */}
@@ -1169,7 +1196,9 @@ export function ContactsPage() {
             action={
               !searchQuery && !typeFilter && !countryFilter
                 ? {
-                    label: t('contacts.new_contact', { defaultValue: 'New Contact' }),
+                    /* Empty-state copy unified per Probe-D P2-11 —
+                       "Create your first {entity}" pattern. */
+                    label: t('contacts.create_first', { defaultValue: 'Create your first contact' }),
                     onClick: () => setShowAddModal(true),
                   }
                 : undefined

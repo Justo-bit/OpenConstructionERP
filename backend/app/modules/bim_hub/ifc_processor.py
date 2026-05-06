@@ -1381,6 +1381,49 @@ def _assign_logical_grid_positions(elements: list[dict[str, Any]]) -> None:
         elem["_grid_pos"] = (x, y, z)
 
 
+# IFC-type → typical placeholder extents (length × width × height in metres).
+# Used only when real Width/Height/Length quantities are absent from the
+# IFC quantity sets — otherwise the real values win in ``_generate_collada_boxes``.
+# The numbers come from common building-element averages (rooms ~4×4×3, slabs
+# wide-and-flat, doors slim-and-tall) so the resulting placeholder scene reads
+# as a building rather than a uniform grid of identical rectangles.
+_PLACEHOLDER_EXTENTS_BY_IFC_TYPE: dict[str, tuple[float, float, float]] = {
+    # length, width, height
+    "IFCSPACE":              (4.0, 4.0, 3.0),
+    "IFCWALL":               (3.0, 0.24, 2.7),
+    "IFCWALLSTANDARDCASE":   (3.0, 0.24, 2.7),
+    "IFCSLAB":               (5.0, 5.0, 0.3),
+    "IFCROOF":               (5.0, 5.0, 0.3),
+    "IFCFLOOR":              (5.0, 5.0, 0.3),
+    "IFCCOVERING":           (3.0, 3.0, 0.05),
+    "IFCDOOR":               (0.9, 0.1, 2.1),
+    "IFCWINDOW":             (1.2, 0.1, 1.5),
+    "IFCCOLUMN":             (0.4, 0.4, 3.0),
+    "IFCBEAM":               (4.0, 0.3, 0.5),
+    "IFCSTAIR":              (3.0, 1.2, 3.0),
+    "IFCSTAIRFLIGHT":        (3.0, 1.2, 1.5),
+    "IFCRAILING":            (2.0, 0.05, 1.0),
+    "IFCFURNISHINGELEMENT":  (1.0, 0.6, 0.8),
+    "IFCBUILDINGELEMENTPROXY": (1.0, 1.0, 1.0),
+    "IFCCURTAINWALL":        (5.0, 0.1, 3.0),
+    "IFCMEMBER":             (2.0, 0.1, 0.1),
+    "IFCPLATE":              (1.0, 1.0, 0.05),
+}
+
+_PLACEHOLDER_DEFAULT_EXTENTS: tuple[float, float, float] = (1.0, 0.3, 3.0)
+
+
+def _placeholder_default_extents(ifc_type_upper: str) -> tuple[float, float, float]:
+    """Return ``(length, width, height)`` placeholder defaults for an ifc_type.
+
+    Falls back to the legacy ``(1.0, 0.3, 3.0)`` so historic behaviour
+    is preserved for any ifc_type not listed above.
+    """
+    return _PLACEHOLDER_EXTENTS_BY_IFC_TYPE.get(
+        ifc_type_upper, _PLACEHOLDER_DEFAULT_EXTENTS,
+    )
+
+
 def _generate_collada_boxes(
     elements: list[dict],
     output_dir: Path,
@@ -1423,9 +1466,17 @@ def _generate_collada_boxes(
 
     for i, elem in enumerate(elements[:max_elements]):
         q = elem.get("quantities", {})
-        w = max(float(q.get("Width", q.get("Breite", 0.3))), 0.05)
-        h = max(float(q.get("Height", q.get("Hoehe", 3.0))), 0.05)
-        ln = max(float(q.get("Length", q.get("Laenge", 1.0))), 0.05)
+        # Per-ifc-type default extents so the placeholder scene reads as
+        # a building rather than a uniform grid of identical rectangles
+        # (audit P3 minor 2026-05-06). Real IFC quantities still win
+        # when present — these are only used when Width/Height/Length
+        # are missing or zero.
+        ifc_type_raw = (elem.get("properties") or {}).get("ifc_type", "")
+        ifc_type_upper = str(ifc_type_raw).upper()
+        default_w, default_h, default_ln = _placeholder_default_extents(ifc_type_upper)
+        w = max(float(q.get("Width", q.get("Breite", default_w))), 0.05)
+        h = max(float(q.get("Height", q.get("Hoehe", default_h))), 0.05)
+        ln = max(float(q.get("Length", q.get("Laenge", default_ln))), 0.05)
 
         # Use real placement if available, otherwise pre-computed logical grid
         placement = elem.get("_placement")

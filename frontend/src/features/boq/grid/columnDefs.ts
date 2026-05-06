@@ -388,6 +388,31 @@ export interface CustomColumnDef {
   formula?: string;
   /** Display decimals for `calculated` columns when result is numeric. */
   decimals?: number;
+  /**
+   * Semantic hint for region-specific number columns. When set, the column
+   * is rendered read-only and its value is auto-derived from the position
+   * (no manual entry, no `metadata.custom_fields` write).
+   *
+   *   - `resource_sum`  — sum of `metadata.resources[]` whose `type`
+   *                       matches `resource_role`. Used for GAEB EP-split
+   *                       columns (Lohn-EP / Material-EP / Geräte-EP).
+   *
+   *   - `percentage_of_unit_rate` — share of `unit_rate` that comes from
+   *     resources of type `resource_role`, expressed as a percent
+   *     (0–100). Used for ÖNORM "Lohn-Anteil %" etc.
+   *
+   * `column_type` stays `number` so existing AG-Grid number behaviour
+   * (right-align, tabular nums, formatting) applies. The flag is
+   * forwarded through the backend untouched.
+   */
+  derived?: 'resource_sum' | 'percentage_of_unit_rate';
+  /**
+   * Resource type filter for `derived` columns. Matches the `type` field
+   * on `position.metadata.resources[]` (one of: 'material' | 'labor' |
+   * 'equipment' | 'operator' | 'subcontractor' | 'other'). Ignored when
+   * `derived` is unset.
+   */
+  resource_role?: 'material' | 'labor' | 'equipment' | 'operator' | 'subcontractor' | 'other';
 }
 
 /**
@@ -506,16 +531,35 @@ export function getCustomColumnDefs(
       const isCalculated = colType === 'calculated';
       const isNumeric = colType === 'number' || isCalculated;
 
+      // Stable widths so adding 5–10 columns from a regional preset doesn't
+      // explode the grid horizontally. AG Grid still respects the user's
+      // resize via `resizable: true` (set on defaultColDef in BOQGrid).
+      // We keep `field` set to the same string as `colId` purely as an
+      // identifier — the actual data lives at
+      // `data.metadata.custom_fields[col.name]` and is read/written via
+      // the valueGetter / valueSetter below. AG Grid never falls back to
+      // direct field-based access when both getters are present, so the
+      // chosen field string can never collide with anything on `data`.
+      const isDerived = col.derived === 'resource_sum' || col.derived === 'percentage_of_unit_rate';
       const base: ColDef = {
         headerName: isCalculated ? `ƒ ${col.display_name}` : col.display_name,
-        field: `_custom_${col.name}`,
+        field: `custom_${col.name}`,
         colId: `custom_${col.name}`,
-        width: colType === 'text' ? 140 : 110,
-        editable: isCalculated
+        // Compact defaults — a regional preset can add up to 6 columns at
+        // once, so each one needs to fit on a normal laptop without
+        // pushing standard columns off-screen. Users can still drag the
+        // column edge wider thanks to `resizable: true` (defaultColDef).
+        width: colType === 'text' ? 130 : 110,
+        minWidth: 80,
+        maxWidth: 320,
+        // Derived columns are computed from position.metadata.resources —
+        // never editable. Marking them readOnly lines them up visually
+        // with the existing read-only "Total" column.
+        editable: isCalculated || isDerived
           ? false
           : (params) => !params.data?._isSection && !params.data?._isFooter,
         cellClass: isNumeric
-          ? isCalculated
+          ? isCalculated || isDerived
             ? 'text-right tabular-nums text-xs text-content-secondary'
             : 'text-right tabular-nums text-xs'
           : 'text-xs',
@@ -540,17 +584,80 @@ export function getCustomColumnDefs(
         return base;
       }
 
-      // Non-calculated columns: same valueGetter / valueSetter as before.
+      // Derived columns (GAEB Lohn/Material/Geräte EP, ÖNORM
+      // Lohn-Anteil %) auto-compute from `metadata.resources[]` so the
+      // user never has to retype values that already live on the
+      // position. The valueGetter sums or proportions resources of the
+      // declared `resource_role` and the column is marked read-only
+      // above. valueSetter is NOT installed — AG Grid will not fire
+      // edits on a non-editable cell, so the field is simply display.
+      if (isDerived) {
+        const role = col.resource_role;
+        const dec = Math.max(0, Math.min(6, col.decimals ?? 2));
+        base.valueGetter = (params) => {
+          const data = params.data;
+          if (!data || data._isSection || data._isFooter) return '';
+          const meta = (data.metadata as Record<string, unknown> | undefined) ?? {};
+          const resources = (meta.resources as Array<Record<string, unknown>> | undefined) ?? [];
+          if (!Array.isArray(resources) || resources.length === 0) return '';
+          // Sum the per-unit subtotal of resources whose `type` matches
+          // the role hint. Each resource is stored as PER-UNIT of the
+          // position (qty × rate is contribution to position.unit_rate).
+          let matched = 0;
+          let allSum = 0;
+          for (const res of resources) {
+            const t = typeof res.type === 'string' ? res.type : 'other';
+            const q = typeof res.quantity === 'number' ? res.quantity : parseFloat(String(res.quantity ?? '0')) || 0;
+            const r = typeof res.unit_rate === 'number' ? res.unit_rate : parseFloat(String(res.unit_rate ?? '0')) || 0;
+            const contribution = q * r;
+            allSum += contribution;
+            if (role && t === role) matched += contribution;
+          }
+          if (col.derived === 'percentage_of_unit_rate') {
+            if (allSum <= 0) return '';
+            const pct = (matched / allSum) * 100;
+            return pct.toFixed(dec);
+          }
+          // resource_sum
+          return matched.toFixed(dec);
+        };
+        base.tooltipValueGetter = () => {
+          if (col.derived === 'percentage_of_unit_rate') {
+            return `${col.display_name} — share of unit rate from ${role ?? 'matching'} resources (auto-computed; edit resources to change)`;
+          }
+          return `${col.display_name} — sum of ${role ?? 'matching'} resources for this position (auto-computed; edit resources to change)`;
+        };
+        return base;
+      }
+
+      // Non-calculated columns read/write through `metadata.custom_fields`
+      // keyed by the column's STORED `name` (captured in closure on
+      // every rebuild — never derived from grid-level identifiers like
+      // `field` / `colId` that the user might rename later). Keeping
+      // these two as the SINGLE source of truth eliminates the
+      // "values jump to a sibling column" class of bugs entirely.
       base.valueGetter = (params) => {
         const cf = (params.data?.metadata as Record<string, unknown> | undefined)
           ?.custom_fields as Record<string, unknown> | undefined;
         return cf?.[col.name] ?? '';
       };
+      // valueSetter rebuilds `metadata` and `custom_fields` as fresh
+      // objects rather than mutating in place. Mutation worked, but it
+      // made every edit silently mutate the React Query cache, which in
+      // turn caused stale cell renders when a sibling column was
+      // re-evaluated against the same row right after a cell commit.
+      // Immutable updates are how the rest of the grid handles row
+      // edits (see onCellValueChanged in BOQGrid.tsx) — bringing the
+      // setter in line keeps the data flow uniform.
       base.valueSetter = (params) => {
         if (!params.data) return false;
-        if (!params.data.metadata) params.data.metadata = {};
-        if (!params.data.metadata.custom_fields) params.data.metadata.custom_fields = {};
-        (params.data.metadata.custom_fields as Record<string, unknown>)[col.name] = params.newValue;
+        const meta = (params.data.metadata as Record<string, unknown> | undefined) ?? {};
+        const cf = (meta.custom_fields as Record<string, unknown> | undefined) ?? {};
+        if (cf[col.name] === params.newValue) return false;
+        params.data.metadata = {
+          ...meta,
+          custom_fields: { ...cf, [col.name]: params.newValue },
+        };
         return true;
       };
 

@@ -64,13 +64,15 @@ export function FileTree({ nodes, selectedId, onSelect, isLoading }: FileTreePro
 
       <ul className="px-3 pb-4 space-y-0.5">
         {nodes.map((node) => {
-          const Icon = KIND_ICONS[node.id as FileKind] ?? Folder;
-          const isActive = selectedId === node.id;
+          // Strip any legacy "category:" prefix from older backends.
+          const kind = node.id.replace(/^category:/, '') as FileKind;
+          const Icon = KIND_ICONS[kind] ?? Folder;
+          const isActive = selectedId === kind;
           return (
             <li key={node.id}>
               <button
                 type="button"
-                onClick={() => onSelect(node.id)}
+                onClick={() => onSelect(kind)}
                 className={clsx(
                   'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors',
                   isActive

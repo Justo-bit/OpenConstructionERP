@@ -5,6 +5,44 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.4] — 2026-05-06
+
+### Removed
+- Final user-facing size-cap copy across i18n + UI — `dashboard.upload_desc` "max 100 MB" tail, `MAX_UPLOAD_BYTES` guard in QuickUploadCard, `files.upload_hint` (EN/DE/RU) "max 100 MB", `costs.import_accepted` "max 10 MB" suffix (EN/DE/FR/ES/NL/CS/SE/RO), `fieldreports.file_types` "max 10 MB" suffix (all langs), `bim.upload_size_hint` and `bim.landing_size_hint` "Max 500 MB" suffix (all langs), `CadDataExplorerPage` "Max 100 MB" upload hint. Bundle now ships zero "max NNN MB" matches.
+
+## [2.9.3] — 2026-05-06
+
+### Added
+- Dashboard compact project cards on `/` — 11 most-recent + a "View all projects" CTA card (12 total, always fills full rows at 1/2/3/4 columns).
+- Dashboard project-locations map — single MapLibre canvas with one marker per project, lazy-loaded, region-fallback for projects without an address. Lives below Portfolio Overview.
+- BOQ Custom Columns: `derived` field on column definitions — GAEB Lohn-EP / Material-EP / Geräte-EP / Sonstiges-EP and ÖNORM Lohn-Anteil % auto-compute from `position.metadata.resources[]` instead of being free-form numeric inputs.
+- `/files` `Open in {Module}` deep-links — preview pane primary CTA, hover overlay on grid tiles, and inline cell on the list view. Each file links to its native tool with file context: PDF → `/takeoff?doc={id}`, IFC/RVT/DGN → `/projects/{p}/bim/{modelId}`, DWG/DXF → `/dwg-takeoff?drawingId={id}`, photos → `/photos?photo={id}`, secondary file-manager preview-select via `?file={id}`.
+- `/files` moved to Sidebar → Overview alongside Dashboard / Projects (was buried under Documentation).
+
+### Removed
+- All user-facing upload size caps — `_CAD_MAX_SIZE` (500 MB BIM), `MAX_FILE_SIZE` (100 MB documents / 50 MB AI / 50 MB GAEB), `MAX_PHOTO_SIZE` (50 MB), `_MAX_UPLOAD_BYTES` (50 MB DWG / 200 MB dashboards), `MAX_BACKUP_SIZE` (100 MB), `15 MB` BOQ multimodal cap, `10 MB` costs-import cap. Frontend "Max XX MB" hint strings stripped across DwgTakeoffPage, TakeoffPage, DocumentsPage, PhotoGalleryPage, UploadDialog, ImportDatabasePage, FieldReportsPage, ContactsPage, BIMPage, plus matching i18n fallbacks. The XLSX zip-bomb decompressed-size guard stays — that's a memory-safety check, not a user cap. (#110 follow-up)
+
+### Fixed
+- File Manager `/files` filter view — backend `file_tree` no longer prefixes node ids with `category:`; frontend strips legacy prefix defensively so old bookmarks (`?kind=category%3Abim_model`) still resolve.
+- BOQ `enrich-resources` 500 — `cost_repo.search` returns a 3-tuple but four call sites unpacked into a 2-tuple; fixed in `boq/service.py`, `boq/router.py`, `ai/router.py` (×2). Triggered by Update Rates action.
+- `/api/v1/requirements/template.xlsx` 400 — route ordering: literal `template.xlsx` route now precedes parametric `/{set_id}` so UUID validation no longer rejects it.
+- Frontend bundle freshness — `_frontend_dist` rebuilt with login fixes (LinkedIn link, external "Learn more" anchor) that were authored against source but missed the previous wheel build.
+- BOQ Custom Columns data-jump — `valueSetter` now spreads `metadata` immutably; custom-column detection uses `colId.startsWith('custom_')` instead of fragile `field` parsing.
+- BOQ Custom Columns horizontal overflow — grid height capped at viewport, custom columns get explicit min/max widths, wrapper has `min-w-0` so AG Grid's bottom scrollbar stays reachable.
+- Backend `add_custom_column` — replaced untyped `dict` body with `CustomColumnCreate` Pydantic schema (`extra='forbid'`) so typo'd fields fail with 422 instead of being silently dropped.
+- BOQ shortcuts Ctrl+E / Ctrl+I / Ctrl+L / Ctrl+/ — moved above the `isEditing` guard so they fire during cell editing (like Ctrl+S in spreadsheets), capture-phase listener so AG Grid no longer swallows them, `e.code`-based fallback for non-US keyboard layouts.
+- Sidebar `g d` chord → dashboard — chord sets a one-shot `oe_skip_onboarding_redirect` sessionStorage flag so the dashboard view loads even on fresh installs (the auto-onboarding redirect still fires for normal first-launch flow).
+- BOQ `enrich-resources` and `enrich-co2` 500 — the loops iterate `boq_data.positions` (Pydantic `PositionResponse`) but were reading `pos.metadata_` (the SQLAlchemy column name); Pydantic strips the trailing underscore, so attribute lookup raised. Now reads via `getattr(pos, "metadata", None) or getattr(pos, "metadata_", None)` to handle both ORM rows and serialised responses.
+- `/api/v1/dashboards/projects/{id}/snapshots` 500 — `oe_dashboards_snapshot` was never created on fresh installs because `app.modules.dashboards.models` (and `architecture_map`, `compliance`, `eac`, `jobs`) were missing from the `create_all` import list in `app/main.py`. All five module models now register before the bootstrap `Base.metadata.create_all()` call.
+
+## [2.9.2] — 2026-05-06
+
+### Fixed
+- BOQ delete race — successful single-position DELETE no longer invalidates the BOQ cache and races with concurrently-pending optimistic deletes (rapid sequential / batch delete). Sidecar queries (rollups, activity feed) still refresh; the BOQ cache rebuilds only on actual error.
+- BOQ Delete / Backspace hotkey now removes the selected positions through the existing tracked-delete pipeline (5-second undo toast).
+- BOQ toolbar collapses back to a single row — `Validate` / `Update Rates` / `AI Chat` removed as inline buttons (already present in the `Quality & AI` dropdown which now also surfaces `Update Rates`); toolbar uses `flex-nowrap` with horizontal scroll fallback so the right-anchored Grand Total never wraps to a second line.
+- Login page polish — module-honeycomb left-aligned (was centered), stats row updated to "30 regions" (was 11) and gained a "4 CAD formats" stat. Matching i18n EN fallbacks updated.
+
 ## [2.9.1] — 2026-05-05
 
 ### Added

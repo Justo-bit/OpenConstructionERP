@@ -35,14 +35,13 @@ import {
   TrendingUp,
   Users,
   Lightbulb,
-  ClipboardList,
-  MessageSquare,
-  HardHat,
-  Percent,
   CircleDashed,
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Badge, Skeleton, InfoHint, ActivityFeed as CrossModuleActivityFeed, EmptyState } from '@/shared/ui';
 import BIMCoverageCard from './BIMCoverageCard';
+import { CompactProjectCard } from './components/CompactProjectCard';
+import { DashboardProjectsMap } from './components/DashboardProjectsMap';
+import { ShowAllProjectsCard } from './components/ShowAllProjectsCard';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 
 /* ── Types ────────────────────────────────────────────────────────────── */
@@ -56,6 +55,15 @@ interface ProjectSummary {
   currency: string;
   locale?: string;
   created_at: string;
+  // Optional location fields — only present on /v1/projects/ payload
+  // when the project has been geocoded. The map widget needs them.
+  address?: {
+    street?: string | null;
+    city?: string | null;
+    country?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+  } | null;
 }
 
 interface ProjectCardMetrics {
@@ -1053,13 +1061,6 @@ function NextSteps({
 
 /* ── Project Metric Cards ─────────────────────────────────────────────── */
 
-const STATUS_INDICATOR_COLORS: Record<string, string> = {
-  active: '#16a34a',
-  draft: '#2563eb',
-  archived: '#6b7280',
-  template: '#7c3aed',
-};
-
 function ProjectMetricCards({
   cards,
   loading,
@@ -1092,23 +1093,6 @@ function ProjectMetricCards({
 
   if (!cards || cards.length === 0) return null;
 
-  const formatValue = (value: number, currency: string) => {
-    const symbol =
-      currency === 'EUR' ? '\u20AC' :
-      currency === 'GBP' ? '\u00A3' :
-      currency === 'USD' ? '$' :
-      currency === 'AED' ? 'AED ' :
-      `${currency} `;
-    if (value >= 1_000_000) return `${symbol}${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `${symbol}${(value / 1_000).toFixed(1)}K`;
-    if (value > 0)
-      return `${symbol}${value.toLocaleString(undefined, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      })}`;
-    return `${symbol}0`;
-  };
-
   return (
     <div className="animate-card-in" style={{ animationDelay: '130ms' }}>
       <div className="flex items-center justify-between mb-4">
@@ -1130,149 +1114,42 @@ function ProjectMetricCards({
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {cards.slice(0, 6).map((card, index) => {
-          const indicatorColor = STATUS_INDICATOR_COLORS[card.status] || '#6b7280';
-          const hasProgress = card.progress_pct > 0;
-          const hasSafetyAlert = card.safety_incidents > 0;
-
-          return (
-            <button
-              key={card.id}
-              onClick={() => navigate(`/projects/${card.id}`)}
-              className="group relative flex flex-col rounded-xl border border-border-light bg-surface-primary p-5 text-left transition-all duration-normal ease-oe hover:border-oe-blue/30 hover:shadow-md animate-stagger-in"
-              style={{ animationDelay: `${150 + index * 60}ms` }}
-            >
-              {/* Status indicator dot */}
-              <div className="absolute top-4 right-4 flex items-center gap-1.5">
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: indicatorColor }}
-                  title={card.status}
-                />
-                <ArrowRight
-                  size={14}
-                  className="text-content-quaternary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-normal"
-                />
-              </div>
-
-              {/* Project name + initial badge */}
-              <div className="flex items-start gap-3 mb-3 pr-10">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-oe-blue-subtle text-oe-blue text-sm font-bold transition-transform group-hover:scale-105">
-                  {card.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h4 className="text-sm font-semibold text-content-primary truncate leading-snug">
-                    {card.name}
-                  </h4>
-                  <p className="text-2xs text-content-tertiary truncate mt-0.5">
-                    {card.description ||
-                      [card.classification_standard?.toUpperCase(), card.region, card.currency]
-                        .filter(Boolean)
-                        .join(' \u00B7 ')}
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress bar (if schedule data exists) */}
-              {hasProgress && (
-                <div className="mb-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-2xs text-content-tertiary">
-                      {t('dashboard.card_progress', { defaultValue: 'Progress' })}
-                    </span>
-                    <span className="text-2xs font-semibold tabular-nums text-content-secondary">
-                      {card.progress_pct}%
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-surface-secondary overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500 ease-out"
-                      style={{
-                        width: `${Math.min(card.progress_pct, 100)}%`,
-                        background:
-                          card.progress_pct >= 80
-                            ? '#16a34a'
-                            : card.progress_pct >= 40
-                              ? '#2563eb'
-                              : '#ca8a04',
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* KPI chips */}
-              <div className="flex flex-wrap gap-2 mt-auto">
-                {/* BOQ Total Value */}
-                <div
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-oe-blue-subtle/60 px-2.5 py-1.5 text-2xs font-medium text-oe-blue"
-                  title={t('dashboard.card_boq_value', { defaultValue: 'BOQ Total Value' })}
-                >
-                  <DollarSign size={12} strokeWidth={2} />
-                  <span className="tabular-nums">{formatValue(card.boq_total_value, card.currency)}</span>
-                </div>
-
-                {/* Open Tasks */}
-                <div
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-medium ${
-                    card.open_tasks > 0
-                      ? 'bg-[#7c3aed]/10 text-[#7c3aed]'
-                      : 'bg-surface-secondary text-content-tertiary'
-                  }`}
-                  title={t('dashboard.card_open_tasks', { defaultValue: 'Open Tasks' })}
-                >
-                  <ClipboardList size={12} strokeWidth={2} />
-                  <span className="tabular-nums">{card.open_tasks}</span>
-                </div>
-
-                {/* Open RFIs */}
-                <div
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-medium ${
-                    card.open_rfis > 0
-                      ? 'bg-[#0891b2]/10 text-[#0891b2]'
-                      : 'bg-surface-secondary text-content-tertiary'
-                  }`}
-                  title={t('dashboard.card_open_rfis', { defaultValue: 'Open RFIs' })}
-                >
-                  <MessageSquare size={12} strokeWidth={2} />
-                  <span className="tabular-nums">{card.open_rfis}</span>
-                </div>
-
-                {/* Safety Incidents */}
-                <div
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-medium ${
-                    hasSafetyAlert
-                      ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
-                      : 'bg-surface-secondary text-content-tertiary'
-                  }`}
-                  title={t('dashboard.card_safety', { defaultValue: 'Safety Incidents' })}
-                >
-                  <HardHat size={12} strokeWidth={2} />
-                  <span className="tabular-nums">{card.safety_incidents}</span>
-                </div>
-
-                {/* Schedule Progress (compact chip, shown if progress exists) */}
-                {hasProgress && (
-                  <div
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-2xs font-medium ${
-                      card.progress_pct >= 80
-                        ? 'bg-[#16a34a]/10 text-[#16a34a]'
-                        : card.progress_pct >= 40
-                          ? 'bg-[#2563eb]/10 text-[#2563eb]'
-                          : 'bg-[#ca8a04]/10 text-[#ca8a04]'
-                    }`}
-                    title={t('dashboard.card_schedule_progress', { defaultValue: 'Schedule Progress' })}
-                  >
-                    <Percent size={12} strokeWidth={2} />
-                    <span className="tabular-nums">{card.progress_pct}%</span>
-                  </div>
-                )}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {/* No empty cells: cap visible cards so the grid is always a
+          full multiple of 4 (the widest breakpoint). With ≤3 projects
+          show all + CTA = 4 (1 row of 4). Otherwise show 7 + CTA = 8
+          (2 rows of 4). Grid drops the lg=3 step so there's no
+          breakpoint where 4 / 8 doesn't tile cleanly. */}
+      {(() => {
+        const visibleCount = cards.length <= 3 ? cards.length : 7;
+        const visible = cards.slice(0, visibleCount);
+        const hidden = Math.max(0, cards.length - visibleCount);
+        return (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {visible.map((card, index) => (
+              <CompactProjectCard
+                key={card.id}
+                id={card.id}
+                name={card.name}
+                description={card.description}
+                region={card.region}
+                currency={card.currency}
+                classificationStandard={card.classification_standard}
+                status={card.status}
+                boqCount={card.boq_count}
+                boqTotalValue={card.boq_total_value}
+                updatedAt={card.updated_at}
+                createdAt={card.created_at}
+                style={{ animationDelay: `${150 + index * 50}ms` }}
+              />
+            ))}
+            <ShowAllProjectsCard
+              totalCount={cards.length}
+              hiddenCount={hidden}
+              style={{ animationDelay: `${150 + visible.length * 50}ms` }}
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1367,8 +1244,6 @@ function SystemStatusSummary({
 
 /* ── Quick Upload Card ────────────────────────────────────────────────── */
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
-
 function QuickUploadCard() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -1404,21 +1279,7 @@ function QuickUploadCard() {
       const fileArray = Array.from(files);
       if (fileArray.length === 0) return;
 
-      const oversized = fileArray.filter((f) => f.size > MAX_UPLOAD_BYTES);
-      if (oversized.length > 0) {
-        addToast({
-          type: 'warning',
-          title: t('dashboard.upload_too_large', { defaultValue: 'Files too large' }),
-          message: t('dashboard.upload_too_large_desc', {
-            defaultValue:
-              '{{count}} file(s) exceed 100 MB and were skipped: {{names}}',
-            count: oversized.length,
-            names: oversized.map((f) => f.name).join(', '),
-          }),
-        });
-      }
-
-      const validFiles = fileArray.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+      const validFiles = fileArray;
       if (validFiles.length === 0) return;
 
       setUploading(true);
@@ -1532,7 +1393,7 @@ function QuickUploadCard() {
             <p className="mt-0.5 text-xs text-content-tertiary line-clamp-1">
               {hasProject
                 ? t('dashboard.upload_desc', {
-                    defaultValue: 'Upload to {{project}} — PDF, DWG, IFC, RVT, images (max 100 MB).',
+                    defaultValue: 'Upload to {{project}} — PDF, DWG, IFC, RVT, images.',
                     project: activeProjectName || t('dashboard.active_project', { defaultValue: 'active project' }),
                   })
                 : t('dashboard.upload_select_project', {
@@ -1579,9 +1440,17 @@ export function DashboardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  // First launch: redirect to onboarding wizard
+  // First launch: redirect to onboarding wizard.
+  // Skipped when the user arrived via the `g d` keyboard chord (Sidebar
+  // sets oe_skip_onboarding_redirect for one-shot use) so the chord
+  // always lands on the dashboard, never bounces to /onboarding.
   useEffect(() => {
     try {
+      const skip = sessionStorage.getItem('oe_skip_onboarding_redirect') === '1';
+      if (skip) {
+        sessionStorage.removeItem('oe_skip_onboarding_redirect');
+        return;
+      }
       if (localStorage.getItem('oe_onboarding_completed') !== 'true') {
         navigate('/onboarding', { replace: true });
       }
@@ -1896,6 +1765,24 @@ export function DashboardPage() {
       {/* ─── 5. Portfolio Overview (multi-project users) ─────────────── */}
       {projects && projects.length > 1 && (
         <PortfolioOverview projects={projects} />
+      )}
+
+      {/* ─── 5b. Project locations map (compact, lazy MapLibre) ──────── */}
+      {projects && projects.length > 0 && (
+        <div className="animate-card-in" style={{ animationDelay: '220ms' }}>
+          <DashboardProjectsMap
+            projects={projects.slice(0, 30).map((p) => ({
+              id: p.id,
+              name: p.name,
+              region: p.region,
+              lat: p.address?.lat ?? null,
+              lng: p.address?.lng ?? null,
+              address: p.address?.street ?? null,
+              city: p.address?.city ?? null,
+              country: p.address?.country ?? null,
+            }))}
+          />
+        </div>
       )}
 
       {/* ─── 6. BIM Coverage ─────────────────────────────────────────── */}

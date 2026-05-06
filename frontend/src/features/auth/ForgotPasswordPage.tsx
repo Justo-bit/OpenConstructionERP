@@ -102,16 +102,24 @@ export function ForgotPasswordPage() {
           style={{ animationDelay: '150ms' }}
         >
           {submitted ? (
-            /* Success state */
-            <div className="text-center py-4 animate-stagger-in" style={{ animationDelay: '200ms' }}>
+            /* Success state — generic copy avoids leaking whether the email exists */
+            <div className="text-center py-4 animate-stagger-in" role="status" aria-live="polite" style={{ animationDelay: '200ms' }}>
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-semantic-success-bg text-semantic-success">
                 <CheckCircle2 size={28} />
               </div>
               <h2 className="text-lg font-semibold text-content-primary mb-2">
                 {t('auth.check_email', 'Check your email')}
               </h2>
-              <p className="text-sm text-content-secondary mb-6">
-                {t('auth.reset_sent', { defaultValue: "If an account exists for {{email}}, you'll receive a password reset link shortly.‌⁠‍", email })}
+              <p className="text-sm text-content-secondary mb-2">
+                {t('auth.reset_sent_generic', {
+                  defaultValue: "If an account exists for {{email}}, we've sent password reset instructions.",
+                  email,
+                })}
+              </p>
+              <p className="text-xs text-content-tertiary mb-6">
+                {t('auth.reset_check_spam', {
+                  defaultValue: "Didn't receive it? Check your spam folder or try again in a few minutes.",
+                })}
               </p>
               <Link
                 to="/login"

@@ -205,6 +205,8 @@ function ThemeToggle() {
       onClick={cycle}
       aria-label={label}
       title={label}
+      data-testid="theme-toggle"
+      data-theme={theme}
       className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg text-content-tertiary hover:bg-surface-secondary hover:text-content-secondary transition-colors"
     >
       <Icon size={16} strokeWidth={1.75} />

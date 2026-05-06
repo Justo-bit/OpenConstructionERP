@@ -45,7 +45,6 @@ from app.modules.documents.schemas import (
     SheetVersionHistory,
 )
 from app.modules.documents.service import (
-    MAX_FILE_SIZE,
     PHOTO_BASE,
     PHOTO_THUMB_BASE,
     UPLOAD_BASE,
@@ -130,12 +129,7 @@ async def upload_document(
             detail="Too many uploads. Please wait a moment and try again.",
             headers={"Retry-After": "60"},
         )
-    # Early rejection based on Content-Length header (before reading body)
-    if content_length is not None and content_length > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB.",
-        )
+    # No upload size cap — per product policy.
     try:
         doc = await service.upload_document(project_id, file, category, user_id)
         return _doc_to_response(doc)
@@ -663,11 +657,7 @@ async def split_pdf(
     Generates thumbnails for each page.
     """
     await verify_project_access(project_id, user_id, session)
-    if content_length is not None and content_length > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB.",
-        )
+    # No upload size cap — per product policy.
     try:
         sheets = await service.split_pdf_to_sheets(project_id, file, user_id)
         return [_sheet_to_response(s) for s in sheets]

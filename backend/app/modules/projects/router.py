@@ -1841,9 +1841,40 @@ async def post_export_preview(
 ) -> ExportPreview:
     """Cheap dry-run: returns the table-row counts and an attachment-size
     estimate for the chosen scope. Lets the wizard show "we'll pack 12 MB"
-    before the user clicks Download."""
+    before the user clicks Download.
+
+    Note: this endpoint accepts a body (``ExportOptions``) and is therefore
+    POST-only. Probing it with a plain ``GET`` will return 405. A
+    convenience GET alias exists immediately below — it returns the same
+    shape using ``ExportOptions()`` defaults (``scope="metadata_only"``,
+    no attachments) so curl users / link previews have something to look
+    at without crafting a JSON body.
+    """
     await _verify_project_owner(service, project_id, user_id, payload)
     return await fm_preview_bundle(session, str(project_id), options)
+
+
+@router.get(
+    "/{project_id}/export/preview/",
+    response_model=ExportPreview,
+    summary="Preview a bundle export with default options (GET alias of POST)",
+)
+async def get_export_preview(
+    project_id: uuid.UUID,
+    user_id: CurrentUserId,
+    payload: CurrentUserPayload,
+    session: SessionDep,
+    service: ProjectService = Depends(_get_service),
+) -> ExportPreview:
+    """GET alias of ``POST /export/preview/`` for ergonomic URL probing.
+
+    Uses ``ExportOptions()`` defaults — ``scope="metadata_only"`` with
+    every ``include_*`` flag off. The wizard always sends POST with
+    explicit options; this alias exists so opening the URL in a browser
+    or hitting it from curl returns a useful 200 instead of 405.
+    """
+    await _verify_project_owner(service, project_id, user_id, payload)
+    return await fm_preview_bundle(session, str(project_id), ExportOptions())
 
 
 @router.post(

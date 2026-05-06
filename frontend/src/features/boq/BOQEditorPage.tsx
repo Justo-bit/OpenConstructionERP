@@ -249,6 +249,8 @@ export function BOQEditorPage() {
   const addPositionRef = useRef<(() => void) | null>(null);
   /** Stable ref for handleDuplicatePosition — allows keyboard shortcut access before declaration. */
   const duplicatePositionRef = useRef<((id: string) => void) | null>(null);
+  /** Stable ref for trackedDelete — allows keyboard shortcut access before declaration. */
+  const trackedDeleteRef = useRef<((id: string) => void) | null>(null);
   /** Stable ref for handleExport — allows keyboard shortcut access before declaration. */
   const handleExportRef = useRef<((format: 'excel' | 'csv' | 'pdf' | 'gaeb') => void) | null>(null);
 
@@ -426,8 +428,23 @@ export function BOQEditorPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => boqApi.deletePosition(id),
-    onSuccess: () => invalidateAll(),
+    // Don't invalidate the main BOQ query on success — we already removed
+    // the position from the cache optimistically in `trackedDelete`. A
+    // refetch here would race with concurrent pending deletes (batch
+    // delete, rapid sequential deletes) and bring back rows that were
+    // optimistically removed but whose API call is still in flight.
+    // Sidecar queries (rollups / activity feed) are safe to refresh.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['boq-cost-breakdown', boqId] });
+      queryClient.invalidateQueries({ queryKey: ['boq-resource-summary', boqId] });
+      queryClient.invalidateQueries({ queryKey: ['boq-markups', boqId] });
+      queryClient.invalidateQueries({ queryKey: ['boq-activity', boqId] });
+    },
     onError: (err: Error) => {
+      // The server rejected the delete — re-sync the BOQ so the row
+      // reappears (otherwise the user sees a phantom-deleted position
+      // that's still on the server).
+      queryClient.invalidateQueries({ queryKey: ['boq', boqId] });
       addToast({ type: 'error', title: t('boq.delete_failed', { defaultValue: 'Failed to delete position' }), message: err.message });
     },
   });
@@ -673,6 +690,10 @@ export function BOQEditorPage() {
     },
     [deleteMutation, boq?.positions, queryClient, boqId, addToast, removeToast, t],
   );
+
+  // Bind ref so the keyboard handler can call trackedDelete without a
+  // stale-closure dance.
+  trackedDeleteRef.current = trackedDelete;
 
   /** Flush any pending deferred delete when the component unmounts. */
   useEffect(() => {
@@ -1078,32 +1099,32 @@ export function BOQEditorPage() {
         return;
       }
 
-      // Guard remaining shortcuts — don't fire when editing cells
-      if (isEditing) return;
+      // App-level Ctrl-shortcuts must fire even while editing a cell
+      // (same as Ctrl+S in spreadsheets) — guard placed below them.
+      const k = e.key.toLowerCase();
+      const codeLetter = e.code.startsWith('Key') ? e.code.slice(3).toLowerCase() : '';
+      const isCmd = e.ctrlKey || e.metaKey;
 
-      // Ctrl+D = Duplicate selected position
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'd') {
+      // Ctrl+E = Open export menu (use e.code so non-US keyboard layouts
+      // still match — e.g. AZERTY where 'e' is at a different KeyE slot
+      // but the physical key is the same).
+      if (isCmd && !e.shiftKey && (k === 'e' || codeLetter === 'e')) {
         e.preventDefault();
-        if (selectedPositionIds.length === 1) {
-          duplicatePositionRef.current?.(selectedPositionIds[0]!);
-        }
-        return;
-      }
-      // Ctrl+E = Open export menu
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'e') {
-        e.preventDefault();
+        e.stopPropagation();
         handleExportRef.current?.('excel');
         return;
       }
       // Ctrl+I = Open import dialog
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'i') {
+      if (isCmd && !e.shiftKey && (k === 'i' || codeLetter === 'i')) {
         e.preventDefault();
+        e.stopPropagation();
         importInputRef.current?.click();
         return;
       }
       // Ctrl+L = Toggle lock/unlock
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'l') {
+      if (isCmd && !e.shiftKey && (k === 'l' || codeLetter === 'l')) {
         e.preventDefault();
+        e.stopPropagation();
         if (boq?.is_locked) {
           handleUnlock();
         } else {
@@ -1111,19 +1132,47 @@ export function BOQEditorPage() {
         }
         return;
       }
-      // Ctrl+/ = Toggle AI chat panel
-      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      // Ctrl+/ = Toggle AI chat panel. e.code can be 'Slash' (US) or
+      // 'IntlRo'/'Minus' on other layouts — match e.key as primary and
+      // e.code='Slash' as the layout-aware fallback.
+      if (isCmd && (e.key === '/' || e.code === 'Slash')) {
         e.preventDefault();
+        e.stopPropagation();
         setAiChatOpen((prev) => {
           if (!prev) { setCostFinderOpen(false); setSmartPanelOpen(false); }
           return !prev;
         });
         return;
       }
+
+      // Guard remaining shortcuts — don't fire when editing cells
+      if (isEditing) return;
+
+      // Delete / Backspace = delete selected position(s). Fires the same
+      // tracked-delete pipeline as the context menu / batch-bar, so undo
+      // toast + 5s deferred API call still apply.
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPositionIds.length > 0) {
+        e.preventDefault();
+        for (const id of selectedPositionIds) {
+          trackedDeleteRef.current?.(id);
+        }
+        return;
+      }
+
+      // Ctrl+D = Duplicate selected position
+      if (isCmd && !e.shiftKey && (k === 'd' || codeLetter === 'd')) {
+        e.preventDefault();
+        if (selectedPositionIds.length === 1) {
+          duplicatePositionRef.current?.(selectedPositionIds[0]!);
+        }
+        return;
+      }
     }
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    // Use capture phase so AG Grid's cell-editor handlers can't swallow
+    // these app-level shortcuts before we see them.
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [handleUndo, handleRedo, selectedPositionIds, handleLock, handleUnlock, boq?.is_locked]);
 
   /* ── Activity panel ───────────────────────────────────────────────── */
@@ -3174,7 +3223,11 @@ export function BOQEditorPage() {
           flex-wrap still lets it spill onto a second row on narrow viewports
           gracefully — but the source of truth lives in one place now. */}
       {hasPositions ? (
-        <div className="mb-2">
+        // `min-w-0` prevents the BOQ grid from forcing this column wider
+        // than the viewport when many custom columns are added — the grid
+        // keeps its own internal horizontal scrollbar, which is what the
+        // user expects (toolbar and headers stay aligned with the page).
+        <div className="mb-2 min-w-0">
         <BOQGrid
           ref={boqGridRef}
           positions={boq.positions}

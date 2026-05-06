@@ -198,6 +198,11 @@ export interface BIMViewerProps {
    *  screenshot several models at once can tell them apart. Optional; the
    *  filename falls back to "bim-screenshot-<timestamp>.png" when unset. */
   modelName?: string;
+  /** Model.metadata bag from the backend. The viewer reads
+   *  ``geometry_type === "placeholder"`` here to surface the placeholder
+   *  banner even before any element-level ``is_placeholder`` flag arrives
+   *  (paginated element fetch can lag behind the model load). */
+  modelMetadata?: Record<string, unknown> | null;
 }
 
 /* ── Properties Table ──────────────────────────────────────────────────── */
@@ -426,6 +431,7 @@ export function BIMViewer({
   leftPanelOpen = false,
   leftPanelWidth = 320,
   modelName,
+  modelMetadata = null,
 }: BIMViewerProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -477,23 +483,67 @@ export function BIMViewer({
   // when the component unmounts mid-load (avoids setState-on-unmounted warns).
   const geometryProgressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** "Placeholder geometry" banner dismissal. Session-scoped (resets on
-   *  next page load). The banner appears when ANY loaded element carries
-   *  ``properties.is_placeholder === true`` — produced by the text-IFC
-   *  fallback path when DDC cad2data is unavailable (issue #53 H1). */
-  const [placeholderBannerDismissed, setPlaceholderBannerDismissed] = useState(false);
+  /** "Placeholder geometry" banner dismissal. Persisted per-model in
+   *  localStorage so a user who dismisses it for model A still sees it
+   *  on model B (separate decision per upload). The banner appears when
+   *  ``model.metadata.geometry_type === "placeholder"`` (set by the text-IFC
+   *  fallback at ``ifc_processor.py``) OR when ANY loaded element carries
+   *  ``properties.is_placeholder === true``. The metadata-level check
+   *  fires on first paint even before paginated element fetch arrives. */
+  const placeholderDismissKey = modelId
+    ? `oe_bim_placeholder_banner_dismissed:${modelId}`
+    : null;
+  const [placeholderBannerDismissed, setPlaceholderBannerDismissedState] = useState<boolean>(() => {
+    if (!placeholderDismissKey) return false;
+    try {
+      return localStorage.getItem(placeholderDismissKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  // Re-hydrate dismissal when modelId changes — user might switch models
+  // and the previous one was dismissed but the new one wasn't.
+  useEffect(() => {
+    if (!placeholderDismissKey) {
+      setPlaceholderBannerDismissedState(false);
+      return;
+    }
+    try {
+      setPlaceholderBannerDismissedState(
+        localStorage.getItem(placeholderDismissKey) === '1',
+      );
+    } catch {
+      setPlaceholderBannerDismissedState(false);
+    }
+  }, [placeholderDismissKey]);
+  const setPlaceholderBannerDismissed = useCallback(
+    (val: boolean) => {
+      setPlaceholderBannerDismissedState(val);
+      if (!placeholderDismissKey) return;
+      try {
+        if (val) localStorage.setItem(placeholderDismissKey, '1');
+        else localStorage.removeItem(placeholderDismissKey);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [placeholderDismissKey],
+  );
   const isPlaceholderGeometry = useMemo(() => {
+    // Model-level signal lights the banner instantly on first paint —
+    // metadata.geometry_type is set by the text-IFC fallback path.
+    const geomType = modelMetadata?.['geometry_type'];
+    if (typeof geomType === 'string' && geomType === 'placeholder') return true;
     if (!elements || elements.length === 0) return false;
-    // Cheap check — bail at the first match. Loaded element lists are
-    // typically several hundred to a few thousand entries; this stays
-    // O(N) but short-circuits.
+    // Element-level fallback — covers older uploads where the metadata
+    // bag wasn't populated yet but element flags were.
     for (const el of elements) {
       if (el.is_placeholder === true) return true;
       const flag = (el.properties as Record<string, unknown> | undefined)?.is_placeholder;
       if (flag === true || flag === 'true' || flag === 1) return true;
     }
     return false;
-  }, [elements]);
+  }, [elements, modelMetadata]);
 
   /** Context menu state -- null when closed. */
   const [contextMenu, setContextMenu] = useState<BIMContextMenuState | null>(null);
@@ -1816,17 +1866,18 @@ export function BIMViewer({
             <div className="text-xs leading-relaxed">
               <span className="font-semibold">
                 {t('bim.placeholder_banner.title', {
-                  defaultValue: 'Geometry shown is a placeholder.',
+                  defaultValue: 'Placeholder geometry',
                 })}
-              </span>{' '}
+              </span>
+              <span>{' — '}</span>
               <span>
                 {t('bim.placeholder_banner.body', {
                   defaultValue:
-                    'Install DDC cad2data converter to view real IFC geometry.',
+                    'install DDC IFC Converter for accurate meshes.',
                 })}
               </span>{' '}
               <a
-                href="/docs/INSTALL_DDC.md"
+                href="https://github.com/datadrivenconstruction/cad2data-Revit-IFC-DWG-DGN"
                 target="_blank"
                 rel="noreferrer"
                 className="font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-200"

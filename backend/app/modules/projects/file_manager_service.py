@@ -489,7 +489,12 @@ async def file_tree(
         )
         tree.append(
             FileTreeNode(
-                id=f"category:{kind}",
+                # id IS the FileKind so the UI can reuse it as a filter
+                # category — the typed `kind` field carries the node-class
+                # ("category"|"folder"|...) separately. An earlier draft
+                # prefixed this with "category:" but that broke
+                # FolderCardGrid icon lookup and selection-equality.
+                id=kind,
                 label=_CATEGORY_LABELS.get(kind, kind.replace("_", " ").title()),  # type: ignore[arg-type]
                 kind="category",
                 file_count=len(kind_rows),

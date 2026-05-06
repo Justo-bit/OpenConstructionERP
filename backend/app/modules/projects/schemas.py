@@ -16,7 +16,9 @@ _UNIT_CODE_RE = re.compile(r"^[A-Za-z0-9._/²³-]{1,20}$")
 _DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d.%m.%Y", "%m/%d/%Y")
 
 
-def _validate_fx_rates(value: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+def _validate_fx_rates(
+    value: list[dict[str, Any]] | dict[str, Any] | None,
+) -> list[dict[str, Any]] | None:
     """‌⁠‍Validate the ``fx_rates`` JSON list shape (RFC 37, Issues #88/#93).
 
     Each entry must be a dict with:
@@ -30,11 +32,36 @@ def _validate_fx_rates(value: list[dict[str, Any]] | None) -> list[dict[str, Any
     we keep the dict shape rather than a structured Pydantic submodel so it
     survives round-trip through ``Project.fx_rates`` without coupling to a
     SQLAlchemy relationship.
+
+    Convenience: a flat ``{code: rate}`` mapping (e.g. ``{"USD": "1.08"}``)
+    is also accepted and normalised to the canonical list-of-dicts form
+    before validation. This matches the shape some third-party clients
+    and Probe-A scripts post.
     """
     if value is None:
         return None
+    # Accept a {code: rate} or {code: {rate, label}} mapping for ergonomics.
+    # Normalise it to the canonical list-of-dicts shape, then fall through
+    # to the existing validator so all rules (regex, duplicates, positivity)
+    # apply identically regardless of input shape.
+    if isinstance(value, dict):
+        normalised: list[dict[str, Any]] = []
+        for code, rate_or_obj in value.items():
+            if isinstance(rate_or_obj, dict):
+                rate = rate_or_obj.get("rate", "")
+                label = rate_or_obj.get("label", "")
+            else:
+                rate = rate_or_obj
+                label = ""
+            normalised.append(
+                {"code": str(code), "rate": str(rate), "label": str(label)},
+            )
+        value = normalised
     if not isinstance(value, list):
-        raise ValueError("fx_rates must be a list of {code, rate, label} dicts")
+        raise ValueError(
+            "fx_rates must be a list of {code, rate, label} dicts "
+            "or a {code: rate} mapping",
+        )
     seen: set[str] = set()
     cleaned: list[dict[str, Any]] = []
     for entry in value:
@@ -244,9 +271,15 @@ class ProjectCreate(BaseModel):
         description="Project-scoped unit codes not in the canonical frontend list.",
     )
 
-    @field_validator("fx_rates", mode="after")
+    # mode="before" so we get the raw input before Pydantic coerces it to
+    # ``list[dict[str, Any]]`` — this lets us also accept the convenience
+    # ``{code: rate}`` mapping shape that some clients post.
+    @field_validator("fx_rates", mode="before")
     @classmethod
-    def _check_fx_rates(cls, v: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    def _check_fx_rates(
+        cls,
+        v: list[dict[str, Any]] | dict[str, Any] | None,
+    ) -> list[dict[str, Any]] | None:
         return _validate_fx_rates(v)
 
     @field_validator("default_vat_rate", mode="after")
@@ -319,9 +352,15 @@ class ProjectUpdate(BaseModel):
     default_vat_rate: str | None = Field(default=None, max_length=10)
     custom_units: list[str] | None = None
 
-    @field_validator("fx_rates", mode="after")
+    # mode="before" so we get the raw input before Pydantic coerces it to
+    # ``list[dict[str, Any]]`` — this lets us also accept the convenience
+    # ``{code: rate}`` mapping shape that some clients post.
+    @field_validator("fx_rates", mode="before")
     @classmethod
-    def _check_fx_rates(cls, v: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    def _check_fx_rates(
+        cls,
+        v: list[dict[str, Any]] | dict[str, Any] | None,
+    ) -> list[dict[str, Any]] | None:
         return _validate_fx_rates(v)
 
     @field_validator("default_vat_rate", mode="after")

@@ -766,6 +766,22 @@ export function SettingsPage() {
 
   const pwValid = pwForm.current.length >= 8 && pwForm.new_.length >= 8 && pwForm.new_ === pwForm.confirm;
 
+  // ── Tab segmentation (Probe-D P2-8) ─────────────────────────────────
+  // Settings used to be a single 136-control scroll. Sections are now
+  // grouped into tabs so the visible set per tab fits in one viewport.
+  // Tab IDs are stable for deep-links + URL ?tab=… (TODO future).
+  type SettingsTab = 'general' | 'account' | 'regional' | 'bimcad' | 'ai' | 'integrations' | 'advanced';
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const TABS: { id: SettingsTab; label: string; defaultLabel: string }[] = [
+    { id: 'general',      label: 'settings.tab_general',      defaultLabel: 'General' },
+    { id: 'account',      label: 'settings.tab_account',      defaultLabel: 'Account' },
+    { id: 'regional',     label: 'settings.tab_regional',     defaultLabel: 'Regional' },
+    { id: 'bimcad',       label: 'settings.tab_bimcad',       defaultLabel: 'BIM / CAD' },
+    { id: 'ai',           label: 'settings.tab_ai',           defaultLabel: 'AI' },
+    { id: 'integrations', label: 'settings.tab_integrations', defaultLabel: 'Integrations' },
+    { id: 'advanced',     label: 'settings.tab_advanced',     defaultLabel: 'Advanced' },
+  ];
+
   return (
     <div className="w-full space-y-6 animate-fade-in">
       <Breadcrumb items={[
@@ -785,10 +801,48 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-content-secondary">{t('settings.subtitle', { defaultValue: 'Manage your account and preferences' })}</p>
       </div>
 
+      {/* ── Tab segment ───────────────────────────────────────────────── */}
+      <div
+        role="tablist"
+        aria-label={t('nav.settings', 'Settings')}
+        data-testid="settings-tabs"
+        className="flex flex-wrap gap-1 border-b border-border-light pb-px"
+      >
+        {TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              aria-controls={`settings-panel-${tab.id}`}
+              id={`settings-tab-${tab.id}`}
+              data-testid={`settings-tab-${tab.id}`}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2 ${
+                isActive
+                  ? 'border-oe-blue text-oe-blue bg-oe-blue/[0.04]'
+                  : 'border-transparent text-content-secondary hover:text-content-primary hover:bg-surface-secondary'
+              }`}
+            >
+              {t(tab.label, { defaultValue: tab.defaultLabel })}
+            </button>
+          );
+        })}
+      </div>
+
       {/* ── Masonry-style two-column layout ──────────────────────────── */}
-      <div className="columns-1 xl:columns-2 gap-6 space-y-6 [&>*]:break-inside-avoid">
+      <div
+        role="tabpanel"
+        id={`settings-panel-${activeTab}`}
+        aria-labelledby={`settings-tab-${activeTab}`}
+        className="columns-1 xl:columns-2 gap-6 space-y-6 [&>*]:break-inside-avoid"
+      >
 
       {/* Profile */}
+      {activeTab === 'general' && (<>
+
       <Card className="animate-card-in" style={{ animationDelay: '100ms' }}>
         <CardHeader title={t('settings.profile_title', { defaultValue: 'Profile' })} subtitle={t('settings.profile_subtitle', { defaultValue: 'Your personal information' })} />
         <CardContent>
@@ -870,15 +924,19 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Interface Mode (General) */}
+      <InterfaceModeCard animationDelay="150ms" />
+      </>)}{/* end general */}
+
+      {activeTab === 'ai' && (<>
       {/* AI Configuration */}
       <div>
         <InfoHint className="animate-card-in mb-6" style={{ animationDelay: '140ms' }} text={t('settings.ai_guidance', { defaultValue: 'AI features (estimation, takeoff analysis, semantic search) require an API key. Anthropic Claude is recommended for best accuracy. Keys are stored encrypted and never leave your server.' })} />
         <AIConfigurationCard animationDelay="200ms" />
       </div>
+      </>)}{/* end ai (continues below for vector status) */}
 
-      {/* Interface Mode */}
-      <InterfaceModeCard animationDelay="150ms" />
-
+      {activeTab === 'regional' && (<>
       {/* Language */}
       <Card className="animate-card-in" style={{ animationDelay: '250ms' }}>
         <CardHeader title={t('settings.language_title', { defaultValue: 'Language & Region' })} subtitle={t('settings.language_subtitle', { defaultValue: 'Choose your preferred language' })} />
@@ -919,18 +977,45 @@ export function SettingsPage() {
 
       {/* Regional Settings */}
       <RegionalSettings animationDelay="280ms" />
+      </>)}{/* end regional */}
 
+      {activeTab === 'general' && (<>
       {/* Appearance */}
       <AppearanceCard animationDelay="330ms" />
+      </>)}{/* end general (appearance) */}
 
+      {activeTab === 'advanced' && (<>
       {/* Backup & Restore */}
       <div className="animate-card-in" style={{ animationDelay: '370ms' }}>
         <BackupRestore />
       </div>
+      </>)}{/* end advanced (backup) */}
 
+      {activeTab === 'ai' && (<>
       {/* Semantic Search status — per-collection vector store health */}
       <VectorStatusCard />
+      </>)}{/* end ai (vector) */}
 
+      {activeTab === 'bimcad' && (<>
+      {/* BIM/CAD currently has no per-tab cards; surface the resources
+          link as a convenience and direct users to the dedicated /bim
+          and /takeoff modules. */}
+      <Card className="animate-card-in" style={{ animationDelay: '100ms' }}>
+        <CardHeader
+          title={t('settings.bimcad_title', { defaultValue: 'BIM & CAD' })}
+          subtitle={t('settings.bimcad_subtitle', { defaultValue: 'Manage BIM converters and takeoff settings from their dedicated modules' })}
+        />
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/bim"><Button variant="secondary">{t('settings.open_bim', { defaultValue: 'Open BIM' })}</Button></Link>
+            <Link to="/takeoff"><Button variant="secondary">{t('settings.open_takeoff', { defaultValue: 'Open Takeoff' })}</Button></Link>
+            <Link to="/dwg-takeoff"><Button variant="secondary">{t('settings.open_dwg', { defaultValue: 'Open DWG Takeoff' })}</Button></Link>
+          </div>
+        </CardContent>
+      </Card>
+      </>)}{/* end bimcad */}
+
+      {activeTab === 'advanced' && (<>
       {/* Databases & Resources */}
       <Card className="animate-card-in" style={{ animationDelay: '400ms' }}>
         <CardHeader
@@ -964,7 +1049,9 @@ export function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+      </>)}{/* end advanced */}
 
+      {activeTab === 'account' && (<>
       {/* Change password */}
       <Card className="animate-card-in" style={{ animationDelay: '480ms' }}>
         <CardHeader
@@ -1051,6 +1138,21 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Danger zone (Account tab) */}
+      <Card className="animate-card-in border-semantic-error/20" style={{ animationDelay: '520ms' }}>
+        <CardHeader title={t('settings.account_title', { defaultValue: 'Account' })} subtitle={t('settings.account_subtitle', { defaultValue: 'Sign out or manage your account' })} />
+        <CardContent>
+          <Button
+            variant="danger"
+            onClick={() => { logout(); window.location.href = '/login'; }}
+          >
+            {t('settings.sign_out', { defaultValue: 'Sign Out' })}
+          </Button>
+        </CardContent>
+      </Card>
+      </>)}{/* end account */}
+
+      {activeTab === 'integrations' && (<>
       {/* Integrations link */}
       <Card className="animate-card-in" style={{ animationDelay: '500ms' }}>
         <CardHeader title={t('integrations.title', { defaultValue: 'Integrations' })} subtitle={t('integrations.desc', { defaultValue: 'Connect Teams, Slack, Telegram, Discord, Webhooks' })} />
@@ -1064,19 +1166,7 @@ export function SettingsPage() {
           </button>
         </CardContent>
       </Card>
-
-      {/* Danger zone */}
-      <Card className="animate-card-in border-semantic-error/20" style={{ animationDelay: '520ms' }}>
-        <CardHeader title={t('settings.account_title', { defaultValue: 'Account' })} subtitle={t('settings.account_subtitle', { defaultValue: 'Sign out or manage your account' })} />
-        <CardContent>
-          <Button
-            variant="danger"
-            onClick={() => { logout(); window.location.href = '/login'; }}
-          >
-            {t('settings.sign_out', { defaultValue: 'Sign Out' })}
-          </Button>
-        </CardContent>
-      </Card>
+      </>)}{/* end integrations */}
 
       </div>{/* End masonry columns */}
 

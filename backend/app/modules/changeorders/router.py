@@ -188,15 +188,32 @@ async def create_change_order(
 
 @router.get("/", response_model=list[ChangeOrderResponse])
 async def list_change_orders(
-    project_id: uuid.UUID = Query(...),
-    user_id: CurrentUserId = None,  # type: ignore[assignment]
+    user_id: CurrentUserId,
+    project_id: uuid.UUID | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
     status_filter: str | None = Query(default=None, alias="status"),
     service: ChangeOrderService = Depends(_get_service),
 ) -> list[ChangeOrderResponse]:
-    """List change orders for a project."""
-    orders, _ = await service.list_orders(project_id, offset=offset, limit=limit, status_filter=status_filter)
+    """List change orders.
+
+    If ``project_id`` is supplied, the result is scoped to that project (the
+    caller still needs to own/admin it via the existing per-project guards on
+    other endpoints). When omitted we scope to every project the caller owns —
+    this matches the convention used by sibling modules and avoids the 422
+    that fresh installs hit before any project is selected.
+    """
+    if project_id is None:
+        orders, _ = await service.list_orders_for_owner(
+            uuid.UUID(str(user_id)),
+            offset=offset,
+            limit=limit,
+            status_filter=status_filter,
+        )
+    else:
+        orders, _ = await service.list_orders(
+            project_id, offset=offset, limit=limit, status_filter=status_filter
+        )
     return [_order_to_response(o) for o in orders]
 
 

@@ -160,16 +160,52 @@ async def get_stats(
 # ── Create set ──────────────────────────────────────────────────────────────
 
 
+class _RequirementSetCreateBody(BaseModel):
+    """Body schema for create_set when project_id is supplied via query.
+
+    Mirrors RequirementSetCreate but with project_id optional so SDK users
+    can pass it either in the body OR as ``?project_id=...`` (audit P2-2).
+    The handler merges both into the canonical RequirementSetCreate before
+    calling the service, so downstream code is unchanged.
+    """
+
+    project_id: uuid.UUID | None = None
+    name: str = ""
+    description: str = ""
+    source_type: str = "manual"
+    source_filename: str = ""
+    metadata: dict[str, Any] = {}
+
+
 @router.post("/", response_model=RequirementSetResponse, status_code=201)
 async def create_set(
-    data: RequirementSetCreate,
+    data: _RequirementSetCreateBody,
     user_id: CurrentUserId,
+    project_id: uuid.UUID | None = Query(default=None),
     _perm: None = Depends(RequirePermission("requirements.create")),
     service: RequirementsService = Depends(_get_service),
 ) -> RequirementSetResponse:
-    """Create a new requirement set."""
+    """Create a new requirement set.
+
+    ``project_id`` may be supplied in the request body OR as a query
+    parameter. Body wins when both are present.
+    """
+    effective_project_id = data.project_id or project_id
+    if effective_project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="project_id is required (body or ?project_id= query parameter)",
+        )
+    payload = RequirementSetCreate(
+        project_id=effective_project_id,
+        name=data.name,
+        description=data.description,
+        source_type=data.source_type,
+        source_filename=data.source_filename,
+        metadata=data.metadata,
+    )
     try:
-        item = await service.create_set(data, user_id=user_id)
+        item = await service.create_set(payload, user_id=user_id)
         return _set_to_response(item)
     except HTTPException:
         raise
@@ -203,23 +239,7 @@ async def list_sets(
     return [_set_to_response(i) for i in items]
 
 
-# ── Get set detail ──────────────────────────────────────────────────────────
-
-
-@router.get("/{set_id}", response_model=RequirementSetDetail)
-async def get_set(
-    set_id: uuid.UUID,
-    user_id: CurrentUserId,
-    session: SessionDep,
-    service: RequirementsService = Depends(_get_service),
-) -> RequirementSetDetail:
-    """Get a requirement set with all its requirements and gate results."""
-    item = await service.get_set(set_id)
-    await verify_project_access(item.project_id, str(user_id), session)
-    return _set_to_detail(item)
-
-
-# ── Export requirements ─────────────────────────────────────────────────────
+# ── Export helpers ──────────────────────────────────────────────────────────
 
 _EXPORT_COLUMNS = [
     "entity",
@@ -246,6 +266,10 @@ def _export_rows(item: object) -> list[dict[str, Any]]:
     return out
 
 
+# IMPORTANT: ``/template.xlsx`` MUST come before ``/{set_id}`` so FastAPI
+# matches the literal route first. Otherwise ``set_id: uuid.UUID`` swallows
+# the literal and 422s on ``"template.xlsx"`` (surfacing as a 400 via the
+# project-wide validation handler).
 @router.get("/template.xlsx", response_model=None)
 async def download_requirements_template(
     _user_id: CurrentUserId,
@@ -263,6 +287,22 @@ async def download_requirements_template(
             "Content-Disposition": 'attachment; filename="requirements_template.xlsx"',
         },
     )
+
+
+# ── Get set detail ──────────────────────────────────────────────────────────
+
+
+@router.get("/{set_id}", response_model=RequirementSetDetail)
+async def get_set(
+    set_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: SessionDep,
+    service: RequirementsService = Depends(_get_service),
+) -> RequirementSetDetail:
+    """Get a requirement set with all its requirements and gate results."""
+    item = await service.get_set(set_id)
+    await verify_project_access(item.project_id, str(user_id), session)
+    return _set_to_detail(item)
 
 
 @router.get("/{set_id}/export/", response_model=None)

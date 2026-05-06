@@ -129,9 +129,6 @@ def _annotation_to_response(item: object) -> DwgAnnotationResponse:
 # ── Drawing Upload ──────────────────────────────────────────────────────────
 
 
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
-
-
 @router.post("/drawings/upload/", response_model=DwgDrawingResponse, status_code=201)
 async def upload_drawing(
     file: UploadFile,
@@ -161,12 +158,8 @@ async def upload_drawing(
             detail="Invalid file type. Only .dwg and .dxf files are accepted.",
         )
 
-    # Validate file size (Content-Length header, if available)
-    if file.size is not None and file.size > _MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum allowed size is {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
-        )
+    # Per product policy, no upload size cap — memory-safety still
+    # comes from the streaming downstream pipeline.
 
     try:
         drawing = await service.upload_drawing(

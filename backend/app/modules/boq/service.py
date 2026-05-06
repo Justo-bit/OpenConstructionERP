@@ -1447,6 +1447,8 @@ class BOQService:
             name=data.name,
             description=data.description,
             status="draft",
+            estimate_type=data.estimate_type,
+            base_date=data.base_date,
             metadata_={"display_columns": default_display_columns},
         )
         boq = await self.boq_repo.create(boq)
@@ -1696,6 +1698,157 @@ class BOQService:
 
         logger.info("Position added: %s to BOQ %s", data.ordinal, data.boq_id)
         return position
+
+    async def bulk_add_positions(
+        self,
+        boq_id: uuid.UUID,
+        items: list[PositionCreate],
+    ) -> list[Position]:
+        """Add many positions to a BOQ in a single flush (Probe-A perf).
+
+        This is the high-throughput path used by Takeoff, Excel-import,
+        and AI-Smart-Import. Compared to calling ``add_position`` in a
+        loop:
+
+        * one ``get_max_sort_order`` query (was N)
+        * one ordinal-uniqueness DB check (was N)
+        * one ``session.add_all`` + flush (was N flushes)
+        * no per-row event publish — a single ``boq.positions.bulk_created``
+          fires at the end with the count
+        * audit log writes a single ``bulk_create`` entry; per-row audit
+          would dominate insert time at 100+ rows
+
+        Validation parity with ``add_position``:
+
+        * BOQ lock check fires once
+        * Ordinals must be unique inside the supplied batch AND against
+          existing rows
+        * cost_item_id linkage validated per row (one CostItem lookup
+          each — could be batched further but rarely > 5/100 in practice)
+        * Variant snapshots stamped per row
+
+        Returns the inserted ``Position`` objects in input order.
+        """
+        if not items:
+            return []
+        await self._ensure_not_locked(boq_id)
+
+        # Single DB hit for the next sort_order base.
+        max_order = await self.position_repo.get_max_sort_order(boq_id)
+
+        # Dedupe ordinals inside the batch first; reject the whole
+        # batch on collision so the caller doesn't get partial inserts.
+        seen_ordinals: set[str] = set()
+        for it in items:
+            if it.ordinal in seen_ordinals:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Duplicate ordinal '{it.ordinal}' inside the bulk "
+                        f"payload — every position must have a unique ordinal."
+                    ),
+                )
+            seen_ordinals.add(it.ordinal)
+
+        # One DB check for collisions against existing rows.
+        existing_stmt = select(Position.ordinal).where(
+            Position.boq_id == boq_id,
+            Position.ordinal.in_(seen_ordinals),
+        )
+        existing_ordinals = {
+            row[0] for row in (await self.session.execute(existing_stmt)).all()
+        }
+        if existing_ordinals:
+            sample = next(iter(existing_ordinals))
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Position with ordinal '{sample}' already exists "
+                    f"in this BOQ ({len(existing_ordinals)} collision"
+                    f"{'s' if len(existing_ordinals) != 1 else ''} total)."
+                ),
+            )
+
+        cost_repo: CostItemRepository | None = None
+        new_positions: list[Position] = []
+        for offset, data in enumerate(items, start=1):
+            await self._validate_parent_id(
+                boq_id=boq_id,
+                position_id=None,
+                new_parent_id=data.parent_id,
+            )
+
+            merged_metadata: dict[str, Any] = (
+                dict(data.metadata) if isinstance(data.metadata, dict) else {}
+            )
+            if data.cost_item_id is not None:
+                if cost_repo is None:
+                    cost_repo = CostItemRepository(self.session)
+                cost_item = await cost_repo.get_by_id(data.cost_item_id)
+                if cost_item is None or not getattr(cost_item, "is_active", False):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"cost_item_id {data.cost_item_id} does not "
+                            f"reference an active CostItem"
+                        ),
+                    )
+                merged_metadata["cost_item_id"] = str(data.cost_item_id)
+
+            currency_hint = (
+                merged_metadata.get("currency")
+                if isinstance(merged_metadata, dict)
+                else None
+            )
+            _stamp_variant_snapshot(
+                merged_metadata,
+                unit_rate=data.unit_rate,
+                currency=currency_hint if isinstance(currency_hint, str) else None,
+            )
+            _stamp_resource_variant_snapshots(
+                merged_metadata,
+                position_currency=currency_hint if isinstance(currency_hint, str) else None,
+            )
+
+            new_positions.append(
+                Position(
+                    boq_id=boq_id,
+                    parent_id=data.parent_id,
+                    ordinal=data.ordinal,
+                    description=data.description,
+                    unit=data.unit,
+                    quantity=_quantize_money_str(data.quantity),
+                    unit_rate=_quantize_money_str(data.unit_rate),
+                    total=_compute_total(data.quantity, data.unit_rate),
+                    classification=data.classification,
+                    source=data.source,
+                    confidence=(
+                        str(data.confidence) if data.confidence is not None else None
+                    ),
+                    cad_element_ids=data.cad_element_ids,
+                    metadata_=merged_metadata,
+                    sort_order=max_order + offset,
+                ),
+            )
+
+        # Single flush — the perf win lives here.
+        inserted = await self.position_repo.bulk_create(new_positions)
+
+        await _safe_publish(
+            "boq.positions.bulk_created",
+            {"boq_id": str(boq_id), "count": len(inserted)},
+            source_module="oe_boq",
+        )
+        await _safe_audit(
+            self.session,
+            action="bulk_create",
+            entity_type="position",
+            entity_id=str(boq_id),
+            details={"count": len(inserted)},
+        )
+
+        logger.info("Bulk-added %d positions to BOQ %s", len(inserted), boq_id)
+        return inserted
 
     async def create_section(self, boq_id: uuid.UUID, data: SectionCreate) -> Position:
         """Create a section header row in a BOQ.
@@ -1948,6 +2101,20 @@ class BOQService:
         # A pure metadata patch (e.g. setting a custom column value) leaves the
         # existing total intact.
         if "quantity" in fields or "unit_rate" in fields or triggered_by_resources:
+            # Probe-A scenario 11: enforce the overflow cap on the
+            # post-merge values — covers the partial-update path where
+            # the schema validator only saw one side of (quantity,
+            # unit_rate). Mirrors ``POSITION_TOTAL_CAP`` from
+            # ``boq/schemas.py`` so the message is identical.
+            try:
+                _q = Decimal(str(new_quantity)) * Decimal(str(new_unit_rate))
+            except (InvalidOperation, ValueError):
+                _q = None
+            if _q is not None and _q > Decimal("1e15"):
+                raise ValueError(
+                    "Position total exceeds reasonable limit. "
+                    "Check quantity and unit rate.",
+                )
             # Pass raw string values straight through — ``_compute_total`` now
             # uses Decimal and handles strings directly, so we avoid the
             # str → float → str roundtrip that was losing precision.
@@ -3585,7 +3752,7 @@ class BOQService:
             return []
 
         try:
-            items, _ = await cost_repo.search(q=description, limit=1)
+            items, _, _ = await cost_repo.search(q=description, limit=1)
             if not items:
                 return []
             item = items[0]

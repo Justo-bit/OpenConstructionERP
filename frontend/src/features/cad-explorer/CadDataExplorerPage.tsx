@@ -2820,11 +2820,6 @@ function UploadConvertZone({
       addToast({ type: 'warning', title: t('explorer.invalid_format', { defaultValue: 'Unsupported file format. Use RVT, IFC, DWG, or DGN.' }) });
       return;
     }
-    if (file.size > 100 * 1024 * 1024) {
-      addToast({ type: 'warning', title: t('explorer.file_too_large', { defaultValue: 'File exceeds 100 MB limit.' }) });
-      return;
-    }
-
     const taskId = crypto.randomUUID();
     const sizeMB = file.size / (1024 * 1024);
     const estimatedSec = Math.max(30, (sizeMB / 50) * 60);
@@ -2920,17 +2915,35 @@ function UploadConvertZone({
   return (
     <div>
       <div
+        role="button"
+        tabIndex={uploading ? -1 : 0}
+        aria-label={t('explorer.upload_dropzone_aria', { defaultValue: 'Upload CAD file (IFC, RVT, DWG, DGN)' })}
+        aria-disabled={uploading}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
         onClick={() => !uploading && inputRef.current?.click()}
-        className={`relative rounded-2xl border-2 border-dashed transition-all cursor-pointer ${
+        onKeyDown={(e) => {
+          if (!uploading && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        className={`relative rounded-2xl border-2 border-dashed transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue focus-visible:ring-offset-2 ${
           uploading ? 'pointer-events-none border-oe-blue/40 bg-oe-blue-subtle/5' :
           dragOver ? 'border-oe-blue bg-oe-blue-subtle/10 scale-[1.005] shadow-lg shadow-oe-blue/10' :
           'border-border-light hover:border-oe-blue/50 hover:bg-surface-secondary/20'
         }`}
       >
-        <input ref={inputRef} type="file" accept={CAD_ACCEPT} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} className="hidden" />
+        <input
+          ref={inputRef}
+          id="cad-explorer-file-input"
+          type="file"
+          accept={CAD_ACCEPT}
+          aria-label={t('explorer.upload_dropzone_aria', { defaultValue: 'Upload CAD file (IFC, RVT, DWG, DGN)' })}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+          className="hidden"
+        />
 
         {uploading ? (
           <div className="px-6 py-5 space-y-3">
@@ -2971,7 +2984,7 @@ function UploadConvertZone({
                 ))}
               </div>
               <p className="text-2xs text-content-quaternary">
-                {t('explorer.max_file_size', { defaultValue: 'Max 100 MB' })} — {t('explorer.upload_auto', { defaultValue: 'Automatic conversion and element extraction' })}
+                {t('explorer.upload_auto', { defaultValue: 'Automatic conversion and element extraction' })}
               </p>
             </div>
           </div>

@@ -30,10 +30,6 @@ BACKUP_FORMAT_VERSION = "1.0.0"
 # Application identifier embedded in every backup manifest
 APP_ID = "openestimate"
 
-# Maximum upload size: 100 MB
-MAX_BACKUP_SIZE = 100 * 1024 * 1024
-
-
 # ── Response schemas ──────────────────────────────────────────────────────────
 
 
@@ -329,11 +325,7 @@ async def restore_backup(
         raise HTTPException(status_code=400, detail="mode must be 'replace' or 'merge'")
 
     raw = await file.read()
-    if len(raw) > MAX_BACKUP_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Backup file exceeds maximum size ({MAX_BACKUP_SIZE // (1024 * 1024)} MB)",
-        )
+    # No upload size cap — per product policy.
 
     manifest, data = parse_backup_zip(raw)
     tables = _get_backup_tables()
@@ -458,11 +450,7 @@ async def validate_backup(
     and reports any structural warnings (missing tables, unknown keys, etc.).
     """
     raw = await file.read()
-    if len(raw) > MAX_BACKUP_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Backup file exceeds maximum size ({MAX_BACKUP_SIZE // (1024 * 1024)} MB)",
-        )
+    # No upload size cap — per product policy.
 
     manifest, data = parse_backup_zip(raw)
     warnings: list[str] = []

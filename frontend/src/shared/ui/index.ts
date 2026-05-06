@@ -114,3 +114,5 @@ export type {
 
 export { KvList, Kv } from './KvList';
 export { QtyTile } from './QtyTile';
+
+export { OfflineBanner } from './OfflineBanner';

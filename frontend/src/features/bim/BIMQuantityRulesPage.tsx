@@ -55,7 +55,9 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-import { Badge, ConfirmDialog } from '@/shared/ui';
+import { Badge, ConfirmDialog, EmptyState } from '@/shared/ui';
+import { apiGet } from '@/shared/lib/api';
+import { FolderOpen } from 'lucide-react';
 import BIMRequirementsImport from './BIMRequirementsImport';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useToastStore } from '@/stores/useToastStore';
@@ -2479,6 +2481,80 @@ function RequirementsTabContent({
   );
 }
 
+/* ── No-project empty state ──────────────────────────────────────────── */
+
+interface ProjectOption { id: string; name: string }
+
+/**
+ * Inline project picker rendered in the EmptyState body. Loads the
+ * project list lazily on focus so the cold paint of /bim/rules does
+ * NOT pay the projects round-trip when a project is already active.
+ * After the user picks one, ``setActiveProject`` is fired against the
+ * shared store — every page reads from the same source so no manual
+ * navigation is needed.
+ */
+function NoProjectPicker() {
+  const { t } = useTranslation();
+  const setActiveProject = useProjectContextStore((s) => s.setActiveProject);
+  const [open, setOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || projects.length > 0) return;
+    setLoading(true);
+    apiGet<{ items?: ProjectOption[] } | ProjectOption[]>('/v1/projects/')
+      .then((res) => {
+        const items = Array.isArray(res) ? res : res.items ?? [];
+        setProjects(items);
+      })
+      .catch(() => setProjects([]))
+      .finally(() => setLoading(false));
+  }, [open, projects.length]);
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-2 rounded-lg bg-oe-blue px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-oe-blue-dark"
+      >
+        <FolderOpen size={14} />
+        {t('bim_rules.no_project_pick_btn', { defaultValue: 'Pick a project' })}
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-1/2 z-20 mt-2 w-64 -translate-x-1/2 rounded-lg border border-border-light bg-surface-primary py-1 shadow-lg">
+          {loading && (
+            <div className="px-3 py-2 text-[11px] text-content-tertiary">
+              {t('common.loading', { defaultValue: 'Loading…' })}
+            </div>
+          )}
+          {!loading && projects.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-content-tertiary">
+              {t('bim_rules.no_project_no_projects', { defaultValue: 'No projects available' })}
+            </div>
+          )}
+          {!loading &&
+            projects.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  setActiveProject(p.id, p.name);
+                  setOpen(false);
+                }}
+                className="block w-full truncate px-3 py-1.5 text-left text-[12px] text-content-primary hover:bg-surface-secondary"
+              >
+                {p.name}
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main page ────────────────────────────────────────────────────────── */
 
 export function BIMQuantityRulesPage() {
@@ -2981,7 +3057,17 @@ export function BIMQuantityRulesPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-6">
-        {activeTab === 'requirements' ? (
+        {!activeProjectId ? (
+          <EmptyState
+            icon={<FolderOpen size={28} strokeWidth={1.5} />}
+            title={t('bim_rules.no_project_title', { defaultValue: 'Pick a project to view rules' })}
+            description={t('bim_rules.no_project_desc', {
+              defaultValue:
+                'BIM Quantity Rules and Requirements are project-scoped. Select a project to load its rule sets, BIM models, and validation history.',
+            })}
+            action={<NoProjectPicker />}
+          />
+        ) : activeTab === 'requirements' ? (
           <RequirementsTabContent projectId={activeProjectId} elements={requirementsElements} />
         ) : rulesQuery.isLoading ? (
           <div className="flex items-center justify-center py-16 text-sm text-content-secondary">

@@ -148,6 +148,66 @@ async def list_items(
     return [_item_to_response(i) for i in items]
 
 
+# ── Root aliases ─────────────────────────────────────────────────────────────
+#
+# Sibling modules (changeorders, tasks, meetings, fieldreports, …) expose the
+# canonical collection at ``/`` — punchlist historically only exposed it at
+# ``/items/`` which trips both REST clients and the QA crawler. We keep the
+# old paths working and add ``GET /`` + ``POST /`` aliases so the module
+# follows the same shape as everything else.
+
+
+@router.get("/", response_model=list[PunchItemResponse])
+async def list_items_root_alias(
+    session: SessionDep,
+    project_id: uuid.UUID = Query(...),
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    status_filter: str | None = Query(default=None, alias="status"),
+    priority: str | None = Query(default=None),
+    assigned_to: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    service: PunchListService = Depends(_get_service),
+) -> list[PunchItemResponse]:
+    """Alias for ``GET /items/`` — see that handler for full semantics."""
+    return await list_items(
+        session=session,
+        project_id=project_id,
+        user_id=user_id,
+        offset=offset,
+        limit=limit,
+        status_filter=status_filter,
+        priority=priority,
+        assigned_to=assigned_to,
+        category=category,
+        service=service,
+    )
+
+
+@router.post("/", response_model=PunchItemResponse, status_code=201)
+async def create_item_root_alias(
+    data: PunchItemCreate,
+    user_id: CurrentUserId,
+    session: SessionDep,
+    _perm: None = Depends(RequirePermission("punchlist.create")),
+    service: PunchListService = Depends(_get_service),
+) -> PunchItemResponse:
+    """Alias for ``POST /items/`` — see that handler for full semantics."""
+    await verify_project_access(data.project_id, user_id, session)
+    try:
+        item = await service.create_item(data, user_id=user_id)
+        return _item_to_response(item)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unable to create punch item")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create punch item — operation aborted",
+        )
+
+
 # ── Get ──────────────────────────────────────────────────────────────────────
 
 

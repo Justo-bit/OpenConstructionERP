@@ -48,8 +48,20 @@ import {
 import { useToastStore } from '@/stores/useToastStore';
 
 /** Ids of converters surfaced on the BIM page. IFC was previously missing
- *  here — that's why "Revit and IFC don't load" was reported as a bug. */
+ *  here — that's why "Revit and IFC don't load" was reported as a bug.
+ *  Note: ``dwg`` covers .dxf, ``ifc`` covers .ifczip. Formats accepted by
+ *  ``upload-cad`` but without a dedicated converter (.fbx/.obj/.3ds) are
+ *  noted in the banner subtitle rather than rendered as fake chips —
+ *  there is no separate binary to install for those. */
 const PANEL_CONVERTER_IDS = ['rvt', 'ifc', 'dwg', 'dgn'] as const;
+
+/** Converter ids that have a built-in fallback parser in the backend. The
+ *  IFC text-parser at ``ifc_processor.py`` produces 2D placeholder
+ *  geometry without DDC, so users see a working — if approximate —
+ *  model even when the binary is not installed. The banner annotates
+ *  these rows with a green "Works without DDC (fallback)" badge so the
+ *  user does not interpret "0/4 installed" as "0/4 functional". */
+const CONVERTERS_WITH_FALLBACK = new Set<string>(['ifc']);
 
 /** GitHub root for the manual-install fallback links. */
 const DDC_REPO_URL =
@@ -66,11 +78,17 @@ interface BIMConverterStatusBannerProps {
    *  state passes `dismissible={true}` so it stays out of the way once
    *  things are healthy; the dedicated /bim page omits it. */
   dismissible?: boolean;
+  /** When true, the page already has at least one ``status="ready"`` model
+   *  loaded — the user is past the install-required gate. The banner
+   *  starts collapsed in this case so the 3D scene is not pushed below
+   *  the fold by an install nag the user can no longer act on. */
+  defaultCollapsed?: boolean;
 }
 
 export function BIMConverterStatusBanner({
   className,
   dismissible = false,
+  defaultCollapsed = false,
 }: BIMConverterStatusBannerProps): JSX.Element | null {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -86,9 +104,14 @@ export function BIMConverterStatusBanner({
   });
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('oe_bim_converter_panel_collapsed') === '1';
+      const persisted = localStorage.getItem('oe_bim_converter_panel_collapsed');
+      if (persisted === '1') return true;
+      if (persisted === '0') return false;
+      // No explicit user choice yet — fall back to the page-level hint
+      // (``defaultCollapsed=true`` when at least one ready model is loaded).
+      return defaultCollapsed;
     } catch {
-      return false;
+      return defaultCollapsed;
     }
   });
 
@@ -321,33 +344,50 @@ export function BIMConverterStatusBanner({
     refetch();
   };
 
-  // ── Compact mode (all healthy + collapsed) ─────────────────────────────
-  if (allHealthy && collapsed) {
+  // ── Compact mode (collapsed) ───────────────────────────────────────────
+  // Renders a single-line strip with a per-format pill for each converter
+  // so the user keeps the at-a-glance status without the install nag
+  // taking 30% of the viewport. Reachable in two ways:
+  //   1. allHealthy → user clicked "Collapse" once.
+  //   2. !allHealthy + defaultCollapsed (page already has a ready model)
+  //      → first paint hides the body so the 3D scene is not pushed below
+  //      the fold (audit P2-1).
+  if (collapsed) {
+    const stripTone = anyFailed
+      ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800'
+      : allHealthy
+        ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
+        : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800';
+    const stripIcon = anyFailed ? (
+      <ShieldAlert size={14} className="text-rose-600 dark:text-rose-400" />
+    ) : allHealthy ? (
+      <CheckCircle2 size={14} className="text-emerald-600 dark:text-emerald-400" />
+    ) : (
+      <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400" />
+    );
     return (
       <div
-        className={clsx(
-          'rounded-xl border bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800 px-3 py-2',
-          className,
-        )}
+        className={clsx('rounded-xl border px-3 py-2', stripTone, className)}
         role="status"
       >
-        <div className="flex items-center gap-2 text-[12px]">
-          <CheckCircle2
-            size={14}
-            className="text-emerald-600 dark:text-emerald-400"
-          />
-          <span className="font-semibold text-emerald-900 dark:text-emerald-200">
-            {t('bim.converters_all_ready', {
-              defaultValue: 'All BIM converters verified',
-            })}
+        <div className="flex items-center gap-2 text-[12px] flex-wrap">
+          {stripIcon}
+          <span className="font-semibold text-content-primary">
+            {t('bim.converter_panel_title', { defaultValue: 'BIM converters' })}
           </span>
-          <span className="text-emerald-700/80 dark:text-emerald-300/80 tabular-nums">
-            ({healthyCount}/{relevant.length})
-          </span>
+          <div className="flex items-center gap-1">
+            {relevant.map((conv) => (
+              <CollapsedConverterPill
+                key={conv.id}
+                conv={conv}
+                health={computedHealth(conv)}
+              />
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => setCollapsedPersist(false)}
-            className="ms-auto text-[11px] underline-offset-2 hover:underline text-emerald-700 dark:text-emerald-300"
+            className="ms-auto text-[11px] underline-offset-2 hover:underline text-content-secondary"
           >
             {t('bim.converters_show_details', { defaultValue: 'Show details' })}
           </button>
@@ -355,7 +395,7 @@ export function BIMConverterStatusBanner({
             <button
               type="button"
               onClick={() => setDismissedPersist(true)}
-              className="p-1 rounded-md text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
+              className="p-1 rounded-md text-content-tertiary hover:bg-black/5 dark:hover:bg-white/10"
               title={t('bim.converters_dismiss', { defaultValue: 'Dismiss' })}
               aria-label={t('bim.converters_dismiss', {
                 defaultValue: 'Dismiss',
@@ -518,6 +558,58 @@ export function BIMConverterStatusBanner({
   );
 }
 
+interface CollapsedConverterPillProps {
+  conv: BIMConverterInfo;
+  health: BIMConverterHealth;
+}
+
+function CollapsedConverterPill({
+  conv,
+  health,
+}: CollapsedConverterPillProps): JSX.Element {
+  const { t } = useTranslation();
+  const hasFallback = CONVERTERS_WITH_FALLBACK.has(conv.id);
+  let tone: string;
+  let label: string;
+  if (health === 'ok') {
+    tone = 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800';
+    label = conv.id.toUpperCase();
+  } else if (health === 'failed') {
+    tone = 'bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800';
+    label = conv.id.toUpperCase();
+  } else if (health === 'unknown') {
+    tone = 'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700';
+    label = conv.id.toUpperCase();
+  } else if (hasFallback) {
+    tone = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900';
+    label = `${conv.id.toUpperCase()} (fallback)`;
+  } else {
+    tone = 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800';
+    label = conv.id.toUpperCase();
+  }
+  const titleSuffix =
+    health === 'ok'
+      ? t('bim.converter_pill_ok', { defaultValue: 'Installed and verified' })
+      : health === 'failed'
+        ? t('bim.converter_pill_failed', { defaultValue: 'Installed but smoke test failed' })
+        : health === 'unknown'
+          ? t('bim.converter_pill_unknown', { defaultValue: 'Installed (verify pending)' })
+          : hasFallback
+            ? t('bim.converter_pill_fallback', { defaultValue: 'Works without DDC (fallback parser)' })
+            : t('bim.converter_pill_missing', { defaultValue: 'Not installed' });
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border tabular-nums',
+        tone,
+      )}
+      title={`${conv.name} — ${titleSuffix}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 interface ConverterRowProps {
   conv: BIMConverterInfo;
   health: BIMConverterHealth;
@@ -585,18 +677,38 @@ function ConverterRow({
       break;
     case 'not_installed':
     default:
-      icon = (
-        <Download
-          size={13}
-          className="text-amber-600 dark:text-amber-400"
-        />
-      );
-      labelTone = 'text-amber-900 dark:text-amber-200';
-      pillTone =
-        'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800';
-      pillText = t('bim.converter_row_missing', {
-        defaultValue: 'Not installed',
-      });
+      if (CONVERTERS_WITH_FALLBACK.has(conv.id)) {
+        // Soft-green: the format works without the binary because a
+        // built-in fallback parser exists. Action button still reads
+        // "Install" because installing the binary upgrades fidelity
+        // (real meshes vs placeholder boxes), but the status pill no
+        // longer scares users into thinking the format is broken.
+        icon = (
+          <CheckCircle2
+            size={13}
+            className="text-emerald-600 dark:text-emerald-400"
+          />
+        );
+        labelTone = 'text-emerald-900 dark:text-emerald-200';
+        pillTone =
+          'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800';
+        pillText = t('bim.converter_row_fallback', {
+          defaultValue: 'Works without DDC (fallback)',
+        });
+      } else {
+        icon = (
+          <Download
+            size={13}
+            className="text-amber-600 dark:text-amber-400"
+          />
+        );
+        labelTone = 'text-amber-900 dark:text-amber-200';
+        pillTone =
+          'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800';
+        pillText = t('bim.converter_row_missing', {
+          defaultValue: 'Install required',
+        });
+      }
       break;
   }
 
@@ -665,9 +777,19 @@ function ConverterRow({
             'ms-5 mt-1 rounded-md border px-2 py-1.5 space-y-1.5',
             health === 'failed'
               ? 'border-rose-200 dark:border-rose-800 bg-rose-100/40 dark:bg-rose-900/20'
-              : 'border-amber-200 dark:border-amber-800 bg-amber-100/40 dark:bg-amber-900/20',
+              : CONVERTERS_WITH_FALLBACK.has(conv.id)
+                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-100/40 dark:bg-emerald-900/20'
+                : 'border-amber-200 dark:border-amber-800 bg-amber-100/40 dark:bg-amber-900/20',
           )}
         >
+          {health === 'not_installed' && CONVERTERS_WITH_FALLBACK.has(conv.id) && (
+            <p className="text-[11px] text-emerald-800 dark:text-emerald-200">
+              {t('bim.converter_row_fallback_msg', {
+                defaultValue:
+                  'IFC files are parsed by a built-in fallback. Install the DDC binary to upgrade placeholder boxes to real meshes.',
+              })}
+            </p>
+          )}
           {conv.health_message && (
             <p
               className={clsx(

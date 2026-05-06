@@ -15,6 +15,39 @@ export interface EmptyStateProps {
   className?: string;
 }
 
+/* Standardised empty-state copy (Probe-D P2-11). All callers should
+ * resolve i18n keys via this helper to keep the wording aligned across
+ * modules: "No {entity} yet" / "Create your first {entity}". The
+ * shared keys live under `empty.*` in the locale dictionaries; if a key
+ * is missing it falls back to the English template.
+ *
+ * Usage:
+ *   const c = standardEmptyCopy(t, 'project');
+ *   <EmptyState title={c.title} description={c.description}
+ *               action={{ label: c.actionLabel, onClick: ... }} />
+ */
+export function standardEmptyCopy(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  entity: string,
+  entityPluralLabel?: string,
+): { title: string; description: string; actionLabel: string } {
+  const plural = entityPluralLabel ?? `${entity}s`;
+  return {
+    title: t('empty.no_yet', {
+      defaultValue: 'No {{plural}} yet',
+      plural,
+    }),
+    description: t('empty.no_yet_description', {
+      defaultValue: 'Get started by creating your first {{entity}}.',
+      entity,
+    }),
+    actionLabel: t('empty.create_first', {
+      defaultValue: 'Create your first {{entity}}',
+      entity,
+    }),
+  };
+}
+
 function isActionObject(action: unknown): action is ActionObject {
   return (
     typeof action === 'object' &&

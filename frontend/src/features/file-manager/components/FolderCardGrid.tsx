@@ -140,16 +140,26 @@ export function FolderCardGrid({
 
   return (
     <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-      {nodes.map((node) => (
-        <FolderCard
-          key={node.id}
-          node={node}
-          onOpen={() => onOpenCategory(node.id as FileKind)}
-          onUpload={() => onUpload(node.id as FileKind)}
-        />
-      ))}
+      {nodes.map((node) => {
+        const kind = bareKind(node.id);
+        return (
+          <FolderCard
+            key={node.id}
+            node={node}
+            onOpen={() => onOpenCategory(kind)}
+            onUpload={() => onUpload(kind)}
+          />
+        );
+      })}
     </div>
   );
+}
+
+// Older backends shipped node ids prefixed with "category:" (e.g.
+// "category:bim_model"). Strip the prefix defensively so cached URLs and
+// older API responses still resolve to a valid FileKind.
+function bareKind(id: string): FileKind {
+  return id.replace(/^category:/, '') as FileKind;
 }
 
 interface FolderCardProps {
@@ -160,7 +170,7 @@ interface FolderCardProps {
 
 function FolderCard({ node, onOpen, onUpload }: FolderCardProps) {
   const { t } = useTranslation();
-  const kind = node.id as FileKind;
+  const kind = bareKind(node.id);
   const Icon = KIND_ICON[kind] ?? Folder;
   const tone = KIND_TONE[kind] ?? KIND_TONE.document;
   const isEmpty = node.file_count === 0;

@@ -193,7 +193,7 @@ export function BOQToolbar({
   // Bug 7: stick BELOW the app header (52px / --oe-header-height) — using top-0 collides
   // with the sticky header (z-30), pushing the toolbar out of view when scrolling.
   return (
-    <div className="sticky top-[52px] z-20 bg-surface-primary flex flex-wrap items-center gap-x-1.5 gap-y-2 px-1 py-2 border-b border-border-light mb-3">
+    <div className="sticky top-[52px] z-20 bg-surface-primary flex flex-nowrap items-center gap-x-1.5 px-1 py-2 border-b border-border-light mb-3">
       {/* ── Row-group: Quality + Undo/Redo ─────────────────────────────── */}
       <div className="flex items-center gap-1.5">
         {hasPositions && qualityScoreRing}
@@ -349,70 +349,19 @@ export function BOQToolbar({
 
       <div className="w-px h-6 bg-border-light hidden sm:block" />
 
-      {/* ── Row-group: hot Quality/AI actions promoted inline ──────────────
-          Validate, Update Rates, AI Chat are the three actions used most
-          often. Everything else (Price Check, Cost Finder, Smart AI) lives
-          in the "Quality & AI" dropdown to the right so the toolbar stays
-          tight on narrow screens. */}
+      {/* ── Quality & AI dropdown — single pill that fans out to the full
+          action list (Validate, Update Rates, Price Check, Cost Finder,
+          AI Chat, Analyze). Keeps the toolbar in a single row on standard
+          1440-1920px laptops. Score badge + recalculating spinner are
+          surfaced on the pill itself so users still see status at a glance. */}
       <div className="flex items-center gap-1.5">
-        {/* Validate (hot — surfaces score badge inline) */}
-        <div className="relative group/validate">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<ShieldCheck size={15} className={isValidating ? 'animate-pulse text-oe-blue' : lastValidationScore != null ? (lastValidationScore >= 80 ? 'text-emerald-500' : lastValidationScore >= 50 ? 'text-amber-500' : 'text-red-500') : ''} />}
-            onClick={onValidate}
-            disabled={isValidating}
-            title={t('boq.validate_info_tooltip', { defaultValue: 'Run 42 automatic quality checks against the project\'s configured classification and quality rules' })}
-          >
-            <span className="hidden xl:inline">
-              {isValidating
-                ? t('boq.validating', { defaultValue: 'Checking...' })
-                : t('boq.validate', { defaultValue: 'Validate' })
-              }
-            </span>
-            {lastValidationScore != null && !isValidating && (
-              <span className={`ml-1 text-2xs font-bold tabular-nums ${lastValidationScore >= 80 ? 'text-emerald-600' : lastValidationScore >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
-                {lastValidationScore}%
-              </span>
-            )}
-          </Button>
-        </div>
-
-        {/* Update Rates (hot) */}
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<RefreshCw size={15} className={isRecalculating ? 'animate-spin text-oe-blue' : ''} />}
-          onClick={onRecalculate}
-          disabled={isRecalculating}
-          title={t('boq.recalculate_tip', { defaultValue: 'Matches positions to cost database, attaches resource breakdowns (materials, labor, equipment), and recalculates unit rates from components.' })}
-        >
-          <span className="hidden xl:inline">
-            {isRecalculating
-              ? t('boq.recalculating', { defaultValue: 'Updating...' })
-              : t('boq.recalculate_rates', { defaultValue: 'Update Rates' })
-            }
-          </span>
-        </Button>
-
-        {/* AI Chat (hot — the most-discoverable AI entry point) */}
-        <Button
-          variant={aiChatOpen ? 'primary' : 'ghost'}
-          size="sm"
-          icon={<Sparkles size={15} className={aiChatOpen ? '' : 'text-violet-600 dark:text-violet-400'} />}
-          onClick={onToggleAiChat}
-          title={t('boq.ai_assistant_tooltip', { defaultValue: 'Describe what you need in plain text — AI creates BOQ positions with realistic pricing.' })}
-        >
-          <span className="hidden xl:inline">{t('boq.ai_chat_short', { defaultValue: 'AI Chat' })}</span>
-        </Button>
-
-        {/* "Quality & AI" pill — opens a popover with the full action list. */}
         <QualityAiMenu
           t={t}
           onValidate={onValidate}
           isValidating={isValidating}
           lastValidationScore={lastValidationScore}
+          onRecalculate={onRecalculate}
+          isRecalculating={isRecalculating}
           onCheckAnomalies={onCheckAnomalies}
           onCancelAnomalies={onCancelAnomalies}
           isCheckingAnomalies={isCheckingAnomalies}
@@ -448,27 +397,29 @@ export function BOQToolbar({
           wraps under the toolbar via the parent `flex-wrap`. Renders only
           when `summary` is provided and the BOQ has at least one row. */}
       {summary && hasPositions && (
-        <div className="ml-auto flex items-center gap-2 sm:gap-3 text-2xs text-content-tertiary tabular-nums">
-          <span className="hidden md:inline">
-            <span className="font-semibold text-content-secondary">{summary.sectionCount}</span>{' '}
-            {t('boq.sections', { defaultValue: 'sections' })}
-          </span>
-          <span className="text-border-light hidden md:inline">·</span>
-          <span>
-            <span className="font-semibold text-content-secondary">{summary.positionCount}</span>{' '}
-            {t('boq.positions_label', { defaultValue: 'positions' })}
-          </span>
+        <div
+          className="ml-auto flex items-center gap-2 sm:gap-3 text-2xs text-content-tertiary tabular-nums"
+          title={
+            t('boq.toolbar_summary_aria', {
+              defaultValue: '{{sections}} sections · {{positions}} positions',
+              sections: summary.sectionCount,
+              positions: summary.positionCount,
+            })
+          }
+        >
+          {/* Errors / warnings only — surface unconditionally because they're
+              actionable signals. Sections/positions count moved to the
+              container's tooltip so the toolbar stays in a single row on
+              standard laptops; the BOQ Statistics modal carries the full
+              breakdown if the user wants it surfaced. */}
           {summary.errorCount > 0 && (
-            <>
-              <span className="text-border-light">·</span>
-              <span className="text-red-600 dark:text-red-400 font-medium">
-                {summary.errorCount} {t('boq.errors', { defaultValue: 'errors' })}
-              </span>
-            </>
+            <span className="text-red-600 dark:text-red-400 font-medium">
+              {summary.errorCount} {t('boq.errors', { defaultValue: 'errors' })}
+            </span>
           )}
           {summary.warningCount > 0 && (
             <>
-              <span className="text-border-light">·</span>
+              {summary.errorCount > 0 && <span className="text-border-light">·</span>}
               <span className="text-amber-600 dark:text-amber-400 font-medium">
                 {summary.warningCount} {t('boq.warnings', { defaultValue: 'warnings' })}
               </span>
@@ -553,6 +504,8 @@ interface QualityAiMenuProps {
   onValidate: () => void;
   isValidating?: boolean;
   lastValidationScore?: number | null;
+  onRecalculate: () => void;
+  isRecalculating?: boolean;
   onCheckAnomalies?: () => void;
   onCancelAnomalies?: () => void;
   isCheckingAnomalies?: boolean;
@@ -572,6 +525,8 @@ function QualityAiMenu(props: QualityAiMenuProps) {
     onValidate,
     isValidating,
     lastValidationScore,
+    onRecalculate,
+    isRecalculating,
     onCheckAnomalies,
     onCancelAnomalies,
     isCheckingAnomalies,
@@ -624,8 +579,19 @@ function QualityAiMenu(props: QualityAiMenuProps) {
             : 'bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-950/30 dark:to-blue-950/30 border-violet-200/50 dark:border-violet-800/30 text-violet-700 dark:text-violet-300 hover:from-violet-100 hover:to-blue-100 dark:hover:from-violet-900/40'
         }`}
       >
-        <Sparkles size={13} className="text-violet-500" />
+        {isRecalculating ? (
+          <RefreshCw size={13} className="animate-spin text-oe-blue" />
+        ) : isValidating ? (
+          <ShieldCheck size={13} className="animate-pulse text-oe-blue" />
+        ) : (
+          <Sparkles size={13} className="text-violet-500" />
+        )}
         <span className="hidden lg:inline">{t('boq.quality_ai_menu', { defaultValue: 'Quality & AI' })}</span>
+        {lastValidationScore != null && !isValidating && (
+          <span className={`text-2xs font-bold tabular-nums ${lastValidationScore >= 80 ? 'text-emerald-600' : lastValidationScore >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+            {lastValidationScore}%
+          </span>
+        )}
         <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -653,6 +619,13 @@ function QualityAiMenu(props: QualityAiMenuProps) {
               ) : null}
               onClick={fire(onValidate)}
               disabled={isValidating}
+            />
+            <MenuRow
+              icon={<RefreshCw size={14} className={isRecalculating ? 'animate-spin text-oe-blue' : 'text-content-tertiary'} />}
+              label={isRecalculating ? t('boq.recalculating', { defaultValue: 'Updating...' }) : t('boq.recalculate_rates', { defaultValue: 'Update Rates' })}
+              hint={t('boq.recalculate_tip', { defaultValue: 'Matches positions to cost database, attaches resource breakdowns (materials, labor, equipment), and recalculates unit rates from components.' })}
+              onClick={fire(onRecalculate)}
+              disabled={isRecalculating}
             />
             {onCheckAnomalies && (
               <MenuRow

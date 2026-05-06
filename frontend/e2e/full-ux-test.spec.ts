@@ -20,7 +20,7 @@ async function login(page: Page) {
   await page.waitForURL(`${BASE}/`);
   // Double-check tour dismissal
   await page.evaluate(() => localStorage.setItem('oe_tour_completed', 'true'));
-  const skipBtn = page.getByTestId('onboarding-skip');
+  const skipBtn = page.getByTestId('onboarding-tour-skip');
   if (await skipBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await skipBtn.click();
   }

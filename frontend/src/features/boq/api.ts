@@ -1068,6 +1068,14 @@ export interface CustomColumnDef {
   formula?: string;
   /** Display decimals for `calculated` columns when result is numeric. */
   decimals?: number;
+  /**
+   * Optional semantic hint that turns a `number` column into an auto-derived
+   * value. See `grid/columnDefs.ts` for the runtime contract.
+   *   - `resource_sum`           — sum of position resources matching `resource_role`
+   *   - `percentage_of_unit_rate`— labor/material/etc share of unit_rate as %
+   */
+  derived?: 'resource_sum' | 'percentage_of_unit_rate';
+  resource_role?: 'material' | 'labor' | 'equipment' | 'operator' | 'subcontractor' | 'other';
 }
 
 /**

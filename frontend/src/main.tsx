@@ -45,9 +45,14 @@ const queryClient = new QueryClient({
       }
     },
     onError: (error) => {
-      console.error('Mutation error:', error);
       const message = error instanceof Error ? error.message : 'Operation failed';
-      if (!message.includes('401')) {
+      // Auth-related failures redirect via api.ts; surfacing them again
+      // produces noisy stack traces in the console for anon flows
+      // (login/register) where 401 is the expected branch.
+      const status = (error as { status?: number } | null)?.status;
+      const isAuthFailure = status === 401 || status === 403 || message.includes('401');
+      if (!isAuthFailure) {
+        if (import.meta.env.DEV) console.warn('Mutation error:', message);
         useToastStore.getState().addToast({
           type: 'error',
           title: 'Operation failed',

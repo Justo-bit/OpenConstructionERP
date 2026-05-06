@@ -1,9 +1,10 @@
 /** Table view of files — alternative to FileGrid. */
 
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, ArrowUp, FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag } from 'lucide-react';
+import { ArrowDown, ArrowUp, ExternalLink, FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag } from 'lucide-react';
 import clsx from 'clsx';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
+import { primaryModule } from '../kindModule';
 import type { FileRow, FileKind, FileFilters } from '../types';
 
 const KIND_ICON: Record<FileKind, typeof FileText> = {
@@ -80,6 +81,9 @@ export function FileList({
             <th className="px-3 py-2 text-2xs font-medium uppercase tracking-wider text-content-tertiary">
               {t('files.col.discipline', { defaultValue: 'Discipline' })}
             </th>
+            <th className="px-3 py-2 text-2xs font-medium uppercase tracking-wider text-content-tertiary">
+              {t('files.col.open_in', { defaultValue: 'Open in' })}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -95,7 +99,7 @@ export function FileList({
             ))
           ) : items.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-12 text-center text-sm text-content-tertiary">
+              <td colSpan={6} className="px-3 py-12 text-center text-sm text-content-tertiary">
                 {t('files.empty', { defaultValue: 'No files match your filters.' })}
               </td>
             </tr>
@@ -103,6 +107,9 @@ export function FileList({
             items.map((row) => {
               const Icon = KIND_ICON[row.kind] ?? File;
               const isSelected = selectedIds.has(row.id);
+              const target = primaryModule(row.kind, row.extension);
+              const TargetIcon = target.icon;
+              const moduleLabel = t(target.i18nKey, { defaultValue: target.label });
               return (
                 <tr
                   key={row.id}
@@ -134,6 +141,25 @@ export function FileList({
                   </td>
                   <td className="px-3 py-2 text-content-tertiary text-xs truncate">
                     {row.discipline ?? '—'}
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen(row);
+                      }}
+                      className={clsx(
+                        'inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium transition-colors',
+                        'border border-border-light text-content-secondary',
+                        'hover:border-oe-blue/40 hover:text-oe-blue hover:bg-oe-blue/5',
+                      )}
+                      title={t(target.descriptionI18nKey, { defaultValue: target.description })}
+                    >
+                      <TargetIcon size={10} strokeWidth={2} className="shrink-0" />
+                      <span className="truncate max-w-[160px]">{moduleLabel}</span>
+                      <ExternalLink size={9} className="shrink-0 opacity-60" />
+                    </button>
                   </td>
                 </tr>
               );

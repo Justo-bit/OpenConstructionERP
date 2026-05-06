@@ -1498,6 +1498,7 @@ def create_app() -> FastAPI:
             from app.core.sqlite_migrator import sqlite_auto_migrate
             from app.database import Base, engine
             from app.modules.ai import models as _ai_models  # noqa: F401
+            from app.modules.architecture_map import models as _architecture_map_models  # noqa: F401
             from app.modules.assemblies import models as _asm_models  # noqa: F401
             from app.modules.bim_hub import models as _bim_hub_models  # noqa: F401
             from app.modules.bim_requirements import models as _bim_requirements_models  # noqa: F401
@@ -1507,12 +1508,15 @@ def create_app() -> FastAPI:
             from app.modules.changeorders import models as _changeorders_models  # noqa: F401
             from app.modules.collaboration import models as _collaboration_models  # noqa: F401
             from app.modules.collaboration_locks import models as _collaboration_locks_models  # noqa: F401
+            from app.modules.compliance import models as _compliance_models  # noqa: F401
             from app.modules.contacts import models as _contacts_models  # noqa: F401
             from app.modules.correspondence import models as _correspondence_models  # noqa: F401
             from app.modules.costmodel import models as _cm_models  # noqa: F401
             from app.modules.costs import models as _costs_models  # noqa: F401
+            from app.modules.dashboards import models as _dashboards_models  # noqa: F401
             from app.modules.documents import models as _documents_models  # noqa: F401
             from app.modules.dwg_takeoff import models as _dwg_takeoff_models  # noqa: F401
+            from app.modules.eac import models as _eac_models  # noqa: F401
 
             # Enterprise / feature-pack modules
             from app.modules.enterprise_workflows import models as _enterprise_workflows_models  # noqa: F401
@@ -1523,6 +1527,7 @@ def create_app() -> FastAPI:
             from app.modules.i18n_foundation import models as _i18n_models  # noqa: F401
             from app.modules.inspections import models as _inspections_models  # noqa: F401
             from app.modules.integrations import models as _integrations_models  # noqa: F401
+            from app.modules.jobs import models as _jobs_models  # noqa: F401
             from app.modules.markups import models as _markups_models  # noqa: F401
             from app.modules.meetings import models as _meetings_models  # noqa: F401
             from app.modules.ncr import models as _ncr_models  # noqa: F401
@@ -1642,6 +1647,26 @@ def create_app() -> FastAPI:
                 await _seed_session.commit()
         except Exception:
             logger.exception("i18n seed failed — countries/taxes/calendars may be empty")
+
+        # Starter seed: small baseline of cost items + assemblies so a fresh
+        # install never shows an empty /costs or /catalog before the user
+        # imports a regional CWICR catalogue. Idempotent — only runs when
+        # the tables are empty. Disable via OE_SKIP_STARTER_SEED=1.
+        try:
+            from app.database import async_session_factory as _starter_session_factory
+            from app.scripts.seed_starter import seed_starter_data
+
+            async with _starter_session_factory() as _starter_session:
+                counts = await seed_starter_data(_starter_session)
+                await _starter_session.commit()
+                if counts["cost_items"] or counts["assemblies"]:
+                    logger.info(
+                        "Starter seed: %d cost items, %d assemblies inserted",
+                        counts["cost_items"],
+                        counts["assemblies"],
+                    )
+        except Exception:
+            logger.exception("Starter seed failed — /costs and /catalog may be empty")
 
         # Initialize vector database (LanceDB embedded, no Docker)
         _section("Vector DB")

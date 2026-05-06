@@ -94,8 +94,10 @@ type UnitOption = 'm' | 'm2' | 'm3' | 'kg' | 'pcs' | 'lsum' | 't' | 'l';
 
 const UNIT_OPTIONS: UnitOption[] = ['m', 'm2', 'm3', 'kg', 'pcs', 'lsum', 't', 'l'];
 
-const MAX_FILE_SIZE_MB = 50;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+// No upload size cap — kept Number.POSITIVE_INFINITY as a sentinel so
+// the existing filter expressions still type-check while allowing any
+// payload through. Per product policy.
+const MAX_FILE_SIZE_BYTES = Number.POSITIVE_INFINITY;
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
 
@@ -233,6 +235,7 @@ function DropZone({
       <div
         role="button"
         tabIndex={0}
+        aria-label={t('takeoff.upload_aria', { defaultValue: 'Upload PDF or image takeoff file' })}
         onClick={handleClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') handleClick();
@@ -243,6 +246,7 @@ function DropZone({
         className={clsx(
           'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-10',
           'transition-all duration-normal ease-oe cursor-pointer min-h-[200px]',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue focus-visible:ring-offset-2',
           disabled && 'opacity-40 pointer-events-none',
           isDragOver
             ? 'border-oe-blue bg-oe-blue/5 scale-[1.01]'
@@ -263,10 +267,7 @@ function DropZone({
           {t('takeoff.drop_file_here', 'Drop your PDF or image here')}
         </p>
         <p className="text-[11px] text-content-quaternary">
-          {t('takeoff.file_limit', 'PDF, JPG, PNG up to {{size}}MB').replace(
-            '{{size}}',
-            String(MAX_FILE_SIZE_MB),
-          )}
+          {t('takeoff.file_limit', 'PDF, JPG, PNG')}
         </p>
         <div className="flex items-center gap-2 mt-1">
           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/30">.pdf</span>

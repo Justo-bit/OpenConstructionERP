@@ -926,7 +926,7 @@ function ImportFieldReportsModal({
                   })}
             </p>
             <p className="text-xs text-content-quaternary mt-1">
-              {t('fieldreports.file_types', { defaultValue: '.xlsx, .csv — max 10 MB' })}
+              {t('fieldreports.file_types', { defaultValue: '.xlsx, .csv' })}
             </p>
           </div>
 

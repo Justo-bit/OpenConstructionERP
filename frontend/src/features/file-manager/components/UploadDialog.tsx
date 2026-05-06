@@ -19,8 +19,6 @@ import { useUploadQueueStore } from '@/stores/useUploadQueueStore';
 import { fileManagerKeys } from '../hooks';
 import type { FileKind } from '../types';
 
-const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-
 interface UploadDialogProps {
   open: boolean;
   projectId: string;
@@ -84,19 +82,7 @@ export function UploadDialog({
       const fileArray = Array.from(files);
       if (fileArray.length === 0) return;
 
-      const oversized = fileArray.filter((f) => f.size > MAX_FILE_SIZE_BYTES);
-      if (oversized.length > 0) {
-        addToast({
-          type: 'warning',
-          title: t('files.upload_too_large', { defaultValue: 'Files too large' }),
-          message: t('files.upload_too_large_msg', {
-            defaultValue: '{{count}} file(s) exceed the 100 MB limit and were skipped.',
-            count: oversized.length,
-          }),
-        });
-      }
-
-      const validFiles = fileArray.filter((f) => f.size <= MAX_FILE_SIZE_BYTES);
+      const validFiles = fileArray;
       if (validFiles.length === 0) return;
 
       const token = useAuthStore.getState().accessToken;
@@ -288,7 +274,7 @@ export function UploadDialog({
             </p>
             <p className="mt-1 text-xs text-content-tertiary">
               {t('files.upload_hint', {
-                defaultValue: 'PDF, images, Excel, DWG, IFC — any file type (max 100 MB)',
+                defaultValue: 'PDF, images, Excel, DWG, IFC — any file type',
               })}
             </p>
             <button

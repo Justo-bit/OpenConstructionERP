@@ -336,24 +336,12 @@ async def photo_estimate(
             detail=(f"Unsupported image type: {content_type}. Accepted: {', '.join(sorted(ALLOWED_IMAGE_TYPES))}"),
         )
 
-    # Reject obviously oversize bodies before reading them into memory.
-    if content_length is not None and content_length > MAX_PHOTO_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Image too large. Maximum size is 10 MB.",
-        )
-
-    # Read and validate size (covers clients that omit/lie about Content-Length).
+    # No upload size cap — per product policy.
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file is empty.",
-        )
-    if len(image_bytes) > MAX_PHOTO_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Image too large. Maximum size is 10 MB.",
         )
 
     # Parse optional project_id
@@ -409,8 +397,6 @@ async def file_estimate(
     - **Excel/CSV**: Parsed for structured data; falls back to AI if unstructured
     - **CAD/BIM**: Converted via DDC converter, elements summarised, AI generates BOQ
     - **Image**: Sent to AI Vision for OCR and BOQ extraction
-
-    Max file size: 50 MB.
     """
     response.headers["X-RateLimit-Remaining"] = str(remaining)
     filename = file.filename or "file"
@@ -423,21 +409,10 @@ async def file_estimate(
             detail=(f"Unsupported file type: .{ext}. Accepted: {', '.join(f'.{e}' for e in sorted(_EXT_CATEGORY))}"),
         )
 
-    # Reject obviously oversize bodies before reading them into memory.
-    if content_length is not None and content_length > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Max: {MAX_FILE_SIZE // 1024 // 1024} MB.",
-        )
-
+    # No upload size cap — per product policy.
     content = await file.read()
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty.")
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large ({len(content) / 1024 / 1024:.1f} MB). Max: {MAX_FILE_SIZE // 1024 // 1024} MB.",
-        )
 
     parsed_project_id: uuid.UUID | None = None
     if project_id:
@@ -607,14 +582,14 @@ async def enrich_estimate(
                     # Search each keyword separately with OR
                     # Try with region first, then without if no results
                     for kw in keywords:
-                        kw_results, _ = await cost_repo.search(
+                        kw_results, _, _ = await cost_repo.search(
                             q=kw,
                             region=region or None,
                             limit=3,
                         )
                         # Fallback: search without region filter
                         if not kw_results and region:
-                            kw_results, _ = await cost_repo.search(
+                            kw_results, _, _ = await cost_repo.search(
                                 q=kw,
                                 limit=3,
                             )

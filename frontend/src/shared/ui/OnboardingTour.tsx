@@ -18,6 +18,10 @@ const AUTO_START_BLOCKED_PREFIXES = [
 /* ── Constants ──────────────────────────────────────────────────────────── */
 
 export const ONBOARDING_STORAGE_KEY = 'oe_tour_completed';
+/* QA hook: setting this key to '1' suppresses the auto-start tour
+ * regardless of `oe_tour_completed`. Used by Playwright probes so the
+ * spotlight overlay never lands on top of the page under test. */
+export const ONBOARDING_SKIP_KEY = 'oe_skip_onboarding_tour';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -184,10 +188,18 @@ export function OnboardingTour({
     location.pathname.startsWith(prefix),
   );
 
+  // QA escape hatch: localStorage flag suppresses auto-start for Playwright.
+  // Manual launches (forceShow) still bypass this.
+  const isQaSkipped =
+    typeof window !== 'undefined' &&
+    localStorage.getItem(ONBOARDING_SKIP_KEY) === '1';
+
   // Determine if tour should auto-start
   const shouldStart =
     forceShow ||
-    (!isBlockedRoute && localStorage.getItem(ONBOARDING_STORAGE_KEY) === null);
+    (!isBlockedRoute &&
+      !isQaSkipped &&
+      localStorage.getItem(ONBOARDING_STORAGE_KEY) === null);
 
   const [active, setActive] = useState(shouldStart);
   const [currentStep, setCurrentStep] = useState(0);
@@ -372,11 +384,21 @@ export function OnboardingTour({
             </h3>
           </div>
 
-          {/* Close / skip button */}
+          {/* Close / skip button. `onboarding-tour-skip` is the canonical
+              QA selector audit probes target. Clicking persists the
+              skip + QA-skip flags so the tour never re-mounts on
+              subsequent reloads. */}
           <button
             type="button"
-            onClick={handleSkip}
-            data-testid="onboarding-skip"
+            onClick={() => {
+              try {
+                localStorage.setItem(ONBOARDING_SKIP_KEY, '1');
+              } catch {
+                /* ignore storage errors */
+              }
+              handleSkip();
+            }}
+            data-testid="onboarding-tour-skip"
             className={clsx(
               'shrink-0 flex h-6 w-6 items-center justify-center rounded-md',
               'text-content-tertiary hover:text-content-primary hover:bg-surface-secondary',

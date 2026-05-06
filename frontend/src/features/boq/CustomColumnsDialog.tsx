@@ -507,10 +507,11 @@ export function CustomColumnsDialog({
               <div className="rounded-lg border border-border-light divide-y divide-border-light">
                 {columns.map((col) => {
                   const Icon = COLUMN_TYPE_ICONS[col.column_type] ?? Type;
-                  // Calculated columns aren't stored per-position — fill rate
-                  // is meaningless. Suppress the bar.
+                  // Calculated AND derived columns aren't stored per-position
+                  // — fill rate is meaningless. Suppress the bar in both cases.
+                  const isDerived = !!col.derived;
                   const fr =
-                    col.column_type === 'calculated'
+                    col.column_type === 'calculated' || isDerived
                       ? { filled: 0, total: 0 }
                       : fillRateFor(positions, col.name);
                   const fillPct = fr.total > 0 ? Math.round((fr.filled / fr.total) * 100) : 0;
@@ -530,6 +531,12 @@ export function CustomColumnsDialog({
                           <Badge variant="neutral" size="sm">
                             {col.column_type}
                           </Badge>
+                          {isDerived && (
+                            <Badge variant="blue" size="sm">
+                              {t('boq.column_auto', { defaultValue: 'auto' })}
+                              {col.resource_role ? ` · ${col.resource_role}` : ''}
+                            </Badge>
+                          )}
                           {col.column_type === 'select' && col.options && col.options.length > 0 && (
                             <span className="text-2xs text-content-tertiary">
                               {col.options.length} {t('boq.options', { defaultValue: 'options' })}

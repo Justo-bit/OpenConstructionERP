@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Camera,
@@ -51,8 +52,6 @@ import {
 const PHOTO_CATEGORIES: PhotoCategory[] = [
   'site', 'progress', 'defect', 'delivery', 'safety', 'other',
 ];
-
-const MAX_PHOTO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 const CATEGORY_COLORS: Record<PhotoCategory, string> = {
   site: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
@@ -631,19 +630,7 @@ function UploadZone({
       return;
     }
 
-    const oversized = fileArray.filter((f) => f.size > MAX_PHOTO_SIZE_BYTES);
-    if (oversized.length > 0) {
-      addToast({
-        type: 'warning',
-        title: t('photos.files_too_large', { defaultValue: 'Files too large' }),
-        message: t('photos.max_size_warning', {
-          defaultValue: '{{count}} file(s) exceed the 50 MB limit.',
-          count: oversized.length,
-        }),
-      });
-    }
-
-    const validFiles = fileArray.filter((f) => f.size <= MAX_PHOTO_SIZE_BYTES);
+    const validFiles = fileArray;
     if (validFiles.length === 0) return;
 
     setUploading(true);
@@ -730,7 +717,7 @@ function UploadZone({
             {t('photos.drop_or_click', { defaultValue: 'Drop photos here or click to upload' })}
           </p>
           <p className="text-2xs text-content-quaternary">
-            {t('photos.supported_formats', { defaultValue: 'JPEG, PNG, WebP, HEIC. Max 50 MB per file.' })}
+            {t('photos.supported_formats', { defaultValue: 'JPEG, PNG, WebP, HEIC.' })}
           </p>
         </div>
       )}
@@ -862,6 +849,26 @@ export function PhotoGalleryPage() {
 
   const photoList = photos ?? [];
   const isLoading = viewMode === 'grid' ? photosLoading : timelineLoading;
+
+  // Deep-link: `?photo={id}` (set by /files → "Open in Site Photos")
+  // opens the lightbox on that photo as soon as the gallery loads. We
+  // strip the param afterwards so refreshing/back-button doesn't keep
+  // re-opening it. One-shot effect keyed on photoList loading.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkPhotoId = searchParams.get('photo');
+  useEffect(() => {
+    if (!deepLinkPhotoId || photoList.length === 0) return;
+    const idx = photoList.findIndex((p) => p.id === deepLinkPhotoId);
+    if (idx >= 0) setLightboxIndex(idx);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('photo');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [deepLinkPhotoId, photoList, setSearchParams]);
 
   /* ── Mutations ──────────────────────────────────────────────────────── */
 

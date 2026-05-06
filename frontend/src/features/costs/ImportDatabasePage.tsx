@@ -1541,16 +1541,6 @@ export function ImportDatabasePage() {
         return;
       }
 
-      // 10MB limit
-      if (file.size > 10 * 1024 * 1024) {
-        addToast({
-          type: 'error',
-          title: t('costs.import_file_too_large', { defaultValue: 'File too large' }),
-          message: t('costs.import_max_size', { defaultValue: 'Maximum file size is 10 MB.' }),
-        });
-        return;
-      }
-
       setSelectedFile(file);
       setPreview({
         name: file.name,
@@ -1885,7 +1875,7 @@ export function ImportDatabasePage() {
                     </p>
                     <p className="mt-1 text-xs text-content-tertiary">
                       {t('costs.import_accepted', {
-                        defaultValue: 'Excel (.xlsx) or CSV (.csv) - max 10 MB',
+                        defaultValue: 'Excel (.xlsx) or CSV (.csv)',
                       })}
                     </p>
                   </div>

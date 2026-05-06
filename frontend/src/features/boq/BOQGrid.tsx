@@ -1278,6 +1278,28 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
       let { newValue } = event;
       if (!data?.id || data._isFooter) return;
 
+      // Detect custom columns by `colId` (set by getCustomColumnDefs
+      // to ``custom_<name>``). Doing this BEFORE the standard-field
+      // dispatch means a custom column can never accidentally be
+      // routed through the standard `update[field]` path, even if a
+      // future refactor changes the field string. The column name
+      // we write to `metadata.custom_fields` comes from `colId`, not
+      // from string-stripping `field` — so two columns can never
+      // alias onto the same key.
+      const colId = event.column?.getColId() ?? colDef.colId ?? '';
+      if (typeof colId === 'string' && colId.startsWith('custom_')) {
+        const colName = colId.slice('custom_'.length);
+        if (!colName) return;
+        if (oldValue === newValue) return;
+        const meta = (data.metadata as Record<string, unknown>) ?? {};
+        const cf = (meta.custom_fields as Record<string, unknown> | undefined) ?? {};
+        const customFields = { ...cf, [colName]: newValue };
+        const updatedMeta = { ...meta, custom_fields: customFields };
+        const oldMeta = { ...meta, custom_fields: { ...cf } };
+        onUpdatePosition(data.id, { metadata: updatedMeta }, { metadata: oldMeta });
+        return;
+      }
+
       const field = colDef.field;
       if (!field) return;
 
@@ -1306,16 +1328,6 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
         const parsedOld = typeof oldValue === 'number' ? oldValue : parseFloat(oldValue) || 0;
         update.quantity = parsedNew;
         old.quantity = parsedOld;
-      }
-
-      // Handle custom column changes — store in metadata.custom_fields
-      if (field?.startsWith('_custom_')) {
-        const colName = field.replace('_custom_', '');
-        const meta = (data.metadata as Record<string, unknown>) ?? {};
-        const customFields = { ...((meta.custom_fields as Record<string, unknown>) ?? {}), [colName]: newValue };
-        const updatedMeta = { ...meta, custom_fields: customFields };
-        onUpdatePosition(data.id, { metadata: updatedMeta }, {});
-        return;
       }
 
       onUpdatePosition(data.id, update, old);
@@ -1772,7 +1784,15 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
     >
       <div
         className="ag-theme-quartz"
-        style={{ height: 'max(calc(100vh - 48px), 900px)', width: '100%' }}
+        // Cap the grid at the visible viewport so AG Grid's internal
+        // horizontal scrollbar (which sits at the BOTTOM of the
+        // viewport) always lands inside the user's screen. The previous
+        // 900px floor pushed the bottom — and the scrollbar with it —
+        // below the fold on shorter laptops, so once enough custom
+        // columns were added to overflow horizontally there was no way
+        // to scroll right and see them. `min(...)` keeps a sensible
+        // tall view on big screens and shrinks on small ones.
+        style={{ height: 'min(calc(100vh - 48px), 1100px)', minHeight: 480, width: '100%', minWidth: 0 }}
       >
         <AgGridReact
           ref={gridRef}

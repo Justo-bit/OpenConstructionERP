@@ -115,7 +115,6 @@ async def module_health() -> dict[str, str]:
 # ── Snapshots (T01) ────────────────────────────────────────────────────────
 
 
-_MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB safety cap per file
 _MAX_UPLOAD_COUNT = 16  # per POST
 
 
@@ -139,8 +138,8 @@ async def create_snapshot(
 
     Accepts a multipart upload of one or more CAD/BIM files plus a
     free-form label. The label must be unique within the project (409
-    otherwise). Each uploaded file must be ≤ 200 MB; the total upload
-    count is capped at 16 to protect the conversion process.
+    otherwise). The total upload count is capped at 16 to protect the
+    conversion process; there is no per-file size cap.
     """
     if not files:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="At least one file is required.")
@@ -154,11 +153,6 @@ async def create_snapshot(
     uploaded: list[UploadedFile] = []
     for idx, f in enumerate(files):
         content = await f.read()
-        if len(content) > _MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File '{f.filename}' exceeds the 200 MB size cap.",
-            )
         ext = (f.filename or "").rsplit(".", 1)[-1].lower() if f.filename else ""
         uploaded.append(
             UploadedFile(

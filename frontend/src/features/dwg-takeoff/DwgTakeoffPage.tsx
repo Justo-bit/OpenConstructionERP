@@ -2263,14 +2263,16 @@ export function DwgTakeoffPage() {
                   {/* LEFT · Upload card (gets the larger half) */}
                   <div className="flex flex-col">
                     <div className="rounded-2xl bg-[#22252b]/90 backdrop-blur-sm border border-[#333842] shadow-2xl shadow-black/30 p-3 flex flex-col h-full">
-                      <label
+                      <button
+                        type="button"
+                        aria-label={t('dwg_takeoff.upload_aria', { defaultValue: 'Upload DWG or DXF file' })}
                         onDrop={(e) => {
                           e.preventDefault();
                           const f = e.dataTransfer.files?.[0];
                           if (f) { setUploadFile(f); setUploadName(f.name.replace(/\.[^.]+$/, '')); setShowUpload(true); }
                         }}
                         onDragOver={(e) => e.preventDefault()}
-                        className="group/drop flex flex-col items-center justify-center gap-7 rounded-xl p-20 text-center cursor-pointer transition-all flex-1 border-2 border-dashed border-[#444c5a] bg-[#1a1d23]/60 hover:border-blue-500/50 hover:bg-blue-500/5 hover:shadow-[0_0_30px_rgba(59,130,246,0.1)]"
+                        className="group/drop flex flex-col items-center justify-center gap-7 rounded-xl p-20 text-center cursor-pointer transition-all flex-1 border-2 border-dashed border-[#444c5a] bg-[#1a1d23]/60 hover:border-blue-500/50 hover:bg-blue-500/5 hover:shadow-[0_0_30px_rgba(59,130,246,0.1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#22252b]"
                         onClick={() => setShowUpload(true)}
                       >
                         <div className="w-20 h-20 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center group-hover/drop:scale-110 group-hover/drop:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all">
@@ -2287,7 +2289,7 @@ export function DwgTakeoffPage() {
                         <p className="text-[11px] text-gray-600 leading-relaxed mt-1 text-center">
                           AutoCAD 2000–2025 &middot; DXF R12–R2025
                         </p>
-                      </label>
+                      </button>
                     </div>
                   </div>
 
@@ -3487,7 +3489,7 @@ export function DwgTakeoffPage() {
                     {t('dwg_takeoff.upload_drawing', 'Upload drawing')}
                   </h3>
                   <p className="text-[11px] text-content-tertiary">
-                    {t('dwg_takeoff.upload_hint', 'DWG or DXF files up to 100 MB')}
+                    {t('dwg_takeoff.upload_hint', 'DWG or DXF files')}
                   </p>
                 </div>
               </div>
@@ -3502,23 +3504,14 @@ export function DwgTakeoffPage() {
             {/* Drop zone / file picker */}
             <input
               ref={fileInputRef}
+              id="dwg-takeoff-file-input"
               type="file"
               accept=".dwg,.dxf"
+              aria-label={t('dwg_takeoff.upload_aria', { defaultValue: 'Upload DWG or DXF file' })}
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) {
-                  const MAX_SIZE_MB = 100;
-                  if (f.size > MAX_SIZE_MB * 1024 * 1024) {
-                    addToast({
-                      type: 'error',
-                      title: t('dwg_takeoff.file_too_large', 'File too large'),
-                      message: t('dwg_takeoff.file_size_limit', 'Maximum file size is {{max}} MB', {
-                        max: MAX_SIZE_MB,
-                      }),
-                    });
-                    return;
-                  }
                   setUploadFile(f);
                   if (!uploadName) setUploadName(f.name.replace(/\.[^.]+$/, ''));
                 }
@@ -3526,6 +3519,7 @@ export function DwgTakeoffPage() {
             />
             <button
               type="button"
+              aria-label={t('dwg_takeoff.upload_aria', { defaultValue: 'Upload DWG or DXF file' })}
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
               onDrop={(e) => {
@@ -3539,17 +3533,6 @@ export function DwgTakeoffPage() {
                       type: 'error',
                       title: t('dwg_takeoff.invalid_format', 'Invalid file format'),
                       message: t('dwg_takeoff.accepted_formats', 'Only .dwg and .dxf files are accepted'),
-                    });
-                    return;
-                  }
-                  const MAX_SIZE_MB = 100;
-                  if (f.size > MAX_SIZE_MB * 1024 * 1024) {
-                    addToast({
-                      type: 'error',
-                      title: t('dwg_takeoff.file_too_large', 'File too large'),
-                      message: t('dwg_takeoff.file_size_limit', 'Maximum file size is {{max}} MB', {
-                        max: MAX_SIZE_MB,
-                      }),
                     });
                     return;
                   }

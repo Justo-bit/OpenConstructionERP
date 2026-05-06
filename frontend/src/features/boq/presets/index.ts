@@ -194,15 +194,46 @@ const REGIONAL_PRESETS: ColumnPreset[] = [
     region: 'germany',
     name: 'GAEB / AVA Style',
     description:
-      'Splits unit rate into Lohn / Material / Geräte / Sonstiges + risk markup — matches GAEB X83/X84 standard',
+      'Splits unit rate into Lohn / Material / Geräte / Sonstiges + risk markup. Lohn/Material/Geräte auto-fill from position resources — no manual entry.',
     icon: FileCheck,
     iconClass: 'text-rose-600 bg-rose-500/10',
     columns: [
       { name: 'kg_bezug', display_name: 'KG-Bezug (DIN 276)', column_type: 'text' },
-      { name: 'lohn_ep', display_name: 'Lohn-EP', column_type: 'number' },
-      { name: 'material_ep', display_name: 'Material-EP', column_type: 'number' },
-      { name: 'geraete_ep', display_name: 'Geräte-EP', column_type: 'number' },
-      { name: 'sonstiges_ep', display_name: 'Sonstiges-EP', column_type: 'number' },
+      // Lohn / Material / Geräte are derived from `metadata.resources[]`:
+      // each one sums the per-unit subtotal of resources whose `type`
+      // matches the role. ``Sonstiges`` is what's LEFT over (other +
+      // operator + subcontractor) so the four EP columns add up to
+      // ``unit_rate`` for any position that's been priced via resources.
+      // ``Wagnis %`` stays a free-input number — it's a contractor
+      // discretion knob and isn't carried on the position model.
+      {
+        name: 'lohn_ep',
+        display_name: 'Lohn-EP',
+        column_type: 'number',
+        derived: 'resource_sum',
+        resource_role: 'labor',
+      },
+      {
+        name: 'material_ep',
+        display_name: 'Material-EP',
+        column_type: 'number',
+        derived: 'resource_sum',
+        resource_role: 'material',
+      },
+      {
+        name: 'geraete_ep',
+        display_name: 'Geräte-EP',
+        column_type: 'number',
+        derived: 'resource_sum',
+        resource_role: 'equipment',
+      },
+      {
+        name: 'sonstiges_ep',
+        display_name: 'Sonstiges-EP',
+        column_type: 'number',
+        derived: 'resource_sum',
+        resource_role: 'other',
+      },
       { name: 'wagnis_pct', display_name: 'Wagnis %', column_type: 'number' },
     ],
   },
@@ -211,13 +242,22 @@ const REGIONAL_PRESETS: ColumnPreset[] = [
     region: 'austria',
     name: 'ÖNORM / BRZ Style',
     description:
-      'LV position code, keyword, labor share and supplier — matches Austrian ÖNORM B 2061 / A 2063 used in BRZ',
+      'LV position code, keyword, supplier + auto-computed labor share — matches Austrian ÖNORM B 2061 / A 2063 used in BRZ',
     icon: Building2,
     iconClass: 'text-orange-600 bg-orange-500/10',
     columns: [
       { name: 'lv_position', display_name: 'LV-Position', column_type: 'text' },
       { name: 'stichwort', display_name: 'Stichwort', column_type: 'text' },
-      { name: 'lohn_anteil_pct', display_name: 'Lohn-Anteil %', column_type: 'number' },
+      // Lohn-Anteil = labor share of unit rate, expressed as a percent.
+      // Auto-derived from the position's resources so the user can't
+      // accidentally enter an inconsistent value.
+      {
+        name: 'lohn_anteil_pct',
+        display_name: 'Lohn-Anteil %',
+        column_type: 'number',
+        derived: 'percentage_of_unit_rate',
+        resource_role: 'labor',
+      },
       { name: 'aufschlag_pct', display_name: 'Aufschlag %', column_type: 'number' },
       { name: 'lieferant', display_name: 'Lieferant', column_type: 'text' },
     ],

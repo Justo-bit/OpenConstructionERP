@@ -26,6 +26,7 @@ import { EmailDialog } from './components/EmailDialog';
 import { FolderCardGrid } from './components/FolderCardGrid';
 import { UploadDialog } from './components/UploadDialog';
 import { BulkActionsBar } from './components/BulkActionsBar';
+import { primaryModule } from './kindModule';
 import type { FileFilters, FileKind, FileRow } from './types';
 
 const VIEW_MODE_KEY = 'file-manager:view-mode';
@@ -71,8 +72,10 @@ export function FileManagerPage() {
 
   // Selected category drives both the URL (?kind=) and the view —
   // landing on /files renders the folder grid; /files?kind=document
-  // jumps straight to that category's grid view.
-  const queryKind = searchParams.get('kind');
+  // jumps straight to that category's grid view. Strip any legacy
+  // "category:" prefix that older bookmarks may carry.
+  const rawKind = searchParams.get('kind');
+  const queryKind = rawKind ? rawKind.replace(/^category:/, '') : null;
   const initialKind: FileKind | null =
     queryKind && VALID_KINDS.has(queryKind) ? (queryKind as FileKind) : null;
 
@@ -137,6 +140,19 @@ export function FileManagerPage() {
     }
   }, [list, previewRow]);
 
+  // Deep-link: `?file={id}` pre-selects that file in the preview pane.
+  // Used by the "Open in File Manager" secondary action so users land
+  // directly on the focused file rather than just the category grid.
+  const fileIdParam = searchParams.get('file');
+  useEffect(() => {
+    if (!fileIdParam || !list) return;
+    const target = list.items.find((r) => r.id === fileIdParam);
+    if (target) {
+      setPreviewRow(target);
+      setSelectedIds(new Set([fileIdParam]));
+    }
+  }, [fileIdParam, list]);
+
   function handleSelect(id: string, additive: boolean) {
     setSelectedIds((prev) => {
       const next = new Set(additive ? prev : []);
@@ -152,9 +168,11 @@ export function FileManagerPage() {
   }
 
   function handleOpen(row: FileRow) {
-    if (row.download_url) {
-      window.open(row.download_url, '_blank', 'noopener,noreferrer');
-    }
+    // Opening a file means "take me to the tool that processes it" —
+    // PDFs jump to PDF Takeoff, IFC/RVT to BIM Viewer, DWG to DWG
+    // Takeoff. Plain download stays available from the preview pane.
+    const target = primaryModule(row.kind, row.extension);
+    navigate(target.route(row.project_id, row.id));
   }
 
   function handleOpenCategory(kind: FileKind) {

@@ -635,11 +635,20 @@ function UploadPanel({
 
         {!advancedMode ? (
           <label
-            aria-label={t('bim.upload_dropzone_aria', { defaultValue: 'Drop a file here or click to browse' })}
+            htmlFor="bim-upload-file-input"
+            role="button"
+            tabIndex={0}
+            aria-label={t('bim.upload_dropzone_aria', { defaultValue: 'Upload BIM file (RVT, IFC, CSV, XLSX)' })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
             onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFileSelect(f); }}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
-            className={`flex flex-col items-center gap-3 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+            className={`flex flex-col items-center gap-3 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue focus-visible:ring-offset-2 ${
               dragOver ? 'border-oe-blue bg-oe-blue/5' : file ? 'border-oe-blue/40 bg-oe-blue/5' : 'border-border-medium hover:border-oe-blue/50 hover:bg-surface-secondary'
             }`}
           >
@@ -663,7 +672,7 @@ function UploadPanel({
                 </div>
               </>
             )}
-            <input ref={fileInputRef} type="file" accept=".rvt,.ifc,.csv,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
+            <input id="bim-upload-file-input" ref={fileInputRef} type="file" accept=".rvt,.ifc,.csv,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
           </label>
         ) : (
           <div className="grid grid-cols-2 gap-3">
@@ -1647,8 +1656,22 @@ export function BIMPage() {
       if (model?.project_id && model.project_id !== projectId) {
         setActiveProject(model.project_id, '');
       }
-    }).catch(() => { autoDetectedRef.current = urlModelId; });
-  }, [urlModelId, models, projectId, setActiveProject, modelsQuery.isLoading]);
+    }).catch(() => {
+      autoDetectedRef.current = urlModelId;
+      // Surface the missing-model state so the user doesn't think the
+      // model is "empty" — previously a 404 here was silent and the UI
+      // fell back to "No elements to display" (audit P1-13).
+      const shortId = urlModelId.slice(0, 8);
+      addToast({
+        type: 'warning',
+        title: t('bim.model_not_found_title', { defaultValue: 'Model not found' }),
+        message: t('bim.model_not_found_msg', {
+          defaultValue: 'Model {{id}} not found in this project.',
+          id: shortId,
+        }),
+      });
+    });
+  }, [urlModelId, models, projectId, setActiveProject, modelsQuery.isLoading, addToast, t]);
 
   // Pick a valid active model: handles initial mount, deep links (after auto-detect),
   // and project switches (when current activeModelId no longer belongs to the project).
@@ -2636,8 +2659,15 @@ export function BIMPage() {
 
       {/* ── Converter status banner — surfaces any missing DDC
             converters so the user can one-click install them before
-            dragging a native CAD file onto the upload zone. ── */}
-      <BIMConverterStatusBanner className="mx-3 mt-2" dismissible />
+            dragging a native CAD file onto the upload zone. Starts
+            collapsed once at least one model is ``status="ready"`` so
+            the banner does not push the 3D scene below the fold (audit
+            P2-1). ── */}
+      <BIMConverterStatusBanner
+        className="mx-3 mt-2"
+        dismissible
+        defaultCollapsed={models.some((m) => m.status === 'ready')}
+      />
 
       {/* ── 3D Viewport with filter sidebar ── */}
       <div className="flex-1 min-h-0 relative bg-surface-secondary flex">
@@ -2877,6 +2907,7 @@ export function BIMPage() {
             modelId={activeModelId}
             projectId={projectId}
             modelName={activeModel?.name}
+            modelMetadata={activeModel?.metadata ?? null}
             selectedElementIds={selectedElementIds}
             onElementSelect={handleElementSelect}
             onSelectionChange={setMultiSelectedIds}

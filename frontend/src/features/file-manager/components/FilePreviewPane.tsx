@@ -1,12 +1,15 @@
 /** Right rail showing details of the currently-focused file. */
 
 import { useTranslation } from 'react-i18next';
-import { Download, Mail, FolderOpen, Copy, X, FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Download, Mail, FolderOpen, Copy, X, FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
+import clsx from 'clsx';
 import { useToastStore } from '@/stores/useToastStore';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import type { FileRow, FileKind } from '../types';
 import { isTauri, openInOSFinder, copyToClipboard } from '../lib/tauri';
+import { modulesForKind, primaryModule } from '../kindModule';
 
 const KIND_ICON: Record<FileKind, typeof FileText> = {
   document: FileText,
@@ -35,6 +38,7 @@ function fmtBytes(bytes: number): string {
 
 export function FilePreviewPane({ row, onClose, onEmail }: FilePreviewPaneProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const addToast = useToastStore((s) => s.addToast);
   const [pathCopied, setPathCopied] = useState(false);
 
@@ -51,6 +55,20 @@ export function FilePreviewPane({ row, onClose, onEmail }: FilePreviewPaneProps)
   }
 
   const Icon = KIND_ICON[row.kind] ?? File;
+  // Primary tool for this file's extension (e.g. PDF → PDF Takeoff,
+  // IFC → BIM Viewer, DWG → DWG Takeoff). Falls back to the kind's
+  // default module when the extension isn't in the override map.
+  const primary = primaryModule(row.kind, row.extension);
+  const allModules = modulesForKind(row.kind);
+  const PrimaryIcon = primary.icon;
+  // `row` is narrowed by the `if (!row) return` guard above, but TS
+  // doesn't carry that narrowing into nested function declarations —
+  // capture it in a const so closures see the non-null type.
+  const file = row;
+
+  function navigateToModule(target: typeof primary) {
+    navigate(target.route(file.project_id, file.id));
+  }
 
   async function handleCopyPath() {
     if (!row) return;
@@ -110,12 +128,59 @@ export function FilePreviewPane({ row, onClose, onEmail }: FilePreviewPaneProps)
         </div>
 
         <div className="flex flex-col gap-1.5">
+          {/* Primary action — opens this file in its native module. PDFs
+              go to PDF Takeoff or Documents Viewer; IFC/RVT to BIM
+              Viewer; DWG to DWG Takeoff. Falls back to download below
+              when the user just wants the bytes. */}
+          <button
+            type="button"
+            onClick={() => navigateToModule(primary)}
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-oe-blue text-white hover:bg-oe-blue-hover transition-colors"
+            title={t(primary.descriptionI18nKey, { defaultValue: primary.description })}
+          >
+            <PrimaryIcon size={13} strokeWidth={2.25} />
+            {t('files.actions.open_in', {
+              defaultValue: 'Open in {{module}}',
+              module: t(primary.i18nKey, { defaultValue: primary.label }),
+            })}
+            <ExternalLink size={11} className="opacity-80" />
+          </button>
+
+          {/* Secondary modules — same file, different tool (e.g. a PDF
+              also opens in Documents Viewer; an IFC also feeds BIM
+              Rules). Skipped when there's only one possibility. */}
+          {allModules.length > 1 && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {allModules
+                .filter((m) => m.label !== primary.label)
+                .map((m) => {
+                  const MIcon = m.icon;
+                  return (
+                    <button
+                      key={m.label}
+                      type="button"
+                      onClick={() => navigateToModule(m)}
+                      className={clsx(
+                        'inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10.5px] font-medium transition-colors',
+                        'border border-border-light text-content-secondary',
+                        'hover:border-oe-blue/40 hover:text-oe-blue hover:bg-oe-blue/5',
+                      )}
+                      title={t(m.descriptionI18nKey, { defaultValue: m.description })}
+                    >
+                      <MIcon size={10} strokeWidth={2} />
+                      {t(m.i18nKey, { defaultValue: m.label })}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+
           {row.download_url && (
             <a
               href={row.download_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium bg-oe-blue text-white hover:bg-oe-blue-hover transition-colors"
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border border-border-light text-content-primary hover:bg-surface-secondary transition-colors"
             >
               <Download size={13} />
               {t('files.actions.download', { defaultValue: 'Download' })}

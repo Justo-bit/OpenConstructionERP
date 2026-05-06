@@ -50,6 +50,7 @@ import {
   Pin,
   PinOff,
   Github,
+  HardDrive,
   type LucideIcon,
 } from 'lucide-react';
 import { useModuleStore } from '@/stores/useModuleStore';
@@ -92,6 +93,10 @@ const navGroups: NavGroup[] = [
     items: [
       { labelKey: 'nav.dashboard', to: '/', icon: LayoutDashboard },
       { labelKey: 'projects.title', to: '/projects', icon: FolderOpen, tourId: 'projects' },
+      // Files lives in Overview because it's the unified entry point
+      // into a project's documents, photos, BIM and DWG — users land
+      // here to pick what to work on, just like the dashboard.
+      { labelKey: 'nav.project_files', to: '/files', icon: HardDrive },
     ],
   },
   {
@@ -174,15 +179,15 @@ const navGroups: NavGroup[] = [
     ],
   },
   // ── DOCUMENTS ──────────────────────────────────────────────────────
+  // /files moved to Overview (unified entry point); leaving the
+  // narrower per-type entries here for users who jump straight to a
+  // category-specific tool.
   {
     id: 'documentation',
     labelKey: 'nav.group_documentation',
     defaultOpen: false,
     hideInSimple: true,
     items: [
-      // /documents merged into /files — the file manager is now the
-      // unified entry point for project documents, photos, BIM, DWG…
-      { labelKey: 'nav.project_files', to: '/files', icon: FolderOpen },
       { labelKey: 'nav.assets', to: '/assets', icon: Package, badge: 'NEW' },
       { labelKey: 'cde.title', to: '/cde', icon: Database },
       { labelKey: 'nav.photos', to: '/photos', icon: Camera },
@@ -440,6 +445,18 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         const route = KBD_BY_LETTER[key];
         if (route) {
           e.preventDefault();
+          // The dashboard chord must reach the dashboard even on fresh
+          // installs — DashboardPage normally redirects to /onboarding
+          // until the wizard is finished, but a deliberate chord nav
+          // means "show me the dashboard now". Sentinel is read+cleared
+          // by DashboardPage's first-launch effect.
+          if (key === 'd') {
+            try {
+              sessionStorage.setItem('oe_skip_onboarding_redirect', '1');
+            } catch {
+              /* storage unavailable */
+            }
+          }
           navigate(route);
         }
         clearFirst();

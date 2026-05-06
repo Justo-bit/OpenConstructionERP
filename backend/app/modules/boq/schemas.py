@@ -8,10 +8,47 @@ but stored as strings in SQLite-compatible models.
 """
 
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+# Probe-A scenario 11: hard cap on ``quantity * unit_rate``. A 1e10 × 1e10
+# input would compute to 1e20, which is far beyond any plausible
+# construction line item and likely indicates fat-fingered input or
+# unit confusion (e.g. m³ vs mm³). Capping at 1e15 still allows
+# trillion-EUR megaprojects (gas pipelines, civil works) while
+# catching obvious overflow before it hits the DB. ``Decimal`` is used
+# throughout so the comparison is exact, not float-approximate.
+POSITION_TOTAL_CAP: Decimal = Decimal("1e15")
+
+
+def _check_position_total_cap(
+    quantity: float | None,
+    unit_rate: float | None,
+) -> None:
+    """Reject ``quantity * unit_rate`` totals beyond ``POSITION_TOTAL_CAP``.
+
+    Raises ``ValueError`` (which Pydantic surfaces as a 422) when the
+    product exceeds the cap. Either side being ``None`` means "no
+    change" on update — skip the check; the existing stored value
+    governs the effective total.
+    """
+    if quantity is None or unit_rate is None:
+        return
+    try:
+        product = Decimal(str(quantity)) * Decimal(str(unit_rate))
+    except (InvalidOperation, ValueError):
+        # Bad numeric input is caught by the per-field validators; this
+        # cross-field check just bails out so we don't double-report.
+        return
+    if product > POSITION_TOTAL_CAP:
+        raise ValueError(
+            "Position total exceeds reasonable limit. "
+            "Check quantity and unit rate.",
+        )
 
 
 def _sanitise_free_text(value: str | None) -> str | None:
@@ -236,6 +273,14 @@ class PositionCreate(BaseModel):
             )
         return normalised
 
+    # Probe-A scenario 11 — overflow guard. Cross-field check so a
+    # 1e10 × 1e10 = 1e20 input fails before it hits the DB rather than
+    # silently corrupting BOQ rollups.
+    @model_validator(mode="after")
+    def _check_total_cap(self) -> "PositionCreate":
+        _check_position_total_cap(self.quantity, self.unit_rate)
+        return self
+
 
 class SectionCreate(BaseModel):
     """Create a BOQ section (header row without pricing).
@@ -316,6 +361,16 @@ class PositionUpdate(BaseModel):
             )
         return normalised
 
+    # Probe-A scenario 11 — overflow guard for partial updates. Only
+    # fires when BOTH ``quantity`` and ``unit_rate`` are supplied in
+    # the same PATCH; if only one side is updated we cannot recompute
+    # without DB access. The service layer recomputes ``total`` and
+    # an additional cap check there guards the partial-update path.
+    @model_validator(mode="after")
+    def _check_total_cap(self) -> "PositionUpdate":
+        _check_position_total_cap(self.quantity, self.unit_rate)
+        return self
+
 
 class PositionResponse(BaseModel):
     """Position returned from the API."""
@@ -366,7 +421,22 @@ class PositionResponse(BaseModel):
 
 
 class MarkupCreate(BaseModel):
-    """Create a markup/overhead line on a BOQ."""
+    """Create a markup/overhead line on a BOQ.
+
+    ``apply_to`` controls the markup base:
+
+    * ``direct_cost`` — applies to the BOQ direct-cost subtotal only.
+    * ``subtotal`` — applies to the direct-cost subtotal (synonym kept
+      for legacy GAEB clients; equivalent to ``direct_cost`` for new
+      projects).
+    * ``cumulative`` — applies to the running total *including all
+      prior markups*. When multiple markups have ``apply_to='cumulative'``
+      they are evaluated in ``sort_order`` ASC, and each cumulative
+      markup's base is the direct-cost subtotal **plus** every PRIOR
+      markup (cumulative or direct_cost) in the same BOQ. This compounds
+      profit-on-overhead-on-cost, the GAEB / DIN 276 default. Reorder
+      markups by changing ``sort_order``; ties are stable by ``id``.
+    """
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -601,9 +671,21 @@ class ActivityLogList(BaseModel):
 
 
 class SnapshotCreate(BaseModel):
-    """Create a point-in-time snapshot of a BOQ."""
+    """Create a point-in-time snapshot of a BOQ.
 
-    name: str = Field(default="", max_length=255)
+    Some clients (older UI, third-party scripts) post the snapshot title
+    as ``label`` instead of ``name``. The validation alias accepts both
+    spellings; the server canonicalises to ``name`` before persisting,
+    so downstream code only ever sees one field.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(
+        default="",
+        max_length=255,
+        validation_alias=AliasChoices("name", "label"),
+    )
 
 
 class SnapshotResponse(BaseModel):

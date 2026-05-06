@@ -19,7 +19,7 @@ import { DatabaseSetupPage } from '@/features/setup';
 import { IntegrationsPage } from '@/features/integrations';
 import { AboutPage } from '@/features/about/AboutPage';
 import { QuickEstimatePage } from '@/features/ai';
-import { Logo, ShortcutsDialog, CommandPalette, ToastContainer, ErrorBoundary, NotFoundPage, OnboardingTour } from '@/shared/ui';
+import { Logo, ShortcutsDialog, CommandPalette, ToastContainer, ErrorBoundary, NotFoundPage, OnboardingTour, OfflineBanner } from '@/shared/ui';
 import GlobalSearchModal from '@/features/search/GlobalSearchModal';
 import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { FloatingQueuePanel } from './layout/FloatingQueuePanel';
@@ -361,6 +361,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<LoadingScreen />}>
+      <OfflineBanner />
       {isAuthenticated && <GlobalShortcuts />}
       {/* OnboardingTour mounted once at app top — moving it out of
           AppLayout was the fix for BUG-UI02-TOUR-PERSISTENT.  When the
@@ -391,6 +392,9 @@ export default function App() {
         <Route path="/data-explorer" element={<P title="Data Explorer"><CadDataExplorerPage /></P>} />
         <Route path="/bim" element={<P title="BIM Viewer"><BIMPage /></P>} />
         <Route path="/bim/rules" element={<P title="BIM Rules"><BIMQuantityRulesPage /></P>} />
+        {/* Legacy alias — must come BEFORE /bim/:modelId so the literal
+            "quantity-rules" segment isn't swallowed as a UUID model id. */}
+        <Route path="/bim/quantity-rules" element={<Navigate to="/bim/rules" replace />} />
         <Route path="/assets" element={<P title="Asset Register"><AssetsPage /></P>} />
         <Route path="/bim/:modelId" element={<P title="BIM Viewer"><BIMPage /></P>} />
         <Route path="/projects/:projectId/bim" element={<P title="BIM Viewer"><BIMPage /></P>} />

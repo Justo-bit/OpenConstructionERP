@@ -45,8 +45,6 @@ type SortField = 'date' | 'name' | 'size';
 
 const CATEGORIES = ['all', 'drawing', 'contract', 'specification', 'photo', 'correspondence', 'other'] as const;
 
-const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
-
 const CDE_STATE_COLORS: Record<string, 'warning' | 'blue' | 'success' | 'neutral'> = {
   wip: 'warning',
   shared: 'blue',
@@ -627,21 +625,8 @@ export function DocumentsPage() {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    // Frontend file-size validation
-    const oversized = fileArray.filter((f) => f.size > MAX_FILE_SIZE_BYTES);
-    if (oversized.length > 0) {
-      addToast({
-        type: 'warning',
-        title: t('documents.files_too_large', { defaultValue: 'Files too large' }),
-        message: t('documents.max_size_warning', {
-          defaultValue: '{{count}} file(s) exceed the 100 MB limit and were skipped: {{names}}',
-          count: oversized.length,
-          names: oversized.map((f) => f.name).join(', '),
-        }),
-      });
-    }
-
-    const validFiles = fileArray.filter((f) => f.size <= MAX_FILE_SIZE_BYTES);
+    // No client-side size cap.
+    const validFiles = fileArray;
     if (validFiles.length === 0) return;
 
     const token = useAuthStore.getState().accessToken;
@@ -934,7 +919,7 @@ export function DocumentsPage() {
             : t('documents.drop_hint', { defaultValue: 'Drag & drop files here' })}
         </p>
         <p className="text-xs text-content-tertiary mt-1">
-          {t('documents.supported_types', { defaultValue: 'PDF, images, Excel, DWG, IFC — any file type (max 100 MB)' })}
+          {t('documents.supported_types', { defaultValue: 'PDF, images, Excel, DWG, IFC — any file type' })}
         </p>
         <div className="flex items-center justify-center gap-2 mt-3">
           <span className="text-[10px] font-mono px-2 py-1 rounded-md bg-red-500/8 text-red-500 border border-red-500/15 font-semibold">.pdf</span>

@@ -153,6 +153,22 @@ class ChangeOrderService:
             status=status_filter,
         )
 
+    async def list_orders_for_owner(
+        self,
+        owner_id: uuid.UUID,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        status_filter: str | None = None,
+    ) -> tuple[list[ChangeOrder], int]:
+        """List change orders across every project owned by the user."""
+        return await self.repo.list_for_owner(
+            owner_id,
+            offset=offset,
+            limit=limit,
+            status=status_filter,
+        )
+
     async def get_summary(self, project_id: uuid.UUID) -> dict:
         """Get aggregated stats for a project's change orders."""
         return await self.repo.get_summary(project_id)

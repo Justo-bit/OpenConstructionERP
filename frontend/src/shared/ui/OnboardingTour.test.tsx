@@ -164,7 +164,7 @@ describe('OnboardingTour', () => {
     renderTour({ steps: TWO_STEPS });
     expect(screen.getByTestId('onboarding-tooltip')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('onboarding-skip'));
+    fireEvent.click(screen.getByTestId('onboarding-tour-skip'));
 
     // Tour should be gone
     expect(screen.queryByTestId('onboarding-tooltip')).not.toBeInTheDocument();

@@ -167,13 +167,8 @@ class DocumentService:
         if category not in VALID_CATEGORIES:
             category = "other"
 
-        # Read file content and validate size
+        # Read file content (no upload size cap per product policy).
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB.",
-            )
 
         # Magic-byte validation — BLOCKED_EXTENSIONS only rejects known-bad
         # names; this catches an attacker who renames evil.exe → evil.pdf.
@@ -505,13 +500,8 @@ class PhotoService:
         if category not in VALID_PHOTO_CATEGORIES:
             category = "site"
 
-        # Read file content and validate size
+        # Read file content (no upload size cap per product policy).
         content = await file.read()
-        if len(content) > MAX_PHOTO_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Photo too large. Maximum size is {MAX_PHOTO_SIZE // (1024 * 1024)}MB.",
-            )
 
         # Build storage path
         file_uuid = uuid.uuid4().hex[:12]
@@ -918,11 +908,7 @@ class SheetService:
         safe_name = _sanitize_filename(raw_name)
 
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024 * 1024)}MB.",
-            )
+        # No upload size cap — per product policy.
 
         # Save the original PDF to uploads
         file_uuid = uuid.uuid4().hex[:12]

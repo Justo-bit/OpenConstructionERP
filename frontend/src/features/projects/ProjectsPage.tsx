@@ -40,21 +40,26 @@ type StatusFilter = 'all' | 'active' | 'archived';
 
 const ITEMS_PER_PAGE = 12;
 
-const REGION_OPTIONS = ['all', 'DACH', 'UK', 'US', 'GULF', 'RU', 'NORDIC', 'DEFAULT'] as const;
-
-const regionColorMap: Record<string, string> = {
-  DACH: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
-  UK: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-  US: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-  GULF: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
-  RU: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  NORDIC: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
-  DEFAULT: 'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-300',
-};
+// Region tags + colours are derived from actual project data — no
+// region-specific list is hard-coded in the default UI per the
+// "no country-specific standards or city names in default UI" rule.
+// Avatar colours cycle through a palette indexed by region string.
+const REGION_AVATAR_PALETTE = [
+  'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
+  'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-300',
+];
 
 function getRegionAvatarClass(region?: string): string {
-  if (region && regionColorMap[region]) return regionColorMap[region];
-  return 'bg-oe-blue-subtle text-oe-blue';
+  if (!region) return 'bg-oe-blue-subtle text-oe-blue';
+  // Stable hash → palette index so the same region always renders the same colour.
+  let h = 0;
+  for (let i = 0; i < region.length; i++) h = (h * 31 + region.charCodeAt(i)) >>> 0;
+  return REGION_AVATAR_PALETTE[h % REGION_AVATAR_PALETTE.length] ?? 'bg-oe-blue-subtle text-oe-blue';
 }
 
 const currencyFmt = new Intl.NumberFormat(getIntlLocale(), {
@@ -267,6 +272,15 @@ export function ProjectsPage() {
     return { totalProjects, activeProjects, archivedProjects, totalBoqs, totalValue };
   }, [projects, boqStats]);
 
+  // Available region filter values — only regions actually present in the
+  // user's project list (no globally hard-coded country/region inventory).
+  const availableRegions = useMemo(() => {
+    if (!projects) return ['all'];
+    const set = new Set<string>();
+    for (const p of projects) if (p.region) set.add(p.region);
+    return ['all', ...Array.from(set).sort()];
+  }, [projects]);
+
   /* ── Sort labels ──────────────────────────────────────────────────── */
 
   const sortOptions: { value: SortOption; label: string }[] = [
@@ -409,7 +423,7 @@ export function ProjectsPage() {
                 onChange={(e) => setRegionFilter(e.target.value)}
                 className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-40"
               >
-                {REGION_OPTIONS.map((r) => (
+                {availableRegions.map((r) => (
                   <option key={r} value={r}>
                     {r === 'all'
                       ? t('projects.filter_all_regions', { defaultValue: 'All Regions' })
@@ -465,6 +479,11 @@ export function ProjectsPage() {
            *  acknowledged it stays out of the way until the user resets
            *  the localStorage flag. */}
           <BIMConverterStatusBanner dismissible />
+          {/* Empty-state copy unified per Probe-D P2-11. Title +
+              description follow the shared "No {entity} yet" / "Create
+              your first {entity}" template; the description retains the
+              project-specific elaboration so users understand what a
+              project is for. */}
           <EmptyState
             icon={<FolderOpen size={28} strokeWidth={1.5} />}
             title={t('projects.no_projects', { defaultValue: 'No projects yet' })}
@@ -473,7 +492,7 @@ export function ProjectsPage() {
                 'Projects organize your estimates, documents, and team. Create your first project to get started with cost estimation.',
             })}
             action={{
-              label: t('projects.new_project', { defaultValue: 'Create Project' }),
+              label: t('projects.create_first', { defaultValue: 'Create your first project' }),
               onClick: () => setCreateModalOpen(true),
             }}
           />

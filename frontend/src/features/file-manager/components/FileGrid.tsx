@@ -2,8 +2,9 @@
 
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag } from 'lucide-react';
+import { ExternalLink, FileText, Image as ImageIcon, Layout, Box, Pencil, File, PenTool, FileBarChart, Tag } from 'lucide-react';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
+import { primaryModule } from '../kindModule';
 import type { FileRow, FileKind } from '../types';
 
 const KIND_ICON: Record<FileKind, typeof FileText> = {
@@ -75,12 +76,11 @@ export function FileGrid({ items, selectedIds, onSelect, onOpen, isLoading }: Fi
         const Icon = KIND_ICON[row.kind] ?? File;
         const tint = KIND_TINT[row.kind] ?? 'bg-surface-secondary text-content-secondary';
         const isSelected = selectedIds.has(row.id);
+        const target = primaryModule(row.kind, row.extension);
+        const moduleLabel = t(target.i18nKey, { defaultValue: target.label });
         return (
-          <button
+          <div
             key={row.id}
-            type="button"
-            onClick={(e) => onSelect(row.id, e.metaKey || e.ctrlKey)}
-            onDoubleClick={() => onOpen(row)}
             className={clsx(
               'group relative flex flex-col rounded-xl border bg-surface-elevated text-left transition-all',
               'overflow-hidden',
@@ -88,37 +88,76 @@ export function FileGrid({ items, selectedIds, onSelect, onOpen, isLoading }: Fi
                 ? 'border-oe-blue ring-2 ring-oe-blue/30 shadow-md'
                 : 'border-border-light hover:border-border hover:shadow-sm',
             )}
-            title={row.name}
+            title={t('files.tile.tooltip', {
+              defaultValue: '{{name}} — double-click to open in {{module}}',
+              name: row.name,
+              module: moduleLabel,
+            })}
           >
-            <div className={clsx('relative aspect-[4/3] flex items-center justify-center', tint)}>
-              {row.thumbnail_url ? (
-                <img
-                  src={row.thumbnail_url}
-                  alt=""
-                  loading="lazy"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <Icon size={32} strokeWidth={1.5} />
-              )}
-              {row.extension && (
-                <span className="absolute bottom-1.5 left-1.5 px-1.5 py-px rounded bg-black/60 text-white text-[9px] font-mono uppercase tracking-wide">
-                  {row.extension.replace(/^\./, '')}
-                </span>
-              )}
-            </div>
-            <div className="px-2.5 py-2 min-w-0">
-              <p className="text-xs font-medium text-content-primary truncate" title={row.name}>
-                {row.name}
-              </p>
-              <div className="mt-0.5 flex items-center justify-between text-[10px] text-content-tertiary tabular-nums">
-                <span>{fmtBytes(row.size_bytes)}</span>
-                {row.modified_at && (
-                  <DateDisplay value={row.modified_at} format="relative" className="ms-2 shrink-0" />
+            <button
+              type="button"
+              onClick={(e) => onSelect(row.id, e.metaKey || e.ctrlKey)}
+              onDoubleClick={() => onOpen(row)}
+              className="flex flex-col text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/40"
+            >
+              <div className={clsx('relative aspect-[4/3] flex items-center justify-center', tint)}>
+                {row.thumbnail_url ? (
+                  <img
+                    src={row.thumbnail_url}
+                    alt=""
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <Icon size={32} strokeWidth={1.5} />
+                )}
+                {row.extension && (
+                  <span className="absolute bottom-1.5 left-1.5 px-1.5 py-px rounded bg-black/60 text-white text-[9px] font-mono uppercase tracking-wide">
+                    {row.extension.replace(/^\./, '')}
+                  </span>
                 )}
               </div>
-            </div>
-          </button>
+              <div className="px-2.5 py-2 min-w-0">
+                <p className="text-xs font-medium text-content-primary truncate" title={row.name}>
+                  {row.name}
+                </p>
+                <div className="mt-0.5 flex items-center justify-between text-[10px] text-content-tertiary tabular-nums">
+                  <span>{fmtBytes(row.size_bytes)}</span>
+                  {row.modified_at && (
+                    <DateDisplay value={row.modified_at} format="relative" className="ms-2 shrink-0" />
+                  )}
+                </div>
+              </div>
+            </button>
+
+            {/* Hover overlay — opens the file in its native module.
+                Sits over the thumbnail so it's discoverable; nested
+                button (with stopPropagation) keeps the surrounding card
+                selectable on a single click. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen(row);
+              }}
+              className={clsx(
+                'absolute top-1.5 right-1.5 inline-flex items-center gap-1 h-6 px-2 rounded-md',
+                'bg-surface-elevated/95 backdrop-blur-sm shadow-sm border border-border-light',
+                'text-[10px] font-medium text-content-secondary',
+                'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity',
+                'hover:text-oe-blue hover:border-oe-blue/40',
+              )}
+              title={t(target.descriptionI18nKey, { defaultValue: target.description })}
+            >
+              <span className="truncate max-w-[120px]">
+                {t('files.actions.open_in_short', {
+                  defaultValue: 'Open in {{module}}',
+                  module: moduleLabel,
+                })}
+              </span>
+              <ExternalLink size={9} className="shrink-0 opacity-70" />
+            </button>
+          </div>
         );
       })}
     </div>

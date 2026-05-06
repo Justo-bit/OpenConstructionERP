@@ -1,18 +1,30 @@
 """‌⁠‍BIM Hub API routes.
 
+Endpoint convention
+-------------------
+**Canonical** path for any per-model endpoint is ``/models/{model_id}/...``
+to match the spatial intent (``models`` is a collection of resources). The
+older flat ``/{model_id}/...`` paths are kept as back-compat aliases so
+existing SDK callers don't break — both paths resolve to the same handler.
+New endpoints SHOULD use the ``/models/{model_id}/...`` form.
+
 Endpoints:
     Models:
         GET    /                                — List models for a project
         POST   /                                — Create model
         POST   /upload                          — Upload BIM data (DataFrame + optional DAE)
-        GET    /{model_id}                      — Get single model
-        PATCH  /{model_id}                      — Update model
-        DELETE /{model_id}                      — Delete model
+        GET    /models/{model_id}                — Get single model (canonical)
+        GET    /{model_id}                       — Get single model (alias)
+        PATCH  /models/{model_id}                — Update model (canonical)
+        PATCH  /{model_id}                       — Update model (alias)
+        DELETE /models/{model_id}                — Delete model (canonical)
+        DELETE /{model_id}                       — Delete model (alias)
         GET    /models/{model_id}/geometry       — Serve DAE geometry file
 
     Elements:
         GET    /models/{model_id}/elements      — List elements (paginated, filterable)
         POST   /models/{model_id}/elements      — Bulk import elements
+        GET    /{model_id}/elements             — List elements (alias)
         GET    /elements/{element_id}            — Get single element
 
     BOQ Links:
@@ -781,12 +793,7 @@ async def upload_bim_data(
             detail="Uploaded data file is empty.",
         )
 
-    # 50 MB limit for data files
-    if len(data_content) > 50 * 1024 * 1024:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Data file too large. Maximum size is 50 MB.",
-        )
+    # No upload size cap — per product policy.
 
     # --- Validate geometry file (if provided) ---
     has_geometry = False
@@ -915,7 +922,6 @@ async def upload_bim_data(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _ALLOWED_CAD_EXTENSIONS = {".rvt", ".ifc", ".dwg", ".dgn", ".fbx", ".obj", ".3ds"}
-_CAD_MAX_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # Formats that require an external converter binary. IFC has a built-in
 # text fallback parser, so it's NOT in this set; XLSX/CSV go through a
@@ -1375,7 +1381,6 @@ async def upload_cad_file(
     service would pick it up asynchronously; for now the model stays in processing state.
 
     Accepted extensions: .rvt, .ifc, .dwg, .dgn, .fbx, .obj, .3ds
-    Max size: 500 MB
     """
     # --- Verify project access (IDOR guard) ---
     try:
@@ -1428,16 +1433,7 @@ async def upload_cad_file(
         if find_converter(ext.lstrip(".")) is None:
             # Read & save the file before responding so the user can
             # install the converter and trigger a re-process from the UI
-            # without a second upload (BUG-RVT03).  We still cap on the
-            # configured 500 MB limit before reading.
-            if file.size and file.size > _CAD_MAX_SIZE:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=(
-                        f"File too large. Maximum size is "
-                        f"{_CAD_MAX_SIZE // (1024 * 1024)} MB."
-                    ),
-                )
+            # without a second upload (BUG-RVT03). No size cap.
             content = await file.read()
             if not content:
                 raise HTTPException(
@@ -1518,23 +1514,12 @@ async def upload_cad_file(
                 },
             )
 
-    # Check Content-Length header before reading the whole file into memory
-    if file.size and file.size > _CAD_MAX_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {_CAD_MAX_SIZE // (1024 * 1024)} MB.",
-        )
-
+    # No upload size cap — per product policy.
     content = await file.read()
     if not content:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded file is empty.",
-        )
-    if len(content) > _CAD_MAX_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is {_CAD_MAX_SIZE // (1024 * 1024)} MB.",
         )
 
     # Magic-byte validation — filename extensions are attacker-controlled
@@ -3395,3 +3380,57 @@ async def get_column_values(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return counts
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Endpoint convention aliases — register the canonical ``/models/{model_id}/...``
+# paths next to the older flat ``/{model_id}/...`` ones so both work. New
+# callers should use the canonical form (it matches docstrings + the
+# elements/geometry/dataframe endpoints) but back-compat is preserved.
+# Audit P2-3 (2026-05-06).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+router.add_api_route(
+    "/models/{model_id}",
+    get_model,
+    methods=["GET"],
+    response_model=BIMModelResponse,
+    name="get_model_canonical",
+)
+router.add_api_route(
+    "/models/{model_id}",
+    update_model,
+    methods=["PATCH"],
+    response_model=BIMModelResponse,
+    name="update_model_canonical",
+)
+router.add_api_route(
+    "/models/{model_id}",
+    delete_model,
+    methods=["DELETE"],
+    status_code=204,
+    name="delete_model_canonical",
+)
+router.add_api_route(
+    "/models/{model_id}/retry/",
+    retry_model_processing,
+    methods=["POST"],
+    status_code=202,
+    name="retry_model_processing_canonical",
+)
+router.add_api_route(
+    "/models/{model_id}/generate-pdf-sheets/",
+    generate_pdf_sheets,
+    methods=["POST"],
+    status_code=202,
+    name="generate_pdf_sheets_canonical",
+)
+# Reverse alias: keep ``/{model_id}/elements/`` working for callers that
+# omit the ``models/`` prefix (audit observed 404 on this path).
+router.add_api_route(
+    "/{model_id}/elements/",
+    list_elements,
+    methods=["GET"],
+    response_model=BIMElementListResponse,
+    name="list_elements_alias",
+)

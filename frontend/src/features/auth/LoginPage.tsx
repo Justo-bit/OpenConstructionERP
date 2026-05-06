@@ -256,29 +256,35 @@ export function LoginPage() {
         <div className="absolute top-[-12%] left-[-6%] w-[520px] h-[520px] rounded-full bg-sky-300/12 dark:bg-oe-blue/35 blur-[110px] animate-blob-slow-1 mix-blend-screen" />
       </div>
 
-      {/* Language — top right */}
-      <div className="absolute top-3 right-3 z-30" ref={langRef}>
+      {/* Language — top right (enlarged for /login so it's discoverable). */}
+      <div className="absolute top-4 right-4 z-30" ref={langRef}>
         <button
           onClick={() => setLangOpen(!langOpen)}
-          className="flex items-center gap-1.5 rounded-lg border border-border-light bg-surface-elevated/80 backdrop-blur-sm px-2.5 py-1 text-xs text-content-secondary hover:bg-surface-elevated transition-colors shadow-sm"
+          className="flex items-center gap-2 rounded-xl border border-border-light bg-surface-elevated/85 backdrop-blur-sm px-4 py-2 text-sm font-medium text-content-secondary hover:bg-surface-elevated hover:border-oe-blue/30 transition-colors shadow-sm"
         >
-          <Globe size={12} className="text-content-tertiary" />
-          <CountryFlag code={currentLang.country} size={14} />
+          <Globe size={16} className="text-content-tertiary" />
+          <CountryFlag code={currentLang.country} size={20} />
           <span className="hidden sm:inline">{currentLang.name}</span>
-          <ChevronDown size={11} className={`text-content-tertiary transition-transform ${langOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown size={14} className={`text-content-tertiary transition-transform ${langOpen ? 'rotate-180' : ''}`} />
         </button>
         {langOpen && (
-          <div className="absolute right-0 mt-1 w-44 max-h-72 overflow-y-auto rounded-xl border border-border-light bg-surface-elevated shadow-xl py-0.5 animate-stagger-in">
+          <div className="absolute right-0 mt-2 w-64 max-h-80 overflow-y-auto rounded-xl border border-border-light bg-surface-elevated shadow-xl py-1 animate-stagger-in">
             {SUPPORTED_LANGUAGES.map((lang) => {
               const isActive = i18n.language === lang.code;
+              const english = 'english' in lang ? (lang as { english?: string }).english : undefined;
               return (
                 <button
                   key={lang.code}
                   onClick={() => { i18n.changeLanguage(lang.code); setLangOpen(false); }}
-                  className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-xs transition-colors ${isActive ? 'bg-oe-blue/8 text-oe-blue font-medium' : 'text-content-primary hover:bg-surface-secondary'}`}
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-sm transition-colors ${isActive ? 'bg-oe-blue/8 text-oe-blue font-medium' : 'text-content-primary hover:bg-surface-secondary'}`}
                 >
-                  <CountryFlag code={lang.country} size={14} />
-                  <span className="truncate">{lang.name}</span>
+                  <CountryFlag code={lang.country} size={18} />
+                  <span className="truncate">
+                    {lang.name}
+                    {english && (
+                      <span className="ml-1 text-2xs text-content-tertiary">({english})</span>
+                    )}
+                  </span>
                 </button>
               );
             })}
@@ -356,7 +362,8 @@ export function LoginPage() {
           {[
             { value: '55K+', label: t('login.stat_costs', { defaultValue: 'cost items‌⁠‍' }) },
             { value: '20', label: t('login.stat_langs', { defaultValue: 'languages‌⁠‍' }) },
-            { value: '11', label: t('login.stat_regions', { defaultValue: 'regions‌⁠‍' }) },
+            { value: '30', label: t('login.stat_regions', { defaultValue: 'regions‌⁠‍' }) },
+            { value: '4', label: t('login.stat_cad', { defaultValue: 'CAD formats‌⁠‍' }) },
           ].map((s) => (
             <div key={s.label} className="text-center">
               <div className="text-[22px] font-semibold text-content-primary tracking-tight">{s.value}</div>
@@ -380,7 +387,7 @@ export function LoginPage() {
               column step = 88px (one hex width on the same row)
               alternating rows are offset by 44px (half a hex) — that's
               what makes the slanted edges meet exactly. */}
-        <div className="relative mt-1 mx-auto h-[280px] w-[560px] max-w-full overflow-hidden animate-stagger-in" style={{ animationDelay: '260ms' }}>
+        <div className="relative mt-1 mr-auto h-[280px] w-[560px] max-w-full overflow-hidden animate-stagger-in" style={{ animationDelay: '260ms' }}>
           {([
             // Top row (y = -75) — 6 cells, offset by 44.
             { x: -220, y: -75, icon: ShieldCheck,     label: t('login.mod.local',     { defaultValue: 'Local' }) },
@@ -487,7 +494,15 @@ export function LoginPage() {
             <a href="https://OpenConstructionERP.com" target="_blank" rel="noopener noreferrer" className="hover:text-content-tertiary transition-colors">OpenConstructionERP.com</a>
           </div>
           <p className="text-[10px] text-content-quaternary/40">
-            Created by Artem Boiko
+            Created by{' '}
+            <a
+              href="https://www.linkedin.com/in/artem-boiko/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-content-tertiary underline-offset-2 hover:underline"
+            >
+              Artem Boiko
+            </a>
             &middot; <a href="mailto:info@datadrivenconstruction.io" className="hover:text-content-tertiary">info@datadrivenconstruction.io</a>
           </p>
         </div>
@@ -632,11 +647,12 @@ export function LoginPage() {
               <button
                 type="button"
                 onClick={() => setDemoOpen(!demoOpen)}
-                className="flex w-full items-center justify-center gap-2 px-5 py-2.5 text-sm text-content-secondary hover:text-oe-blue transition-all"
+                aria-expanded={demoOpen}
+                className="flex w-full items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold text-oe-blue hover:bg-oe-blue/[0.04] transition-all"
               >
                 <Zap size={14} className="text-oe-blue" />
-                <span className="font-semibold">{t('auth.demo_access', 'Demo Access')}</span>
-                <ChevronDown size={14} className={`text-content-tertiary transition-transform duration-200 ${demoOpen ? 'rotate-180' : ''}`} />
+                <span>{t('auth.try_demo', { defaultValue: 'Try demo (no signup)' })}</span>
+                <ChevronDown size={14} className={`text-oe-blue/70 transition-transform duration-200 ${demoOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {demoOpen && (
@@ -668,15 +684,17 @@ export function LoginPage() {
             </div>
           </div>
 
-          {/* Learn more + mobile footer */}
+          {/* Learn more — direct link to the marketing site (was a popup). */}
           <div className="mt-4 flex items-center justify-center gap-3 animate-stagger-in" style={{ animationDelay: '520ms' }}>
-            <button
-              onClick={() => setShowInfo(true)}
+            <a
+              href="https://OpenConstructionERP.com"
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-1.5 rounded-lg border border-border-light/60 px-3 py-1.5 text-2xs text-content-tertiary hover:text-oe-blue hover:border-oe-blue/30 transition-colors"
             >
               <Info size={12} />
               {t('login.learn_more', 'Learn more about the platform')}
-            </button>
+            </a>
           </div>
           <div className="lg:hidden mt-2 text-center text-2xs text-content-quaternary">
             <div className="flex items-center justify-center gap-3">
@@ -723,7 +741,7 @@ export function LoginPage() {
               <div className="grid grid-cols-2 gap-2.5">
                 {[
                   { icon: FileSpreadsheet, color: 'text-emerald-500 bg-emerald-500/10', title: t('about.cap.boq', 'Bill of Quantities'), desc: t('about.cap.boq_desc', 'Create detailed BOQ with hierarchical sections, positions, assemblies, markups (overhead, profit, VAT), and automatic totals. Works with regional classification systems or your own custom schema.') },
-                  { icon: Database, color: 'text-blue-500 bg-blue-500/10', title: t('about.cap.costs', 'Cost Databases'), desc: t('about.cap.costs_desc', '55,000+ cost items across 11 regional databases covering DACH, UK, North America, Middle East, and more. Add your own rates, import from Excel, or build a custom database from scratch.') },
+                  { icon: Database, color: 'text-blue-500 bg-blue-500/10', title: t('about.cap.costs', 'Cost Databases'), desc: t('about.cap.costs_desc', '55,000+ cost items across 30 regional databases worldwide. Add your own rates, import from Excel, or build a custom database from scratch.') },
                   { icon: CalendarClock, color: 'text-amber-500 bg-amber-500/10', title: t('about.cap.schedule', '4D Scheduling'), desc: t('about.cap.schedule_desc', 'Create project schedules with CPM critical path calculation, interactive Gantt charts, Monte Carlo risk analysis, resource assignment, and auto-generation of activities from your BOQ.') },
                   { icon: TrendingUp, color: 'text-violet-500 bg-violet-500/10', title: t('about.cap.costmodel', '5D Cost Model'), desc: t('about.cap.costmodel_desc', 'Track budgets over time with Earned Value Management (SPI, CPI), S-curve visualization, cash flow projections, cost snapshots, and what-if scenario modeling for informed decision-making.') },
                   { icon: Boxes, color: 'text-rose-500 bg-rose-500/10', title: t('about.cap.catalog', 'Resource Catalog'), desc: t('about.cap.catalog_desc', '7,000+ resources — materials, equipment, labor, operators, and utilities. Build reusable assemblies (composite rates) from catalog items and apply them directly to BOQ positions.') },
@@ -795,7 +813,7 @@ export function LoginPage() {
               <div className="grid grid-cols-4 gap-3 text-center">
                 {[
                   { value: '55,719', label: t('about.stat.costs', 'Cost items') },
-                  { value: '11', label: t('about.stat.regions', 'Regional databases') },
+                  { value: '30', label: t('about.stat.regions', 'Regional databases') },
                   { value: '20', label: t('about.stat.languages', 'Languages') },
                   { value: '100%', label: t('about.stat.free', 'Free & open source') },
                 ].map((stat) => (
