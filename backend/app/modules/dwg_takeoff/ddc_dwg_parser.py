@@ -179,6 +179,24 @@ def parse_ddc_dwg_excel(excel_path: str | Path) -> dict[str, Any]:
             }
 
     # ── Pass 3: collect vertices grouped by ParentID ──────────────────
+    #
+    # Bugfix (audit C11): the DDC DWG export writes one vertex row per
+    # AcDbVertex, and each row has BOTH a ``Start Point`` and an
+    # ``End Point`` column for line-segment vertices. The previous
+    # implementation appended both into the polyline's vertex list
+    # unconditionally, which meant every interior vertex got duplicated
+    # (segment N's end == segment N+1's start) and the polyline was
+    # effectively walked twice. Total polyline lengths and areas came
+    # out ~2× the real value. The subsequent ``deduped`` pass only
+    # removed IMMEDIATELY consecutive duplicates, so vertices duplicated
+    # across alternating rows survived.
+    #
+    # Fix: collect vertex rows in DXF order (preserving the AcDbVertex
+    # row sequence), then take ONLY the Start Point — or the Point /
+    # End Point as fallback when Start is missing. The polyline's true
+    # geometry is the sequence of vertex Start points; segment endpoints
+    # are reconstructed as the next vertex's Start. Closed polylines
+    # are handled by ``polyline_meta[eid].closed`` downstream.
     polyline_vertices: dict[str, list[tuple[float, float]]] = {}
     for row in all_rows[1:]:
         desc = str(get(row, "Description") or "")
@@ -187,16 +205,40 @@ def parse_ddc_dwg_excel(excel_path: str | Path) -> dict[str, Any]:
         parent_id = str(get(row, "ParentID") or "")
         if not parent_id:
             continue
-        # Try Start Point (bracket format), then EndPoint
+        # Prefer Start Point; fall back to Point (for AcDbPoint-style
+        # vertices), then End Point (only meaningful for the LAST
+        # vertex of an open polyline).
         sp = _parse_coord(get(row, "Start Point"))
-        ep = _parse_coord(get(row, "End Point"))
         pt = _parse_coord(get(row, "Point"))
+        ep = _parse_coord(get(row, "End Point"))
         coord = sp or pt or ep
-        if coord:
-            polyline_vertices.setdefault(parent_id, []).append(coord)
-        # Also add end point if different
-        if ep and ep != coord:
-            polyline_vertices.setdefault(parent_id, []).append(ep)
+        if coord is None:
+            continue
+        bucket = polyline_vertices.setdefault(parent_id, [])
+        # Skip immediate duplicates here too — defence in depth for
+        # exporters that occasionally emit zero-length segments.
+        if not bucket or bucket[-1] != coord:
+            bucket.append(coord)
+    # Post-pass: if a polyline's last vertex carried a distinct End
+    # Point AND the polyline is NOT closed, append the End Point of the
+    # last vertex row so the open-polyline tail isn't lost. We re-scan
+    # to find each polyline's terminal vertex row and consult its End
+    # Point column. This preserves the previous code's "also add end
+    # point" behaviour for the tail vertex of an open polyline without
+    # duplicating every interior vertex.
+    for parent_id, verts in polyline_vertices.items():
+        terminal_end: tuple[float, float] | None = None
+        for row in all_rows[1:]:
+            desc = str(get(row, "Description") or "")
+            if desc != "<AcDbVertex>":
+                continue
+            if str(get(row, "ParentID") or "") != parent_id:
+                continue
+            ep = _parse_coord(get(row, "End Point"))
+            if ep is not None:
+                terminal_end = ep
+        if terminal_end and (not verts or verts[-1] != terminal_end):
+            verts.append(terminal_end)
 
     # ── Pass 4: build entities ─────────────────────────────────────────
     entities: list[dict[str, Any]] = []

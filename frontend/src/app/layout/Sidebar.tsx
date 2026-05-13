@@ -78,6 +78,7 @@ import { useGlobalSearchStore } from '@/stores/useGlobalSearchStore';
 import { getModuleNavItems } from '@/modules/_registry';
 import { APP_VERSION } from '@/shared/lib/version';
 import { useSidebarBadges } from '@/shared/hooks/useSidebarBadges';
+import { RequestCustomModuleDialog } from '@/features/modules/RequestCustomModuleDialog';
 
 
 interface NavItem {
@@ -470,6 +471,12 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   // pin/unpin via the small icon-button that appears on item hover.
   const [pinned, setPinned] = useState<string[]>(() => readPinned());
 
+  // Custom-module request dialog — opens from the "Request a custom
+  // module" CTA at the bottom of the nav (below the "+ Add module"
+  // developer-guide tile). The dialog itself handles community vs
+  // bespoke routing.
+  const [customModuleOpen, setCustomModuleOpen] = useState(false);
+
   // Persist collapsed state to localStorage
   useEffect(() => {
     writeCollapsedState(collapsed);
@@ -751,7 +758,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
              there's more — build your own". Navigates into the in-app
              developer guide rather than to the marketplace, which gives
              contributors a clearer first step. */}
-        <li className="px-3 pt-2 pb-3">
+        <li className="px-3 pt-2 pb-1">
           <NavLink
             to="/modules/developer-guide"
             onClick={onClose}
@@ -769,6 +776,46 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               </span>
             </span>
           </NavLink>
+        </li>
+        {/* Request-a-custom-module CTA — second dashed tile, purple
+             accent, opens a popup instead of navigating. The popup
+             routes the request to two destinations depending on the
+             user's choice:
+               • "Could help others too"  → community / GitHub backlog
+                 → ends up in a future open-source release.
+               • "Only for my company"    → private / bespoke quote
+                 → DDC team replies with scope + price.
+             We keep this distinct from the developer-guide tile above
+             on purpose: contributors who want to build a module
+             themselves use the guide; users who want us to build it
+             for them use this dialog. */}
+        <li className="px-3 pt-1 pb-3">
+          <button
+            type="button"
+            onClick={() => {
+              setCustomModuleOpen(true);
+              onClose?.();
+            }}
+            className="w-full group flex items-center gap-2.5 rounded-lg border border-dashed border-purple-400/40 bg-gradient-to-br from-purple-500/5 via-transparent to-purple-50/40 dark:from-purple-500/10 dark:via-transparent dark:to-slate-900/30 px-2.5 py-2 hover:border-purple-500 hover:from-purple-500/10 hover:shadow-sm transition-all text-left"
+            aria-haspopup="dialog"
+            aria-expanded={customModuleOpen}
+          >
+            <span className="shrink-0 flex h-7 w-7 items-center justify-center rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+              <Sparkles size={14} strokeWidth={2.25} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs font-semibold text-content-primary leading-tight">
+                {t('nav.request_custom_module', {
+                  defaultValue: 'Request a custom module‌⁠‍',
+                })}
+              </span>
+              <span className="block text-[10px] text-content-tertiary leading-tight mt-0.5 truncate">
+                {t('nav.request_custom_module_hint', {
+                  defaultValue: 'Missing something? Tell us what you need‌⁠‍',
+                })}
+              </span>
+            </span>
+          </button>
         </li>
       </nav>
 
@@ -848,6 +895,14 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           </div>
         </div>
       </div>
+      {/* Mounted at the aside root so the dialog escapes any
+          z-index / overflow trap imposed by the inner nav scroller.
+          The dialog itself is full-screen modal (fixed inset-0) and
+          self-renders only when open=true. */}
+      <RequestCustomModuleDialog
+        open={customModuleOpen}
+        onClose={() => setCustomModuleOpen(false)}
+      />
     </aside>
   );
 }

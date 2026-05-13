@@ -78,6 +78,60 @@ class InvestigationRepository(_BaseRepo):
         rows = (await self.session.execute(stmt)).scalars().all()
         return list(rows), total
 
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        status: str | None = None,
+    ) -> tuple[list[HSEIncidentInvestigation], int]:
+        """List investigations whose incident belongs to the given project.
+
+        Investigations are keyed by ``incident_ref`` rather than directly by
+        project (so the column stays loosely coupled to the safety module);
+        but a project-scoped HSE dashboard still needs to list "all
+        investigations for this project". We resolve that via a sub-query
+        on ``oe_safety_incident.project_id`` using core-SQL so this module
+        does not need to import the safety SQLAlchemy model. If the safety
+        table is not present (module disabled), the query returns no rows
+        gracefully instead of raising.
+        """
+        from sqlalchemy import text
+
+        try:
+            incident_ids_stmt = text(
+                "SELECT id FROM oe_safety_incident WHERE project_id = :pid",
+            )
+            result = await self.session.execute(
+                incident_ids_stmt, {"pid": str(project_id)},
+            )
+            incident_ids = [row[0] for row in result.all()]
+        except Exception:
+            # Safety module not present / table missing — degrade to empty.
+            return [], 0
+
+        if not incident_ids:
+            return [], 0
+
+        base = select(HSEIncidentInvestigation).where(
+            HSEIncidentInvestigation.incident_ref.in_(incident_ids),
+        )
+        if status is not None:
+            base = base.where(HSEIncidentInvestigation.status == status)
+        total = (
+            await self.session.execute(
+                select(func.count()).select_from(base.subquery()),
+            )
+        ).scalar_one()
+        stmt = (
+            base.order_by(HSEIncidentInvestigation.started_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        return list(rows), total
+
 
 # ── JSA ──────────────────────────────────────────────────────────────────────
 

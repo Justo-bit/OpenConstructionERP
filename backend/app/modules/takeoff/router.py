@@ -294,6 +294,59 @@ _CONVERTER_INSTALL_DIR = Path.home() / ".openestimator" / "converters"
 
 _META_BY_ID: dict[str, dict[str, Any]] = {m["id"]: m for m in _CONVERTER_META}
 
+# ── Audit A2 / A11: converter download hardening ─────────────────────────────
+
+# Allowed hosts for converter file downloads. We hard-code this against
+# GitHub's raw.githubusercontent.com (where the Contents API redirects
+# blob downloads) so an attacker who tampers with the API response —
+# substituting download_url with an attacker-controlled CDN — can't
+# trick the installer into fetching a poisoned exe. The Contents API
+# itself returns absolute URLs but FastAPI never trusts user-supplied
+# URLs, so this matters only if GitHub itself is compromised OR if
+# an upstream MITM rewrites the JSON in transit (which TLS already
+# prevents, but defence in depth).
+_ALLOWED_DOWNLOAD_HOSTS = frozenset({
+    "raw.githubusercontent.com",
+    "github.com",
+    "objects.githubusercontent.com",  # GitHub's blob CDN, used for >5 MB
+})
+
+# Hard size cap per file. The largest single file in the DDC converter
+# repo today is the ~140 MB IfcExporter.exe; we add ~3x headroom for
+# future versions and Teigha format readers. Anything above this
+# threshold is almost certainly a substitution attack or a pathological
+# upstream change — refuse rather than waste disk and download time.
+_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024  # 512 MB
+
+# Total cap per converter install. RVT today is ~600 MB; we set 1.5 GB
+# so existing installs continue to work but a runaway listing can't
+# eat all the disk.
+_MAX_INSTALL_BYTES = 1536 * 1024 * 1024  # 1.5 GB
+
+
+def _check_download_url_allowed(url: str) -> None:
+    """Reject converter download URLs whose host isn't on the allow-list.
+
+    Audit A2 — without this check, a tampered GitHub Contents API
+    response (or a future bug that lets a malicious value leak into
+    ``download_url``) could redirect the installer to an attacker-
+    controlled CDN. Allow-listing the three GitHub hosts that
+    legitimately serve blob downloads closes that vector.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"https", "http"}:
+        raise RuntimeError(
+            f"Refused to download {url!r} — non-HTTP(S) scheme"
+        )
+    host = (parsed.hostname or "").lower()
+    if host not in _ALLOWED_DOWNLOAD_HOSTS:
+        raise RuntimeError(
+            f"Refused to download {url!r} — host {host!r} is not on "
+            f"the converter allow-list {sorted(_ALLOWED_DOWNLOAD_HOSTS)}"
+        )
+
 
 def _github_list_directory(repo_path: str) -> list[dict[str, Any]]:
     """Recursively list every file in a GitHub repo directory.
@@ -389,12 +442,93 @@ def _resolve_target_path(
 
 
 def _download_one_file(download_url: str, target: Path) -> int:
-    """Download a single file. Returns bytes written. Used by the pool."""
+    """Download a single file. Returns bytes written. Used by the pool.
+
+    Audit A2 / A9 / A11 — three hardenings:
+
+    1. **Host allow-list** (A2): refuse any URL whose hostname isn't
+       in ``_ALLOWED_DOWNLOAD_HOSTS``. Closes a poisoned-redirect
+       attack where the Contents API response (or a MITM) substitutes
+       ``download_url`` for an attacker-controlled CDN.
+
+    2. **Size cap during stream** (A11): we used to call
+       ``urlretrieve`` which has no size cap — a hostile (or
+       runaway-grown) blob could fill the disk before failing. We
+       now stream the body chunk-by-chunk and abort the moment we
+       exceed ``_MAX_DOWNLOAD_BYTES``.
+
+    3. **Symlink/TOCTOU guard** (A9): if a malicious file existed
+       at ``target`` (e.g. created by another local user between
+       ``_resolve_target_path`` and this call), ``urlretrieve``
+       would happily follow the symlink and overwrite whatever it
+       pointed at. We delete any existing symlink before opening
+       the destination and use ``O_NOFOLLOW`` on POSIX so a
+       race-replaced symlink is rejected at open() time.
+    """
+    import os
     import urllib.request
 
+    _check_download_url_allowed(download_url)
+
     target.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(download_url, str(target))
-    return target.stat().st_size if target.exists() else 0
+
+    # A9 — drop any pre-existing symlink at the target. ``is_symlink``
+    # uses lstat so we don't follow the link to check its target.
+    if target.is_symlink():
+        target.unlink()
+
+    req = urllib.request.Request(
+        download_url,
+        headers={"User-Agent": "OpenConstructionERP-converter-installer"},
+    )
+    bytes_written = 0
+    # POSIX gets O_NOFOLLOW. Windows doesn't expose it but `is_symlink`
+    # + the unlink-first pass already covers the common case there
+    # (Windows requires elevated rights to create symlinks).
+    open_flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        open_flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
+    try:
+        fd = os.open(str(target), open_flags, 0o644)
+    except OSError as exc:
+        # ELOOP on Linux when O_NOFOLLOW hits a symlink — surface as
+        # a clear refusal rather than a generic OSError.
+        raise RuntimeError(
+            f"Refused to open {target} for writing: {exc}"
+        ) from exc
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            # Servers may advertise size up-front; reject grossly large
+            # files before reading a single byte.
+            content_length = resp.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    declared = int(content_length)
+                    if declared > _MAX_DOWNLOAD_BYTES:
+                        raise RuntimeError(
+                            f"Refused to download {download_url!r} — declared size "
+                            f"{declared} bytes exceeds the per-file cap of "
+                            f"{_MAX_DOWNLOAD_BYTES} bytes"
+                        )
+                except (ValueError, TypeError):
+                    pass  # Bogus header — fall through to streaming cap.
+
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > _MAX_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"Aborted download of {download_url!r} — body exceeded "
+                        f"the per-file cap of {_MAX_DOWNLOAD_BYTES} bytes "
+                        f"(possible substitution attack)"
+                    )
+                os.write(fd, chunk)
+    finally:
+        os.close(fd)
+    return bytes_written
 
 
 def _download_converter_files_windows(converter_id: str) -> Path:
@@ -461,6 +595,11 @@ def _download_converter_files_windows(converter_id: str) -> Path:
     # most home links without triggering GitHub's anti-abuse limiter
     # on raw.githubusercontent.com (we've measured no 429s up to 16
     # workers in practice but 8 leaves headroom).
+    #
+    # Audit A11 — cumulative cap. Per-file caps don't help if the
+    # repo listing itself grows hostile (1000 files * 500 MB each).
+    # We abort the install when the running total exceeds
+    # ``_MAX_INSTALL_BYTES`` and clean up the partial download.
     with ThreadPoolExecutor(max_workers=8) as pool:
         future_to_path = {
             pool.submit(_download_one_file, url, target): (url, target)
@@ -475,6 +614,16 @@ def _download_converter_files_windows(converter_id: str) -> Path:
                 continue
             total_bytes += size
             file_count += 1
+            if total_bytes > _MAX_INSTALL_BYTES:
+                failures.append(
+                    f"cumulative install size {total_bytes} bytes exceeded "
+                    f"cap of {_MAX_INSTALL_BYTES} bytes — aborting"
+                )
+                # Cancel anything still in flight; the partial directory
+                # gets cleaned up by the failure-handler below.
+                for pending in future_to_path:
+                    pending.cancel()
+                break
             if file_count % 25 == 0:
                 logger.info(
                     "Converter %s: downloaded %d/%d files (%.1f MB)",
@@ -1053,6 +1202,9 @@ async def _get_session_from_db(session: Any, session_id: str) -> dict | None:
     """Retrieve a CAD extraction session from the database.
 
     Returns a dict matching the old in-memory format, or None if not found / expired.
+
+    Audit B6 — the returned dict now carries ``user_id`` and ``project_id``
+    so the ownership helper can gate access without re-querying the row.
     """
     now = datetime.now(UTC)
     result = await session.execute(
@@ -1070,6 +1222,9 @@ async def _get_session_from_db(session: Any, session_id: str) -> dict | None:
         "format": row.file_format,
         "created": row.created_at.timestamp() if row.created_at else _time.time(),
         "columns_metadata": row.columns_metadata or {},
+        # B6 — carry ownership fields for IDOR gate
+        "user_id": row.user_id or "",
+        "project_id": row.project_id or None,
     }
 
 
@@ -1081,6 +1236,44 @@ async def _get_cad_session(session: Any, session_id: str) -> dict | None:
         return mem
     # Slow path: database
     return await _get_session_from_db(session, session_id)
+
+
+async def _verify_cad_session_access(
+    cad_session: dict,
+    user_id: str,
+    db_session: Any,
+) -> None:
+    """Gate access to a CAD extraction session by tenant.
+
+    Audit B6 — used by every endpoint that consumes a session_id
+    (``cad_data_elements`` / ``cad_data_aggregate`` /
+    ``cad_data_save`` / ``cad_data_list_sessions`` /
+    ``cad_data_delete_session``). Two cases mirror the document
+    helper:
+
+    1. Session is bound to a project — reuse
+       ``verify_project_access`` so admin bypass + ownership work
+       identically across the takeoff module.
+    2. Standalone session (no project) — only the original uploader
+       can touch it. We return 404 on access failure to avoid
+       leaking session existence.
+    """
+    raw_pid = cad_session.get("project_id")
+    if raw_pid:
+        try:
+            pid = _uuid.UUID(str(raw_pid))
+        except (ValueError, TypeError):
+            pid = None
+        if pid is not None:
+            await verify_project_access(pid, str(user_id), db_session)
+            return
+
+    owner = str(cad_session.get("user_id", "") or "")
+    if owner and owner != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
 
 
 class CadGroupRequest(BaseModel):
@@ -1204,6 +1397,9 @@ async def cad_columns(
         "format": ext,
         "created": _time.time(),
         "columns_metadata": columns,
+        # B6 — carry owner so memory-fast-path access checks work too
+        "user_id": user_id or "",
+        "project_id": None,
     }
 
     # Persist to database for durability
@@ -1266,6 +1462,7 @@ async def cad_columns(
 async def cad_group(
     body: CadGroupRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Group previously uploaded CAD elements by user-selected columns.
 
@@ -1274,6 +1471,8 @@ async def cad_group(
 
     Sessions are stored in the database and expire after 24 hours.
     If expired, the user must re-upload the file.
+
+    Audit B6 — was IDOR. Same threat as ``cad_data_elements``.
     """
     from app.modules.boq.cad_import import group_cad_elements_dynamic
 
@@ -1285,6 +1484,8 @@ async def cad_group(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
 
@@ -1337,11 +1538,14 @@ class CadGroupElementsRequest(BaseModel):
 async def get_group_elements(
     body: CadGroupElementsRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Get individual elements for a specific group.
 
     Returns all raw elements matching the provided ``group_key`` filter,
     allowing users to inspect what makes up each grouped row.
+
+    Audit B6 — was IDOR. Same threat as ``cad_data_elements``.
     """
     _cleanup_memory_sessions()
 
@@ -1351,6 +1555,8 @@ async def get_group_elements(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
 
@@ -1431,6 +1637,10 @@ async def create_boq_from_cad_qto(
     Retrieves the cached CAD session, runs grouping using the provided
     (or stored) column selections, creates a new BOQ in the specified
     project, and adds positions for each group.
+
+    Audit B6 — was IDOR-on-write on both sides:
+    1. Source CAD session ownership (data theft)
+    2. Destination project ownership (planting BOQ in foreign project)
     """
     import uuid
 
@@ -1443,6 +1653,19 @@ async def create_boq_from_cad_qto(
             status_code=404,
             detail=("CAD session not found or expired. Please re-upload the CAD file."),
         )
+
+    # Source-side access check
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
+
+    # Destination-side access check (target project)
+    try:
+        target_pid = _uuid.UUID(body.project_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project_id (must be a UUID)",
+        ) from exc
+    await verify_project_access(target_pid, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
 
@@ -1561,11 +1784,15 @@ async def export_cad_group(
     sum_columns: str = Query(default="", description="Comma-separated sum columns"),
     format: str = Query(default="xlsx", pattern="^(xlsx)$"),
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> StreamingResponse:
     """Export grouped QTO results as an Excel spreadsheet.
 
     Retrieves the CAD session, runs grouping, and returns an xlsx file
     with headers, data rows, and a bold grand-total row.
+
+    Audit B6 — was IDOR. Anyone with ``takeoff.read`` could download
+    another tenant's CAD QTO as XLSX (a one-click data-exfil path).
     """
     import io
 
@@ -1577,6 +1804,8 @@ async def export_cad_group(
             status_code=404,
             detail=("CAD session not found or expired. Please re-upload the CAD file."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
 
@@ -1752,11 +1981,14 @@ def _collect_column_names(elements: list[dict]) -> list[str]:
 async def cad_data_describe(
     body: CadDataDescribeRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Return a DataFrame-like describe of the CAD session data.
 
     For each column, reports dtype, non-null count, unique count, and
     summary statistics (min/max/mean/sum for numbers, top/top_freq for strings).
+
+    Audit B6 — was IDOR.
     """
     _cleanup_memory_sessions()
 
@@ -1766,6 +1998,8 @@ async def cad_data_describe(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
     all_columns = _collect_column_names(elements)
@@ -1887,12 +2121,15 @@ async def cad_data_missingness(
         description="Column ordering for the client",
     ),
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Return per-column fill-rate and per-row completeness for a missingno-style visualisation.
 
     The row-level snapshot is capped at 1000 rows (random-sampled with a fixed
     seed for determinism) so the frontend never has to render more than that.
     Per-column fill-rates are always computed on the full (filtered) set.
+
+    Audit B6 — was IDOR.
     """
     _cleanup_memory_sessions()
 
@@ -1902,6 +2139,8 @@ async def cad_data_missingness(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
     all_columns = _collect_column_names(elements)
@@ -2011,8 +2250,12 @@ async def cad_data_missingness(
 async def cad_data_value_counts(
     body: CadDataValueCountsRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Return value counts for a single column, sorted by frequency descending."""
+    """Return value counts for a single column, sorted by frequency descending.
+
+    Audit B6 — was IDOR.
+    """
     _cleanup_memory_sessions()
 
     cad_session = await _get_cad_session(db_session, body.session_id)
@@ -2021,6 +2264,8 @@ async def cad_data_value_counts(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
 
@@ -2071,8 +2316,15 @@ async def cad_data_elements(
     filter_column: str | None = Query(default=None, description="Column to filter on"),
     filter_value: str | None = Query(default=None, description="Value to match (equality)"),
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Return a paginated, sortable, filterable table of CAD elements."""
+    """Return a paginated, sortable, filterable table of CAD elements.
+
+    Audit B6 — was IDOR. Session IDs are UUIDs but anyone with
+    ``takeoff.read`` could read another tenant's extracted CAD data
+    (potentially confidential pricing or geometry) by guessing or
+    scraping the id. We gate via the unified CAD-session helper.
+    """
     _cleanup_memory_sessions()
 
     cad_session = await _get_cad_session(db_session, session_id)
@@ -2081,6 +2333,8 @@ async def cad_data_elements(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
     all_columns = _collect_column_names(elements)
@@ -2136,11 +2390,15 @@ _SUPPORTED_AGG_FUNCS = {"sum", "avg", "mean", "min", "max", "count"}
 async def cad_data_aggregate(
     body: CadDataAggregateRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Aggregate CAD element data by grouping columns.
 
     Supported aggregation functions: sum, avg (alias: mean), min, max, count.
     ``count`` ignores the column values and counts elements in each group.
+
+    Audit B6 — was IDOR. Same threat as ``cad_data_elements``: gate on
+    the session's owning project (or uploader for standalone sessions).
     """
     _cleanup_memory_sessions()
 
@@ -2150,6 +2408,8 @@ async def cad_data_aggregate(
             status_code=404,
             detail=("Session not found or expired. Please re-upload the CAD file via POST /cad-columns."),
         )
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     elements: list[dict] = cad_session["elements"]
     all_columns_set: set[str] = set()
@@ -2249,13 +2509,37 @@ class CadDataSaveRequest(BaseModel):
 async def cad_data_save(
     body: CadDataSaveRequest,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Mark a CAD session as permanent and link it to a project."""
+    """Mark a CAD session as permanent and link it to a project.
+
+    Audit B6 — IDOR-on-write. Two attack vectors closed:
+
+    1. Source side — caller could pass a foreign tenant's session id
+       and rehome it under their own project (data theft).
+    2. Destination side — caller could pass another tenant's
+       ``project_id`` and dump their session into it.
+
+    We verify BOTH sides before the UPDATE.
+    """
     _cleanup_memory_sessions()
 
     cad_session = await _get_cad_session(db_session, body.session_id)
     if not cad_session:
         raise HTTPException(status_code=404, detail="Session not found or expired.")
+
+    # Source-side check (existing session ownership)
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
+
+    # Destination-side check (target project)
+    try:
+        target_pid = _uuid.UUID(body.project_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project_id (must be a UUID)",
+        ) from exc
+    await verify_project_access(target_pid, str(user_id) if user_id else "", db_session)
 
     # Update the database record
     from sqlalchemy import update as sa_update
@@ -2289,9 +2573,21 @@ async def cad_data_list_sessions(
     project_id: str | None = Query(default=None),
     saved_only: bool = Query(default=False),
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> list[dict[str, Any]]:
-    """List CAD sessions. By default shows all non-expired. Use saved_only=true for permanent only."""
-    from sqlalchemy import select
+    """List CAD sessions. By default shows all non-expired. Use saved_only=true for permanent only.
+
+    Audit B6 — was a global enumeration vulnerability. The endpoint
+    returned every tenant's sessions to any authenticated user with
+    ``takeoff.read`` (a cross-tenant data leak: filenames, project ids,
+    element counts, timestamps). We now scope the query to sessions
+    owned by the caller's user_id, OR to sessions in projects the
+    caller actually owns. Admins see everything (matching
+    ``verify_project_access`` admin-bypass semantics).
+    """
+    from sqlalchemy import or_, select
+
+    from app.modules.users.repository import UserRepository
 
     now = datetime.now(UTC)
     stmt = select(CadExtractionSession)
@@ -2303,7 +2599,51 @@ async def cad_data_list_sessions(
             (CadExtractionSession.is_permanent == True)  # noqa: E712
             | (CadExtractionSession.expires_at > now)
         )
+
+    # Admin-aware tenant scoping. Non-admins only see their own
+    # sessions or sessions inside projects they own. We resolve
+    # the user's owned projects via a sub-query so this stays a
+    # single round-trip.
+    is_admin = False
+    try:
+        user_repo = UserRepository(db_session)
+        if user_id:
+            user_row = await user_repo.get_by_id(_uuid.UUID(str(user_id)))
+            if user_row is not None and getattr(user_row, "role", "") == "admin":
+                is_admin = True
+    except Exception:
+        logger.exception("Admin-role lookup failed in cad_data_list_sessions")
+
+    if not is_admin:
+        # Collect owned project ids (as strings — session model stores
+        # project_id as String, not UUID).
+        from app.modules.projects.models import Project as _Project
+
+        owned_proj_stmt = select(_Project.id).where(_Project.owner_id == str(user_id))
+        owned_projects = (await db_session.execute(owned_proj_stmt)).scalars().all()
+        owned_project_ids = {str(pid) for pid in owned_projects}
+
+        # Match: sessions I uploaded OR sessions in a project I own.
+        ownership_filter = CadExtractionSession.user_id == str(user_id)
+        if owned_project_ids:
+            ownership_filter = or_(
+                ownership_filter,
+                CadExtractionSession.project_id.in_(owned_project_ids),
+            )
+        stmt = stmt.where(ownership_filter)
+
     if project_id:
+        # Caller asked for one project — verify access first so the
+        # error is symmetric with single-resource endpoints (404 on
+        # foreign projects rather than empty list).
+        try:
+            req_pid = _uuid.UUID(project_id)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project_id (must be a UUID)",
+            ) from exc
+        await verify_project_access(req_pid, str(user_id) if user_id else "", db_session)
         stmt = stmt.where(CadExtractionSession.project_id == project_id)
     stmt = stmt.order_by(CadExtractionSession.created_at.desc())
 
@@ -2334,9 +2674,29 @@ async def cad_data_list_sessions(
 async def cad_data_delete_session(
     session_id: str,
     db_session: SessionDep = None,  # type: ignore[assignment]
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
 ) -> None:
-    """Delete a saved CAD session."""
+    """Delete a saved CAD session.
+
+    Audit B6 — was IDOR-on-write. Any user with ``takeoff.delete``
+    could destroy another tenant's permanent extraction sessions
+    by UUID. We resolve ownership through the standard helper
+    before the DELETE.
+    """
     from sqlalchemy import delete as sa_delete
+
+    # Look up first (memory + DB) so we can apply the same ownership
+    # check as every other CAD-session endpoint. ``_get_cad_session``
+    # is TTL-aware but ``DELETE`` may legitimately target permanent
+    # sessions that are still well within their lifetime — they will
+    # be returned by the lookup.
+    cad_session = await _get_cad_session(db_session, session_id)
+    if not cad_session:
+        # Match the historic "Session not found." string (some callers
+        # branch on it) instead of the more verbose memory message.
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
 
     stmt = sa_delete(CadExtractionSession).where(CadExtractionSession.session_id == session_id)
     result = await db_session.execute(stmt)
@@ -2386,6 +2746,19 @@ async def save_session_to_project(
             detail="CAD session not found or expired. Please re-upload the file.",
         )
 
+    # Audit B6 — IDOR-on-write on both sides:
+    # - source: prevents stealing a foreign session into your project
+    # - destination: prevents writing into a foreign project
+    await _verify_cad_session_access(cad_session, str(user_id) if user_id else "", db_session)
+    try:
+        target_pid = _uuid_mod.UUID(project_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project_id (must be a UUID)",
+        ) from exc
+    await verify_project_access(target_pid, str(user_id) if user_id else "", db_session)
+
     elements: list[dict] = cad_session.get("elements", [])
     if not elements:
         raise HTTPException(
@@ -2406,7 +2779,7 @@ async def save_session_to_project(
         )
 
     # 3. Create BIMModel record
-    project_uuid = _uuid_mod.UUID(project_id)
+    project_uuid = target_pid
     filename = cad_session.get("filename", "unknown")
     file_format = cad_session.get("format", "")
 
@@ -2514,8 +2887,30 @@ async def upload_document(
     file: UploadFile = File(..., description="PDF file (.pdf)"),
     project_id: str | None = Query(default=None),
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Upload a PDF document for quantity takeoff."""
+    """Upload a PDF document for quantity takeoff.
+
+    Audit B5 — was IDOR-on-write. ``project_id`` came in as a free-form
+    query string and was persisted verbatim, so anyone with
+    ``takeoff.create`` could attach a PDF to another tenant's project
+    (and trigger the Documents-hub cross-link). We resolve and verify
+    access *before* any disk write or DB insert.
+    """
+    # Verify access first — fail fast, before reading the upload body
+    # into memory or hitting disk. We tolerate ``None`` for legacy
+    # standalone uploads but require a valid UUID when present.
+    verified_pid: _uuid.UUID | None = None
+    if project_id:
+        try:
+            verified_pid = _uuid.UUID(project_id)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project_id (must be a UUID)",
+            ) from exc
+        await verify_project_access(verified_pid, str(user_id), session)
+
     allowed, _ = upload_limiter.is_allowed(str(user_id))
     if not allowed:
         raise HTTPException(
@@ -2592,6 +2987,56 @@ async def upload_document(
     }
 
 
+# ── Access helper (Audit B5) ──────────────────────────────────────────────
+
+
+async def _verify_takeoff_doc_access(
+    doc: Any,
+    user_id: str,
+    session: Any,
+) -> None:
+    """Gate access to a TakeoffDocument by tenant.
+
+    Audit B5 — used by ``get_document`` / ``extract_tables`` /
+    ``download_document`` / ``analyze_document`` to enforce IDOR
+    protection. Two cases:
+
+    1. Document is bound to a project (``project_id`` non-empty) —
+       reuse ``verify_project_access`` which also handles admin bypass.
+    2. Standalone upload (no project) — only the original uploader
+       can touch it. We compare by string to tolerate UUID-vs-str
+       drift coming from older rows.
+
+    We return 404 (not 403) on access failures to avoid leaking
+    document existence to attackers probing UUIDs.
+    """
+    raw_pid = getattr(doc, "project_id", None)
+    if raw_pid:
+        try:
+            pid = _uuid.UUID(str(raw_pid))
+        except (ValueError, TypeError):
+            pid = None
+        if pid is not None:
+            await verify_project_access(pid, str(user_id), session)
+            return
+
+    # Standalone — owner-only. Admins still pass via the project-bound
+    # path above; here we have no project, so we fall through to a
+    # strict owner-match.
+    #
+    # TakeoffDocument uses ``owner_id`` (a UUID column) while the
+    # CadExtractionSession sibling uses ``user_id`` (string). Try
+    # both names so a legacy row layout doesn't bypass the gate.
+    owner = str(
+        getattr(doc, "owner_id", None) or getattr(doc, "user_id", "") or ""
+    )
+    if owner and owner != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+
 # ── List documents ────────────────────────────────────────────────────────
 
 
@@ -2603,8 +3048,25 @@ async def list_documents(
     user_id: CurrentUserId,
     project_id: str | None = Query(default=None),
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> list[dict[str, Any]]:
-    """List uploaded takeoff documents."""
+    """List uploaded takeoff documents.
+
+    Audit B5 — when filtered by ``project_id`` we additionally verify
+    project access so the caller cannot enumerate another tenant's
+    documents by guessing the project UUID. When unfiltered the
+    underlying ``service.list_documents`` already scopes by
+    ``user_id`` so per-tenant isolation holds.
+    """
+    if project_id:
+        try:
+            pid = _uuid.UUID(project_id)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid project_id (must be a UUID)",
+            ) from exc
+        await verify_project_access(pid, str(user_id), session)
     docs = await service.list_documents(user_id, project_id=project_id)
     return [
         {
@@ -2628,12 +3090,22 @@ async def list_documents(
 )
 async def get_document(
     doc_id: str,
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Get a single takeoff document with its data."""
+    """Get a single takeoff document with its data.
+
+    Audit B5 — was IDOR. The endpoint returned the document blindly
+    by UUID, exposing extracted text, page data and AI analysis of a
+    foreign tenant's PDF. We gate on the owning project (when bound)
+    or fall back to the row's ``user_id`` for standalone uploads.
+    """
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    await _verify_takeoff_doc_access(doc, str(user_id) if user_id else "", session)
 
     return {
         "id": str(doc.id),
@@ -2657,12 +3129,22 @@ async def get_document(
 )
 async def extract_tables(
     doc_id: str,
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
-    """Extract tabular data from an uploaded document."""
+    """Extract tabular data from an uploaded document.
+
+    Audit B5 — was IDOR. Anyone with ``takeoff.read`` could trigger
+    table extraction on a foreign tenant's PDF and read the result.
+    Gate access through the standard helper before any extraction
+    work is dispatched.
+    """
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    await _verify_takeoff_doc_access(doc, str(user_id) if user_id else "", session)
 
     return await service.extract_tables(doc_id)
 
@@ -2676,12 +3158,22 @@ async def extract_tables(
 )
 async def download_document(
     doc_id: str,
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> FileResponse:
-    """Download the stored PDF file for a takeoff document."""
+    """Download the stored PDF file for a takeoff document.
+
+    Audit B5 — was IDOR. Anyone with ``takeoff.read`` could fetch the
+    raw PDF bytes of a foreign tenant's drawing by guessing the doc
+    UUID. Gate access through the standard helper before serving the
+    file (which would otherwise stream the whole PDF off disk).
+    """
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    await _verify_takeoff_doc_access(doc, str(user_id) if user_id else "", session)
 
     if not doc.file_path:
         raise HTTPException(status_code=404, detail="PDF file not available for this document")
@@ -2725,13 +3217,23 @@ async def analyze_document(
     import uuid as _uuid
 
     from app.modules.ai.ai_client import call_ai, extract_json, resolve_provider_and_key
-    from app.modules.ai.prompts import SMART_IMPORT_PROMPT, SYSTEM_PROMPT
+    from app.modules.ai.prompts import (
+        SMART_IMPORT_PROMPT,
+        SYSTEM_PROMPT,
+        USER_FENCE_MAX_LEN,
+        fence_user_content,
+    )
     from app.modules.ai.repository import AISettingsRepository
 
     # 1. Get the document
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # Audit B5 — IDOR. AI analysis dispatches the PDF text to a third
+    # party LLM and bills tokens; without this check, any user could
+    # exfiltrate (and rack up bills against) another tenant's PDFs.
+    await _verify_takeoff_doc_access(doc, str(user_id) if user_id else "", session)
 
     # 2. Check extracted text
     extracted_text = doc.extracted_text or ""
@@ -2755,8 +3257,11 @@ async def analyze_document(
 
     # 4. Build prompt
     filename = doc.filename or "document.pdf"
-    # Limit text to prevent overly large prompts
-    text_for_prompt = extracted_text[:15000]
+    # Audit AI1 — fence the untrusted document text so prompt-injection
+    # attempts embedded in the PDF can't override the system prompt.
+    # ``fence_user_content`` also applies the length cap so we no longer
+    # need a manual slice here.
+    text_for_prompt = fence_user_content(extracted_text, max_len=USER_FENCE_MAX_LEN)
     prompt = SMART_IMPORT_PROMPT.format(filename=filename, text=text_for_prompt)
 
     # 5. Call AI
@@ -2788,6 +3293,14 @@ async def analyze_document(
     elements: list[dict[str, Any]] = []
     categories: dict[str, dict[str, Any]] = {}
 
+    # Audit AI3 — validate numeric fields. The LLM occasionally hallucinates
+    # negative rates ("rebate items") or absurd values; we clamp to a
+    # plausible band so a malicious / confused response can't pollute the
+    # BOQ. Sane upper bounds: quantity 10_000_000 (1M m² building),
+    # unit_rate 1_000_000 currency units (luxury fitout per m²).
+    _MAX_QUANTITY = 10_000_000.0
+    _MAX_UNIT_RATE = 1_000_000.0
+
     for idx, item in enumerate(parsed):
         if not isinstance(item, dict):
             continue
@@ -2800,6 +3313,15 @@ async def analyze_document(
             quantity = float(item.get("quantity", 0))
         except (ValueError, TypeError):
             quantity = 0.0
+        # Negative quantities are nonsense; outside-band values are
+        # almost certainly hallucinations.
+        if quantity < 0 or quantity > _MAX_QUANTITY:
+            logger.warning(
+                "AI returned out-of-band quantity %s for item %d — clamping to 0",
+                quantity,
+                idx,
+            )
+            quantity = 0.0
 
         unit = str(item.get("unit", "pcs")).strip() or "pcs"
         category = str(item.get("category", "General")).strip() or "General"
@@ -2807,6 +3329,13 @@ async def analyze_document(
         try:
             unit_rate = float(item.get("unit_rate", 0))
         except (ValueError, TypeError):
+            unit_rate = 0.0
+        if unit_rate < 0 or unit_rate > _MAX_UNIT_RATE:
+            logger.warning(
+                "AI returned out-of-band unit_rate %s for item %d — clamping to 0",
+                unit_rate,
+                idx,
+            )
             unit_rate = 0.0
 
         element = {
@@ -2856,22 +3385,17 @@ async def delete_document(
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
 ) -> None:
-    """Delete an uploaded takeoff document."""
+    """Delete an uploaded takeoff document.
+
+    Audit B5 — IDOR. Reuses the unified takeoff-doc access helper so
+    standalone uploads are owner-locked too (previous code let any
+    user with ``takeoff.delete`` blow away orphan rows).
+    """
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # IDOR guard: enforce ownership when the doc is bound to a project.
-    # Standalone uploads (no project_id) fall back to the takeoff.delete
-    # permission gate above.
-    raw_pid = getattr(doc, "project_id", None)
-    if raw_pid:
-        try:
-            pid = _uuid.UUID(str(raw_pid))
-        except (ValueError, TypeError):
-            pid = None
-        if pid is not None:
-            await verify_project_access(pid, str(user_id), session)
+    await _verify_takeoff_doc_access(doc, str(user_id) if user_id else "", session)
 
     await service.delete_document(doc_id)
 
@@ -2920,8 +3444,16 @@ async def measurement_summary(
     project_id: _uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> TakeoffMeasurementSummary:
-    """Aggregated measurement stats for a project."""
+    """Aggregated measurement stats for a project.
+
+    Audit B4 — was IDOR. Any authenticated user with ``takeoff.read``
+    could request another tenant's ``project_id`` and read aggregated
+    counts (which leaks both the project's existence and its volume of
+    work). Gated by ``verify_project_access`` so foreign projects 404.
+    """
+    await verify_project_access(project_id, str(user_id), session)
     data = await service.get_measurement_summary(project_id)
     return TakeoffMeasurementSummary(**data)
 
@@ -2938,12 +3470,18 @@ async def export_measurements(
     format: str = Query(default="csv", pattern="^(csv|json)$"),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> Any:
     """Export measurements for a project.
 
     Supported formats: csv, json.
     CSV returns a downloadable text response; JSON returns a list of dicts.
+
+    Audit B4 — was IDOR. Without the access check, any authenticated user
+    with ``takeoff.read`` could download another tenant's measurements as
+    CSV/JSON. Gated by ``verify_project_access`` so foreign projects 404.
     """
+    await verify_project_access(project_id, str(user_id), session)
     rows = await service.export_measurements(project_id, fmt=format)
 
     if format == "csv":
@@ -2979,8 +3517,26 @@ async def bulk_create_measurements(
     data: TakeoffMeasurementBulkCreate,
     user_id: CurrentUserId,
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> list[TakeoffMeasurementResponse]:
-    """Bulk create measurements (e.g. importing from localStorage)."""
+    """Bulk create measurements (e.g. importing from localStorage).
+
+    Audit B4 — was IDOR-on-write. A user could pass arbitrary
+    ``project_id`` values inside each payload and seed measurements
+    into a foreign project. We verify access for every distinct
+    ``project_id`` present in the batch up-front (one DB lookup per
+    project, not per measurement) before any rows are written.
+    """
+    if not data.measurements:
+        return []
+
+    # Collect the unique project IDs touched by this batch. A single
+    # bulk import may cover one project (the common case) or several
+    # (cross-project paste from another window) — both must be gated.
+    project_ids = {m.project_id for m in data.measurements}
+    for pid in project_ids:
+        await verify_project_access(pid, str(user_id), session)
+
     try:
         items = await service.bulk_create_measurements(data.measurements, created_by=user_id)
         return [_measurement_to_response(i) for i in items]
@@ -3007,8 +3563,16 @@ async def create_measurement(
     data: TakeoffMeasurementCreate,
     user_id: CurrentUserId,
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> TakeoffMeasurementResponse:
-    """Create a new takeoff measurement."""
+    """Create a new takeoff measurement.
+
+    Audit B4 — was IDOR-on-write. ``project_id`` in the body was trusted
+    blindly, so any user with ``takeoff.create`` could pin a row to
+    another tenant's project. We gate writes through
+    ``verify_project_access`` first.
+    """
+    await verify_project_access(data.project_id, str(user_id), session)
     try:
         item = await service.create_measurement(data, created_by=user_id)
         return _measurement_to_response(item)
@@ -3040,8 +3604,16 @@ async def list_measurements(
     limit: int = Query(default=200, ge=1, le=500),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> list[TakeoffMeasurementResponse]:
-    """List measurements for a project with optional filters."""
+    """List measurements for a project with optional filters.
+
+    Audit B4 — was IDOR. Any authenticated user with ``takeoff.read``
+    could supply another tenant's ``project_id`` and exfiltrate their
+    measurements. Gated here through ``verify_project_access`` so
+    foreign project ids 404 the same way a missing one does.
+    """
+    await verify_project_access(project_id, str(user_id), session)
     items = await service.list_measurements(
         project_id,
         document_id=document_id,
@@ -3066,9 +3638,18 @@ async def get_measurement(
     measurement_id: _uuid.UUID,
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> TakeoffMeasurementResponse:
-    """Get a single measurement by ID."""
+    """Get a single measurement by ID.
+
+    Audit B4 — was IDOR. Anyone with ``takeoff.read`` could guess a
+    measurement UUID (or scrape one from a leaked log line) and read
+    a foreign tenant's row. We resolve the owning project from the
+    measurement itself and gate via ``verify_project_access`` so the
+    response is identical to "measurement not found".
+    """
     item = await service.get_measurement(measurement_id)
+    await verify_project_access(item.project_id, str(user_id), session)
     return _measurement_to_response(item)
 
 
@@ -3085,8 +3666,17 @@ async def update_measurement(
     data: TakeoffMeasurementUpdate,
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> TakeoffMeasurementResponse:
-    """Update a measurement."""
+    """Update a measurement.
+
+    Audit B4 — was IDOR-on-write. Resolve the owning project from the
+    target row and gate via ``verify_project_access`` before any
+    mutation. We check ownership *before* calling the update service
+    so we don't leak existence via different error codes.
+    """
+    existing = await service.get_measurement(measurement_id)
+    await verify_project_access(existing.project_id, str(user_id), session)
     item = await service.update_measurement(measurement_id, data)
     return _measurement_to_response(item)
 
@@ -3103,8 +3693,17 @@ async def delete_measurement(
     measurement_id: _uuid.UUID,
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> None:
-    """Delete a measurement."""
+    """Delete a measurement.
+
+    Audit B4 — was IDOR-on-write. Without the owner check, any user with
+    ``takeoff.delete`` could destroy another tenant's measurements by
+    UUID. We resolve the owning project from the target row and gate
+    via ``verify_project_access``.
+    """
+    existing = await service.get_measurement(measurement_id)
+    await verify_project_access(existing.project_id, str(user_id), session)
     await service.delete_measurement(measurement_id)
 
 
@@ -3121,7 +3720,16 @@ async def link_measurement_to_boq(
     data: LinkToBoqRequest,
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: TakeoffService = Depends(_get_service),
+    session: SessionDep = None,  # type: ignore[assignment]
 ) -> TakeoffMeasurementResponse:
-    """Link a measurement to a BOQ position."""
+    """Link a measurement to a BOQ position.
+
+    Audit B4 — was IDOR-on-write. A user could redirect a foreign
+    tenant's measurement at their own BOQ position (or vice versa)
+    without permission on the measurement side. Gate on the
+    measurement's owning project before performing the link.
+    """
+    existing = await service.get_measurement(measurement_id)
+    await verify_project_access(existing.project_id, str(user_id), session)
     item = await service.link_measurement_to_boq(measurement_id, data.boq_position_id)
     return _measurement_to_response(item)

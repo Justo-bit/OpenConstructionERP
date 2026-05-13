@@ -637,12 +637,24 @@ async def qdrant_health(_current_user_id: CurrentUserId) -> dict[str, object]:
     vector DB is down and surface a one-click install / refresh flow.
     Authentication is required so anonymous probes can't enumerate
     binary paths on disk.
+
+    When the supervisor flips Qdrant from down→up (because the binary
+    was already on disk and just needed to be spawned), we also drop
+    the cached ``_qdrant_instance`` in ``app.core.vector`` so the rest
+    of the backend's vector code paths (``/costs/vector/v3-status``,
+    catalogue install, semantic search) recover without a process
+    restart.
     """
     from app.config import get_settings
+    from app.core.vector import reset_qdrant_client
     from app.modules.match_elements.qdrant_supervisor import ensure_qdrant_running
 
     settings = get_settings()
     health = ensure_qdrant_running(settings.qdrant_url, spawn_if_installed=True)
+    if getattr(health, "reachable", False) and getattr(health, "spawn_attempted", False):
+        # Spawning just succeeded → invalidate any cached "Qdrant not
+        # reachable" state elsewhere in the process.
+        reset_qdrant_client()
     return _qdrant_health_to_dict(health)
 
 
@@ -655,8 +667,14 @@ async def qdrant_install(_current_user_id: CurrentUserId) -> dict[str, object]:
     under ``~/.openestimator/qdrant``. After install we re-probe so the
     response reflects the live binding state — front-end can branch on
     ``reachable`` to flip the card immediately.
+
+    After a successful install we also drop the cached vector-client
+    so ``/costs/vector/v3-status`` and the catalogue installer stop
+    returning ``Qdrant not reachable`` for the rest of the process
+    lifetime.
     """
     from app.config import get_settings
+    from app.core.vector import reset_qdrant_client
     from app.modules.match_elements.qdrant_supervisor import (
         ensure_qdrant_running,
         install_qdrant_native,
@@ -668,4 +686,6 @@ async def qdrant_install(_current_user_id: CurrentUserId) -> dict[str, object]:
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     health = ensure_qdrant_running(settings.qdrant_url, spawn_if_installed=True)
+    if getattr(health, "reachable", False):
+        reset_qdrant_client()
     return _qdrant_health_to_dict(health)

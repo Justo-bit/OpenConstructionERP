@@ -11,7 +11,6 @@ import {
   GitBranch,
   Plus,
   Check,
-  X,
   ArrowUpCircle,
   Trash2,
 } from 'lucide-react';
@@ -22,6 +21,7 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  WideModal,
 } from '@/shared/ui';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
@@ -1444,8 +1444,14 @@ function BaselinesTab({
 
 /* ── Modals ──────────────────────────────────────────────────────────── */
 
+// ModalShell is the local wrapper used by every "Create … " modal in
+// the Schedule Advanced page (master schedule / weekly plan / look-ahead
+// / baseline). It now delegates to the shared <WideModal> so the page
+// inherits Escape handling, backdrop-click-to-close, body-scroll lock
+// and the wider/cleaner layout. Callers stay unchanged.
 function ModalShell({
   title,
+  subtitle,
   children,
   onClose,
   onSubmit,
@@ -1453,6 +1459,7 @@ function ModalShell({
   disabled,
 }: {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
   onClose: () => void;
   onSubmit: () => void;
@@ -1461,26 +1468,16 @@ function ModalShell({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
-            aria-label={t('common.close', { defaultValue: 'Close' })}
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="space-y-3">{children}</div>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={title}
+      subtitle={subtitle}
+      size="lg"
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
@@ -1491,9 +1488,11 @@ function ModalShell({
           >
             {t('common.create', { defaultValue: 'Create' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <div className="space-y-3">{children}</div>
+    </WideModal>
   );
 }
 
@@ -1533,7 +1532,11 @@ function CreateMasterModal({
 
   return (
     <ModalShell
-      title={t('schedule_advanced.create_master', { defaultValue: 'Create Master' })}
+      title={t('schedule_advanced.create_master', { defaultValue: 'New master schedule' })}
+      subtitle={t('schedule_advanced.create_master_subtitle', {
+        defaultValue:
+          'The master schedule is the top-level CPM plan for this project. Phase plans, weekly plans and look-aheads all roll up to it.',
+      })}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
@@ -1609,7 +1612,11 @@ function CreateWeeklyModal({
 
   return (
     <ModalShell
-      title={t('schedule_advanced.create_weekly', { defaultValue: 'Create Weekly Plan' })}
+      title={t('schedule_advanced.create_weekly', { defaultValue: 'New weekly work plan' })}
+      subtitle={t('schedule_advanced.create_weekly_subtitle', {
+        defaultValue:
+          'Last Planner® weekly plan — pick the work week you want to commit to delivering.',
+      })}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
@@ -1678,7 +1685,11 @@ function CreateLookAheadModal({
 
   return (
     <ModalShell
-      title={t('schedule_advanced.create_la', { defaultValue: 'Create Look-Ahead' })}
+      title={t('schedule_advanced.create_la', { defaultValue: 'New look-ahead plan' })}
+      subtitle={t('schedule_advanced.create_la_subtitle', {
+        defaultValue:
+          '6-week rolling window of activities ready to be planned at the weekly level. Surfaces constraints that need clearing.',
+      })}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
@@ -1758,7 +1769,11 @@ function CreateBaselineModal({
 
   return (
     <ModalShell
-      title={t('schedule_advanced.capture_baseline', { defaultValue: 'Capture Baseline' })}
+      title={t('schedule_advanced.capture_baseline', { defaultValue: 'Capture baseline' })}
+      subtitle={t('schedule_advanced.capture_baseline_subtitle', {
+        defaultValue:
+          'Snapshot the current schedule so you can measure variance later. Pick a meaningful label, e.g. "Contract signed" or "Q2 rebaseline".',
+      })}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}

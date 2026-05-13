@@ -24,6 +24,9 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  WideModal,
+  WideModalSection,
+  WideModalField,
 } from '@/shared/ui';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
@@ -56,7 +59,7 @@ type Tab = 'dashboards' | 'kpis' | 'reports' | 'schedules' | 'alerts';
 
 const inputCls =
   'h-9 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm focus:outline-none focus:ring-2 focus:ring-oe-blue/30 focus:border-oe-blue';
-const labelCls = 'block text-xs font-medium text-content-secondary mb-1';
+// Legacy `labelCls` removed when CreateModal moved to <WideModalField>.
 
 const SEVERITY_VARIANT: Record<AlertSeverity, 'neutral' | 'blue' | 'success' | 'warning' | 'error'> = {
   info: 'blue',
@@ -1022,182 +1025,37 @@ function CreateModal({
     }
   };
 
+  const titleByKind: Record<typeof kind, string> = {
+    dashboards: t('bi.new_dashboard', { defaultValue: 'New dashboard' }),
+    reports: t('bi.new_report', { defaultValue: 'New scheduled report' }),
+    alerts: t('bi.new_alert', { defaultValue: 'New KPI alert rule' }),
+  };
+  const subtitleByKind: Record<typeof kind, string> = {
+    dashboards: t('bi.new_dashboard_subtitle', {
+      defaultValue:
+        'Start with the basics — you can add KPI cards, charts and gauges after the dashboard is created.',
+    }),
+    reports: t('bi.new_report_subtitle', {
+      defaultValue:
+        'Define a report once, then schedule it for recurring delivery or run it on demand.',
+    }),
+    alerts: t('bi.new_alert_subtitle', {
+      defaultValue:
+        'Trigger a notification whenever a KPI crosses a threshold. Throttling is on by default.',
+    }),
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">
-            {kind === 'dashboards' && t('bi.new_dashboard', { defaultValue: 'New Dashboard' })}
-            {kind === 'reports' && t('bi.new_report', { defaultValue: 'New Report' })}
-            {kind === 'alerts' && t('bi.new_alert', { defaultValue: 'New Alert' })}
-          </h2>
-          <button type="button" onClick={onClose} className="rounded p-1 hover:bg-surface-secondary">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          {kind === 'dashboards' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('bi.name', { defaultValue: 'Name' })} *</label>
-                <input
-                  value={dashForm.name}
-                  onChange={(e) => setDashForm({ ...dashForm, name: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.description', { defaultValue: 'Description' })}</label>
-                <textarea
-                  value={dashForm.description}
-                  onChange={(e) => setDashForm({ ...dashForm, description: e.target.value })}
-                  rows={3}
-                  className={clsx(inputCls, 'h-auto py-2')}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.scope', { defaultValue: 'Scope' })}</label>
-                <select
-                  value={dashForm.scope}
-                  onChange={(e) => setDashForm({ ...dashForm, scope: e.target.value as DashboardScope })}
-                  className={inputCls}
-                >
-                  <option value="personal">personal</option>
-                  <option value="role">role</option>
-                  <option value="project">project</option>
-                  <option value="global">global</option>
-                </select>
-              </div>
-            </>
-          )}
-
-          {kind === 'reports' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('bi.code', { defaultValue: 'Code' })} *</label>
-                <input
-                  value={reportForm.code}
-                  onChange={(e) => setReportForm({ ...reportForm, code: e.target.value })}
-                  className={inputCls}
-                  placeholder="weekly_cost_summary"
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.name', { defaultValue: 'Name' })} *</label>
-                <input
-                  value={reportForm.name}
-                  onChange={(e) => setReportForm({ ...reportForm, name: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.format', { defaultValue: 'Format' })}</label>
-                <select
-                  value={reportForm.output_format}
-                  onChange={(e) =>
-                    setReportForm({
-                      ...reportForm,
-                      output_format: e.target.value as 'pdf' | 'xlsx' | 'csv' | 'json',
-                    })
-                  }
-                  className={inputCls}
-                >
-                  <option value="pdf">PDF</option>
-                  <option value="xlsx">Excel</option>
-                  <option value="csv">CSV</option>
-                  <option value="json">JSON</option>
-                </select>
-              </div>
-            </>
-          )}
-
-          {kind === 'alerts' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('bi.name', { defaultValue: 'Name' })} *</label>
-                <input
-                  value={alertForm.name}
-                  onChange={(e) => setAlertForm({ ...alertForm, name: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.kpi', { defaultValue: 'KPI' })} *</label>
-                {kpis.length > 0 ? (
-                  <select
-                    value={alertForm.kpi_code}
-                    onChange={(e) => setAlertForm({ ...alertForm, kpi_code: e.target.value })}
-                    className={inputCls}
-                  >
-                    {kpis.map((k) => (
-                      <option key={k.id} value={k.code}>
-                        {k.code} — {k.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    value={alertForm.kpi_code}
-                    onChange={(e) => setAlertForm({ ...alertForm, kpi_code: e.target.value })}
-                    className={inputCls}
-                    placeholder="cost_variance_pct"
-                  />
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>{t('bi.condition', { defaultValue: 'Condition' })}</label>
-                  <select
-                    value={alertForm.condition}
-                    onChange={(e) =>
-                      setAlertForm({ ...alertForm, condition: e.target.value as AlertCondition })
-                    }
-                    className={inputCls}
-                  >
-                    <option value="above">above</option>
-                    <option value="below">below</option>
-                    <option value="equals">equals</option>
-                    <option value="not_equals">not_equals</option>
-                    <option value="changed_by_more_than">changed_by_more_than</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelCls}>{t('bi.threshold', { defaultValue: 'Threshold' })}</label>
-                  <input
-                    type="number"
-                    value={alertForm.threshold_value}
-                    onChange={(e) =>
-                      setAlertForm({ ...alertForm, threshold_value: e.target.value })
-                    }
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className={labelCls}>{t('bi.severity', { defaultValue: 'Severity' })}</label>
-                <select
-                  value={alertForm.severity}
-                  onChange={(e) =>
-                    setAlertForm({ ...alertForm, severity: e.target.value as AlertSeverity })
-                  }
-                  className={inputCls}
-                >
-                  <option value="info">info</option>
-                  <option value="warning">warning</option>
-                  <option value="critical">critical</option>
-                </select>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={titleByKind[kind]}
+      subtitle={subtitleByKind[kind]}
+      size={kind === 'alerts' ? 'lg' : 'md'}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
@@ -1208,9 +1066,216 @@ function CreateModal({
           >
             {t('common.create', { defaultValue: 'Create' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {kind === 'dashboards' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('bi.name', { defaultValue: 'Name' })}
+            required
+            span={2}
+          >
+            <input
+              value={dashForm.name}
+              onChange={(e) => setDashForm({ ...dashForm, name: e.target.value })}
+              className={inputCls}
+              placeholder={t('bi.dashboard_name_placeholder', {
+                defaultValue: 'PM weekly overview',
+              })}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.description', { defaultValue: 'Description' })}
+            hint={t('bi.description_hint', {
+              defaultValue: 'Shown in the dashboard tile and the share link.',
+            })}
+            span={2}
+          >
+            <textarea
+              value={dashForm.description}
+              onChange={(e) => setDashForm({ ...dashForm, description: e.target.value })}
+              rows={3}
+              className={clsx(inputCls, 'h-auto py-2 resize-y')}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.scope', { defaultValue: 'Visibility scope' })}
+            hint={t('bi.scope_hint', {
+              defaultValue:
+                'Personal = only you. Role = everyone in your role. Project = all members. Global = company-wide.',
+            })}
+            span={2}
+          >
+            <select
+              value={dashForm.scope}
+              onChange={(e) => setDashForm({ ...dashForm, scope: e.target.value as DashboardScope })}
+              className={inputCls}
+            >
+              <option value="personal">{t('bi.scope_personal', { defaultValue: 'Personal — only me' })}</option>
+              <option value="role">{t('bi.scope_role', { defaultValue: 'Role — my team' })}</option>
+              <option value="project">{t('bi.scope_project', { defaultValue: 'Project — project members' })}</option>
+              <option value="global">{t('bi.scope_global', { defaultValue: 'Global — entire company' })}</option>
+            </select>
+          </WideModalField>
+        </WideModalSection>
+      )}
+
+      {kind === 'reports' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('bi.code', { defaultValue: 'Report code' })}
+            required
+            hint={t('bi.code_hint', {
+              defaultValue: 'Short identifier used in URLs and webhooks. Lowercase + underscores.',
+            })}
+          >
+            <input
+              value={reportForm.code}
+              onChange={(e) => setReportForm({ ...reportForm, code: e.target.value })}
+              className={inputCls}
+              placeholder="weekly_cost_summary"
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.name', { defaultValue: 'Display name' })}
+            required
+          >
+            <input
+              value={reportForm.name}
+              onChange={(e) => setReportForm({ ...reportForm, name: e.target.value })}
+              className={inputCls}
+              placeholder={t('bi.report_name_placeholder', {
+                defaultValue: 'Weekly cost summary',
+              })}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.description', { defaultValue: 'Description' })}
+            span={2}
+          >
+            <textarea
+              value={reportForm.description}
+              onChange={(e) => setReportForm({ ...reportForm, description: e.target.value })}
+              rows={3}
+              className={clsx(inputCls, 'h-auto py-2 resize-y')}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.format', { defaultValue: 'Output format' })}
+            hint={t('bi.format_hint', {
+              defaultValue: 'PDF for executives, XLSX for analysts, CSV/JSON for integrations.',
+            })}
+            span={2}
+          >
+            <select
+              value={reportForm.output_format}
+              onChange={(e) =>
+                setReportForm({
+                  ...reportForm,
+                  output_format: e.target.value as 'pdf' | 'xlsx' | 'csv' | 'json',
+                })
+              }
+              className={inputCls}
+            >
+              <option value="pdf">PDF</option>
+              <option value="xlsx">Excel (XLSX)</option>
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </WideModalField>
+        </WideModalSection>
+      )}
+
+      {kind === 'alerts' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('bi.name', { defaultValue: 'Rule name' })}
+            required
+            span={2}
+          >
+            <input
+              value={alertForm.name}
+              onChange={(e) => setAlertForm({ ...alertForm, name: e.target.value })}
+              className={inputCls}
+              placeholder={t('bi.alert_name_placeholder', {
+                defaultValue: 'CPI dropped below 0.9',
+              })}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.kpi', { defaultValue: 'KPI to monitor' })}
+            required
+            span={2}
+          >
+            {kpis.length > 0 ? (
+              <select
+                value={alertForm.kpi_code}
+                onChange={(e) => setAlertForm({ ...alertForm, kpi_code: e.target.value })}
+                className={inputCls}
+              >
+                {kpis.map((k) => (
+                  <option key={k.id} value={k.code}>
+                    {k.code} — {k.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={alertForm.kpi_code}
+                onChange={(e) => setAlertForm({ ...alertForm, kpi_code: e.target.value })}
+                className={inputCls}
+                placeholder="cost_variance_pct"
+              />
+            )}
+          </WideModalField>
+          <WideModalField label={t('bi.condition', { defaultValue: 'Trigger when value is' })}>
+            <select
+              value={alertForm.condition}
+              onChange={(e) =>
+                setAlertForm({ ...alertForm, condition: e.target.value as AlertCondition })
+              }
+              className={inputCls}
+            >
+              <option value="above">{t('bi.cond_above', { defaultValue: 'Above threshold' })}</option>
+              <option value="below">{t('bi.cond_below', { defaultValue: 'Below threshold' })}</option>
+              <option value="equals">{t('bi.cond_equals', { defaultValue: 'Equal to threshold' })}</option>
+              <option value="not_equals">{t('bi.cond_not_equals', { defaultValue: 'Not equal to threshold' })}</option>
+              <option value="changed_by_more_than">{t('bi.cond_change', { defaultValue: 'Changed by more than' })}</option>
+            </select>
+          </WideModalField>
+          <WideModalField label={t('bi.threshold', { defaultValue: 'Threshold value' })}>
+            <input
+              type="number"
+              value={alertForm.threshold_value}
+              onChange={(e) =>
+                setAlertForm({ ...alertForm, threshold_value: e.target.value })
+              }
+              className={inputCls}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('bi.severity', { defaultValue: 'Severity' })}
+            hint={t('bi.severity_hint', {
+              defaultValue: 'Drives notification channel & escalation behaviour.',
+            })}
+            span={2}
+          >
+            <select
+              value={alertForm.severity}
+              onChange={(e) =>
+                setAlertForm({ ...alertForm, severity: e.target.value as AlertSeverity })
+              }
+              className={inputCls}
+            >
+              <option value="info">{t('bi.sev_info', { defaultValue: 'Info — log only' })}</option>
+              <option value="warning">{t('bi.sev_warning', { defaultValue: 'Warning — in-app banner' })}</option>
+              <option value="critical">{t('bi.sev_critical', { defaultValue: 'Critical — email + Slack' })}</option>
+            </select>
+          </WideModalField>
+        </WideModalSection>
+      )}
+    </WideModal>
   );
 }
 

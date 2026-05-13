@@ -196,10 +196,31 @@ class ModuleLoader:
                 router_mod = importlib.import_module(router_module_name)
             router = getattr(router_mod, "router", None)
             if router:
-                prefix = f"/api/v1/{dir_name}"
+                # URL convention: kebab-case (hyphens), not snake_case.
+                # Python module directories use underscores, but the public
+                # REST surface should be hyphenated (`/api/v1/bi-dashboards`,
+                # `/api/v1/schedule-advanced`, etc.). Mount on the
+                # hyphenated path as the canonical URL, and additionally
+                # mirror it under the underscore form so legacy callers
+                # do not regress when this convention is tightened.
+                kebab_name = dir_name.replace("_", "-")
+                prefix = f"/api/v1/{kebab_name}"
                 app.include_router(router, prefix=prefix, tags=[manifest.display_name])
                 loaded.router = router
                 logger.info("Mounted router for %s at %s", module_name, prefix)
+                if kebab_name != dir_name:
+                    legacy_prefix = f"/api/v1/{dir_name}"
+                    app.include_router(
+                        router,
+                        prefix=legacy_prefix,
+                        tags=[manifest.display_name],
+                        include_in_schema=False,
+                    )
+                    logger.info(
+                        "Mirrored router for %s at legacy prefix %s",
+                        module_name,
+                        legacy_prefix,
+                    )
         except ModuleNotFoundError:
             logger.debug("No router for module %s", module_name)
 
@@ -350,16 +371,28 @@ class ModuleLoader:
                 f"{', '.join(enabled_dependents)}"
             )
 
-        # Remove router from the FastAPI app
+        # Remove router from the FastAPI app — sweep both the canonical
+        # kebab-case prefix and the legacy underscore mirror so we do not
+        # leak ghost routes after a disable.
         loaded = self._modules.get(module_name)
         if loaded and loaded.router:
             dir_name = module_name.removeprefix("oe_")
-            prefix = f"/api/v1/{dir_name}"
+            kebab_name = dir_name.replace("_", "-")
+            prefixes = {f"/api/v1/{kebab_name}", f"/api/v1/{dir_name}"}
             app.routes[:] = [
                 r for r in app.routes
-                if not (hasattr(r, "path") and getattr(r, "path", "").startswith(prefix))
+                if not (
+                    hasattr(r, "path")
+                    and any(
+                        getattr(r, "path", "").startswith(p) for p in prefixes
+                    )
+                )
             ]
-            logger.info("Removed routes for %s (prefix %s)", module_name, prefix)
+            logger.info(
+                "Removed routes for %s (prefixes %s)",
+                module_name,
+                ", ".join(sorted(prefixes)),
+            )
 
         # Mark as disabled
         manifest.enabled = False

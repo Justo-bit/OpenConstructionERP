@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { usePreferencesStore } from '../../stores/usePreferencesStore';
+import { currencyMinorUnits } from './currencyMinorUnits';
 
 export interface MoneyDisplayProps {
   amount: number | string | null | undefined;
@@ -16,6 +17,15 @@ export interface MoneyDisplayProps {
  * Uses the user's preferred locale and currency from the preferences store.
  * Supports compact notation (e.g. 1.2M), currency code suffix, and
  * colorized output (green/red) for positive/negative values.
+ *
+ * Audit I1-I3 fix: respects ISO-4217 minor-unit counts so JPY/KRW/IDR
+ * render without decimals, BHD/KWD/OMR/TND render with three. The old
+ * implementation hardcoded ``minimumFractionDigits=2``, which turned
+ * "100 JPY" into "100.00 JPY" and "100 KWD" into "100.00 KWD" (losing
+ * a fils of precision for the latter). When the browser's ``Intl``
+ * has up-to-date currency data this would be a no-op — but we can't
+ * rely on every supported browser/Node version having the latest
+ * tables, hence the explicit overrides.
  */
 export function MoneyDisplay({
   amount,
@@ -40,31 +50,35 @@ export function MoneyDisplay({
   const resolvedCurrency = currency ?? defaultCurrency;
   const safeCurrency = /^[A-Z]{3}$/.test(resolvedCurrency) ? resolvedCurrency : 'EUR';
 
+  // Resolve the ISO-4217 minor-unit count. Falls back to 2 for currencies
+  // we don't have an explicit override for — matching pre-fix behaviour
+  // for the long tail of legacy/local-only currencies.
+  const minorUnits = currencyMinorUnits(safeCurrency);
+
   let formatted: string;
   try {
     if (showCode) {
       // Format number without currency, then append ISO code
       const numFmt = new Intl.NumberFormat(numberLocale, {
-        minimumFractionDigits: compact ? 0 : 2,
-        maximumFractionDigits: 2,
-        ...(compact ? { notation: 'compact' as const, maximumFractionDigits: 1 } : {}),
+        minimumFractionDigits: compact ? 0 : minorUnits,
+        maximumFractionDigits: compact ? 1 : minorUnits,
+        ...(compact ? { notation: 'compact' as const } : {}),
       });
       formatted = `${numFmt.format(numericValue)} ${safeCurrency}`;
     } else {
       const opts: Intl.NumberFormatOptions = {
         style: 'currency',
         currency: safeCurrency,
-        minimumFractionDigits: compact ? 0 : 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: compact ? 0 : minorUnits,
+        maximumFractionDigits: compact ? 1 : minorUnits,
       };
       if (compact) {
         opts.notation = 'compact';
-        opts.maximumFractionDigits = 1;
       }
       formatted = new Intl.NumberFormat(numberLocale, opts).format(numericValue);
     }
   } catch {
-    formatted = `${numericValue.toFixed(2)} ${safeCurrency}`;
+    formatted = `${numericValue.toFixed(minorUnits)} ${safeCurrency}`;
   }
 
   const colorClass = colorize

@@ -997,7 +997,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     >
       <div className="absolute inset-0 bg-black/40" />
       <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
+        className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

@@ -241,12 +241,12 @@ export const deleteInvestigation = (id: string) => apiDelete(`${BASE}/investigat
 
 export const fetchJSAs = (projectId: string) =>
   apiGet<JobSafetyAnalysis[] | { items: JobSafetyAnalysis[] }>(
-    `${BASE}/jsas/?project_id=${projectId}`,
+    `${BASE}/jsa/?project_id=${projectId}`,
   );
 
 export const createJSA = (
   payload: Partial<JobSafetyAnalysis> & { project_id: string; title: string },
-) => apiPost<JobSafetyAnalysis>(`${BASE}/jsas/`, payload);
+) => apiPost<JobSafetyAnalysis>(`${BASE}/jsa/`, payload);
 
 export const fetchPermits = (projectId: string) =>
   apiGet<PermitToWork[] | { items: PermitToWork[] }>(`${BASE}/permits/?project_id=${projectId}`);
@@ -267,11 +267,11 @@ export const fetchToolboxTopics = () =>
   apiGet<ToolboxTopic[] | { items: ToolboxTopic[] }>(`${BASE}/toolbox-topics/`);
 
 export const fetchPPEIssues = (projectId: string) =>
-  apiGet<PPEIssue[] | { items: PPEIssue[] }>(`${BASE}/ppe/?project_id=${projectId}`);
+  apiGet<PPEIssue[] | { items: PPEIssue[] }>(`${BASE}/ppe-issues/?project_id=${projectId}`);
 
 export const createPPEIssue = (
   payload: Partial<PPEIssue> & { project_id: string; issued_to_name: string; item_type: string },
-) => apiPost<PPEIssue>(`${BASE}/ppe/`, payload);
+) => apiPost<PPEIssue>(`${BASE}/ppe-issues/`, payload);
 
 export const fetchAudits = (projectId: string) =>
   apiGet<SafetyAudit[] | { items: SafetyAudit[] }>(`${BASE}/audits/?project_id=${projectId}`);
@@ -281,12 +281,12 @@ export const createAudit = (payload: Partial<SafetyAudit> & { project_id: string
 
 export const fetchCAPAs = (projectId: string) =>
   apiGet<CorrectiveAction[] | { items: CorrectiveAction[] }>(
-    `${BASE}/capa/?project_id=${projectId}`,
+    `${BASE}/capas/?project_id=${projectId}`,
   );
 
 export const createCAPA = (
   payload: Partial<CorrectiveAction> & { project_id: string; title: string; description: string },
-) => apiPost<CorrectiveAction>(`${BASE}/capa/`, payload);
+) => apiPost<CorrectiveAction>(`${BASE}/capas/`, payload);
 
 export const fetchCertifications = (projectId: string) =>
   apiGet<SafetyCertification[] | { items: SafetyCertification[] }>(

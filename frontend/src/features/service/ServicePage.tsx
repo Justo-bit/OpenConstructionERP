@@ -22,6 +22,10 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  WideModal,
+  WideModalSection,
+  WideModalField,
+  ContactSearchInput,
 } from '@/shared/ui';
 import { MoneyDisplay } from '@/shared/ui/MoneyDisplay';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
@@ -88,7 +92,12 @@ const WO_STATUS_VARIANT: Record<WorkOrderStatus, 'neutral' | 'blue' | 'success' 
 const inputCls =
   'h-9 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm focus:outline-none focus:ring-2 focus:ring-oe-blue/30 focus:border-oe-blue';
 
-const labelCls = 'block text-xs font-medium text-content-secondary mb-1';
+// Note: the legacy `labelCls` style is intentionally no longer used —
+// modal forms switched to <WideModalField> which renders the label
+// inside the wrapper. Kept as a module-level constant only so that any
+// non-modal label callers that still reference it (none today) would
+// import the same visual style without redeclaring.
+// const labelCls = 'block text-xs font-medium text-content-secondary mb-1';
 
 /* ─── helpers ─── */
 
@@ -1004,223 +1013,382 @@ function CreateModal({
     }
   };
 
+  // Asset type options — these come from the backend `service.asset_type`
+  // canonical set. The old form had a free-text input ("hvac / lift /
+  // generator / …") which let users persist typos that no analytics
+  // query could group on. A dropdown locks down the canonical vocabulary
+  // while still letting installers add custom types via the catalogue.
+  const ASSET_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+    { value: 'hvac', label: t('service.asset_type_hvac', { defaultValue: 'HVAC' }) },
+    { value: 'lift', label: t('service.asset_type_lift', { defaultValue: 'Lift / elevator' }) },
+    { value: 'generator', label: t('service.asset_type_generator', { defaultValue: 'Generator' }) },
+    { value: 'fire_protection', label: t('service.asset_type_fire', { defaultValue: 'Fire protection' }) },
+    { value: 'plumbing', label: t('service.asset_type_plumbing', { defaultValue: 'Plumbing' }) },
+    { value: 'electrical', label: t('service.asset_type_electrical', { defaultValue: 'Electrical' }) },
+    { value: 'cctv', label: t('service.asset_type_cctv', { defaultValue: 'CCTV / surveillance' }) },
+    { value: 'access_control', label: t('service.asset_type_access', { defaultValue: 'Access control' }) },
+    { value: 'bms', label: t('service.asset_type_bms', { defaultValue: 'BMS / automation' }) },
+    { value: 'other', label: t('service.asset_type_other', { defaultValue: 'Other' }) },
+  ];
+
+  const modalSize = kind === 'contracts' ? 'xl' : 'lg';
+  const titleByKind: Record<Tab, string> = {
+    tickets: t('service.new_ticket', { defaultValue: 'New service ticket' }),
+    work_orders: t('service.new_work_order', { defaultValue: 'New work order' }),
+    contracts: t('service.new_contract', { defaultValue: 'New service contract' }),
+    assets: t('service.new_asset', { defaultValue: 'New serviced asset' }),
+  };
+  const subtitleByKind: Record<Tab, string> = {
+    tickets: t('service.new_ticket_subtitle', {
+      defaultValue: 'Log a customer request under one of the active service contracts.',
+    }),
+    work_orders: t('service.new_work_order_subtitle', {
+      defaultValue: 'Schedule a technician visit to deliver on a logged ticket.',
+    }),
+    contracts: t('service.new_contract_subtitle', {
+      defaultValue:
+        'A service contract groups recurring work for one customer. Pick the customer from the contacts list — no more pasting UUIDs.',
+    }),
+    assets: t('service.new_asset_subtitle', {
+      defaultValue: 'Register a piece of equipment that this contract covers.',
+    }),
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">
-            {kind === 'tickets' && t('service.new_ticket', { defaultValue: 'New Ticket' })}
-            {kind === 'work_orders' && t('service.new_work_order', { defaultValue: 'New Work Order' })}
-            {kind === 'contracts' && t('service.new_contract', { defaultValue: 'New Contract' })}
-            {kind === 'assets' && t('service.new_asset', { defaultValue: 'New Asset' })}
-          </h2>
-          <button type="button" onClick={onClose} className="rounded p-1 hover:bg-surface-secondary">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          {kind === 'tickets' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('service.contract', { defaultValue: 'Contract' })} *</label>
-                <select
-                  value={ticketForm.contract_id}
-                  onChange={(e) => setTicketForm({ ...ticketForm, contract_id: e.target.value })}
-                  className={inputCls}
-                >
-                  <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
-                  {contracts.map((c) => (
-                    <option key={c.id} value={c.id}>{c.contract_number} — {c.title || ''}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.title_col')} *</label>
-                <input
-                  value={ticketForm.title}
-                  onChange={(e) => setTicketForm({ ...ticketForm, title: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.description', { defaultValue: 'Description' })}</label>
-                <textarea
-                  value={ticketForm.description}
-                  onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })}
-                  rows={3}
-                  className={clsx(inputCls, 'h-auto py-2')}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.priority')}</label>
-                <select
-                  value={ticketForm.priority}
-                  onChange={(e) => setTicketForm({ ...ticketForm, priority: e.target.value as TicketPriority })}
-                  className={inputCls}
-                >
-                  {(['low', 'med', 'high', 'critical'] as TicketPriority[]).map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
-
-          {kind === 'work_orders' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('service.ticket')} *</label>
-                <select
-                  value={woForm.ticket_id}
-                  onChange={(e) => setWoForm({ ...woForm, ticket_id: e.target.value })}
-                  className={inputCls}
-                >
-                  <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
-                  {tickets.map((tk) => (
-                    <option key={tk.id} value={tk.id}>{tk.ticket_number} — {tk.title}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.scheduled_for')}</label>
-                <input
-                  type="date"
-                  value={woForm.scheduled_for}
-                  onChange={(e) => setWoForm({ ...woForm, scheduled_for: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.technician')}</label>
-                <input
-                  value={woForm.technician_id}
-                  onChange={(e) => setWoForm({ ...woForm, technician_id: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-            </>
-          )}
-
-          {kind === 'contracts' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('service.customer_id', { defaultValue: 'Customer ID (UUID)' })} *</label>
-                <input
-                  value={contractForm.customer_id}
-                  onChange={(e) => setContractForm({ ...contractForm, customer_id: e.target.value })}
-                  className={inputCls}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.title_col')}</label>
-                <input
-                  value={contractForm.title}
-                  onChange={(e) => setContractForm({ ...contractForm, title: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>{t('service.period_start')}</label>
-                  <input
-                    type="date"
-                    value={contractForm.period_start}
-                    onChange={(e) => setContractForm({ ...contractForm, period_start: e.target.value })}
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>{t('service.period_end')}</label>
-                  <input
-                    type="date"
-                    value={contractForm.period_end}
-                    onChange={(e) => setContractForm({ ...contractForm, period_end: e.target.value })}
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>{t('service.value')}</label>
-                  <input
-                    type="number"
-                    value={contractForm.value}
-                    onChange={(e) => setContractForm({ ...contractForm, value: e.target.value })}
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>{t('common.currency', { defaultValue: 'Currency' })}</label>
-                  <input
-                    value={contractForm.currency}
-                    onChange={(e) => setContractForm({ ...contractForm, currency: e.target.value })}
-                    className={inputCls}
-                    maxLength={3}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
-          {kind === 'assets' && (
-            <>
-              <div>
-                <label className={labelCls}>{t('service.contract')} *</label>
-                <select
-                  value={assetForm.contract_id}
-                  onChange={(e) => setAssetForm({ ...assetForm, contract_id: e.target.value })}
-                  className={inputCls}
-                >
-                  <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
-                  {contracts.map((c) => (
-                    <option key={c.id} value={c.id}>{c.contract_number}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.asset_type')} *</label>
-                <input
-                  value={assetForm.asset_type}
-                  onChange={(e) => setAssetForm({ ...assetForm, asset_type: e.target.value })}
-                  className={inputCls}
-                  placeholder="hvac / lift / generator / …"
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.name')}</label>
-                <input
-                  value={assetForm.name}
-                  onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className={labelCls}>{t('service.location')}</label>
-                <input
-                  value={assetForm.location}
-                  onChange={(e) => setAssetForm({ ...assetForm, location: e.target.value })}
-                  className={inputCls}
-                />
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={titleByKind[kind]}
+      subtitle={subtitleByKind[kind]}
+      size={modalSize}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
-          <Button variant="primary" onClick={submit} loading={busy} icon={busy ? <Loader2 size={14} /> : <Plus size={14} />}>
+          <Button
+            variant="primary"
+            onClick={submit}
+            loading={busy}
+            icon={busy ? <Loader2 size={14} /> : <Plus size={14} />}
+          >
             {t('common.create', { defaultValue: 'Create' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {kind === 'tickets' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('service.contract', { defaultValue: 'Contract' })}
+            required
+            hint={t('service.contract_hint', {
+              defaultValue: 'The service agreement this ticket bills under.',
+            })}
+            span={2}
+          >
+            <select
+              value={ticketForm.contract_id}
+              onChange={(e) => setTicketForm({ ...ticketForm, contract_id: e.target.value })}
+              className={inputCls}
+            >
+              <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
+              {contracts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.contract_number} — {c.title || ''}
+                </option>
+              ))}
+            </select>
+          </WideModalField>
+          <WideModalField
+            label={t('service.title_col', { defaultValue: 'Title' })}
+            required
+            span={2}
+          >
+            <input
+              value={ticketForm.title}
+              onChange={(e) => setTicketForm({ ...ticketForm, title: e.target.value })}
+              className={inputCls}
+              placeholder={t('service.title_placeholder', {
+                defaultValue: 'AC unit not cooling — Floor 3',
+              })}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('service.description', { defaultValue: 'Description' })}
+            hint={t('service.description_hint', {
+              defaultValue: 'Anything the technician needs to know before arriving.',
+            })}
+            span={2}
+          >
+            <textarea
+              value={ticketForm.description}
+              onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })}
+              rows={4}
+              className={clsx(inputCls, 'h-auto py-2 resize-y')}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('service.priority', { defaultValue: 'Priority' })}
+          >
+            <select
+              value={ticketForm.priority}
+              onChange={(e) => setTicketForm({ ...ticketForm, priority: e.target.value as TicketPriority })}
+              className={inputCls}
+            >
+              <option value="low">{t('service.priority_low', { defaultValue: 'Low' })}</option>
+              <option value="med">{t('service.priority_med', { defaultValue: 'Medium' })}</option>
+              <option value="high">{t('service.priority_high', { defaultValue: 'High' })}</option>
+              <option value="critical">{t('service.priority_critical', { defaultValue: 'Critical' })}</option>
+            </select>
+          </WideModalField>
+        </WideModalSection>
+      )}
+
+      {kind === 'work_orders' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('service.ticket', { defaultValue: 'Ticket' })}
+            required
+            span={2}
+          >
+            <select
+              value={woForm.ticket_id}
+              onChange={(e) => setWoForm({ ...woForm, ticket_id: e.target.value })}
+              className={inputCls}
+            >
+              <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
+              {tickets.map((tk) => (
+                <option key={tk.id} value={tk.id}>
+                  {tk.ticket_number} — {tk.title}
+                </option>
+              ))}
+            </select>
+          </WideModalField>
+          <WideModalField
+            label={t('service.scheduled_for', { defaultValue: 'Scheduled for' })}
+          >
+            <input
+              type="date"
+              value={woForm.scheduled_for}
+              onChange={(e) => setWoForm({ ...woForm, scheduled_for: e.target.value })}
+              className={inputCls}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('service.technician', { defaultValue: 'Technician' })}
+            hint={t('service.technician_hint', {
+              defaultValue: 'Optional — assign on-site engineer.',
+            })}
+          >
+            <input
+              value={woForm.technician_id}
+              onChange={(e) => setWoForm({ ...woForm, technician_id: e.target.value })}
+              className={inputCls}
+              placeholder={t('service.technician_placeholder', {
+                defaultValue: 'John Doe',
+              })}
+            />
+          </WideModalField>
+        </WideModalSection>
+      )}
+
+      {kind === 'contracts' && (
+        <>
+          <WideModalSection
+            title={t('service.contract_customer_section', {
+              defaultValue: 'Customer & scope',
+            })}
+            columns={2}
+          >
+            <WideModalField
+              label={t('service.customer', { defaultValue: 'Customer' })}
+              required
+              hint={t('service.customer_hint', {
+                defaultValue:
+                  'Pick from your contacts — searches as you type. Need to add a new one? Open Contacts in a new tab.',
+              })}
+              span={2}
+            >
+              <ContactSearchInput
+                value={contractForm.customer_id}
+                onChange={(id) =>
+                  setContractForm({ ...contractForm, customer_id: id })
+                }
+                placeholder={t('service.customer_search_placeholder', {
+                  defaultValue: 'Search company or contact name...',
+                })}
+                showBrowse
+                browseContactTypes={["customer", "client", "company"]}
+              />
+            </WideModalField>
+            <WideModalField
+              label={t('service.title_col', { defaultValue: 'Title' })}
+              hint={t('service.contract_title_hint', {
+                defaultValue: 'Short label shown in lists, e.g. "HVAC maintenance — HQ 2026".',
+              })}
+              span={2}
+            >
+              <input
+                value={contractForm.title}
+                onChange={(e) => setContractForm({ ...contractForm, title: e.target.value })}
+                className={inputCls}
+                placeholder={t('service.contract_title_placeholder', {
+                  defaultValue: 'HVAC maintenance — HQ 2026',
+                })}
+              />
+            </WideModalField>
+          </WideModalSection>
+
+          <WideModalSection
+            title={t('service.contract_period_section', {
+              defaultValue: 'Period & SLA',
+            })}
+            columns={3}
+          >
+            <WideModalField label={t('service.period_start', { defaultValue: 'Period start' })}>
+              <input
+                type="date"
+                value={contractForm.period_start}
+                onChange={(e) => setContractForm({ ...contractForm, period_start: e.target.value })}
+                className={inputCls}
+              />
+            </WideModalField>
+            <WideModalField label={t('service.period_end', { defaultValue: 'Period end' })}>
+              <input
+                type="date"
+                value={contractForm.period_end}
+                onChange={(e) => setContractForm({ ...contractForm, period_end: e.target.value })}
+                className={inputCls}
+              />
+            </WideModalField>
+            <WideModalField
+              label={t('service.sla_tier', { defaultValue: 'SLA tier' })}
+              hint={t('service.sla_hint', {
+                defaultValue: 'Response time commitment.',
+              })}
+            >
+              <select
+                value={contractForm.sla_tier}
+                onChange={(e) => setContractForm({ ...contractForm, sla_tier: e.target.value })}
+                className={inputCls}
+              >
+                <option value="standard">{t('service.sla_standard', { defaultValue: 'Standard (next business day)' })}</option>
+                <option value="priority">{t('service.sla_priority', { defaultValue: 'Priority (same business day)' })}</option>
+                <option value="critical">{t('service.sla_critical', { defaultValue: 'Critical (4 hours)' })}</option>
+                <option value="24x7">{t('service.sla_24x7', { defaultValue: '24×7 emergency' })}</option>
+              </select>
+            </WideModalField>
+          </WideModalSection>
+
+          <WideModalSection
+            title={t('service.contract_value_section', {
+              defaultValue: 'Contract value',
+            })}
+            columns={2}
+          >
+            <WideModalField
+              label={t('service.value', { defaultValue: 'Annual value' })}
+              hint={t('service.value_hint', {
+                defaultValue: 'Used for billing & revenue forecasting.',
+              })}
+            >
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={contractForm.value}
+                onChange={(e) => setContractForm({ ...contractForm, value: e.target.value })}
+                className={inputCls}
+              />
+            </WideModalField>
+            <WideModalField
+              label={t('common.currency', { defaultValue: 'Currency' })}
+              hint={t('service.currency_hint', { defaultValue: 'ISO-4217 3-letter code.' })}
+            >
+              <input
+                value={contractForm.currency}
+                onChange={(e) =>
+                  setContractForm({ ...contractForm, currency: e.target.value.toUpperCase() })
+                }
+                className={inputCls}
+                maxLength={3}
+                placeholder="EUR"
+              />
+            </WideModalField>
+          </WideModalSection>
+        </>
+      )}
+
+      {kind === 'assets' && (
+        <WideModalSection columns={2}>
+          <WideModalField
+            label={t('service.contract', { defaultValue: 'Contract' })}
+            required
+            span={2}
+          >
+            <select
+              value={assetForm.contract_id}
+              onChange={(e) => setAssetForm({ ...assetForm, contract_id: e.target.value })}
+              className={inputCls}
+            >
+              <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
+              {contracts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.contract_number}
+                  {c.title ? ` — ${c.title}` : ''}
+                </option>
+              ))}
+            </select>
+          </WideModalField>
+          <WideModalField
+            label={t('service.asset_type', { defaultValue: 'Asset type' })}
+            required
+            hint={t('service.asset_type_hint', {
+              defaultValue: 'Drives KPI grouping & spare-parts catalogue.',
+            })}
+          >
+            <select
+              value={assetForm.asset_type}
+              onChange={(e) => setAssetForm({ ...assetForm, asset_type: e.target.value })}
+              className={inputCls}
+            >
+              {ASSET_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </WideModalField>
+          <WideModalField
+            label={t('service.name', { defaultValue: 'Name' })}
+            hint={t('service.asset_name_hint', {
+              defaultValue: 'How site staff recognise this unit.',
+            })}
+          >
+            <input
+              value={assetForm.name}
+              onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })}
+              className={inputCls}
+              placeholder={t('service.asset_name_placeholder', {
+                defaultValue: 'RTU-1, Boiler #2, …',
+              })}
+            />
+          </WideModalField>
+          <WideModalField
+            label={t('service.location', { defaultValue: 'Location' })}
+            span={2}
+          >
+            <input
+              value={assetForm.location}
+              onChange={(e) => setAssetForm({ ...assetForm, location: e.target.value })}
+              className={inputCls}
+              placeholder={t('service.location_placeholder', {
+                defaultValue: 'Roof, Floor 3 — North wing, …',
+              })}
+            />
+          </WideModalField>
+        </WideModalSection>
+      )}
+    </WideModal>
   );
 }

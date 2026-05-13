@@ -78,6 +78,23 @@ CURRENCIES: dict[str, dict[str, Any]] = {
     "AED": {"symbol": "د.إ", "name": "UAE Dirham", "decimals": 2},
     "SAR": {"symbol": "﷼", "name": "Saudi Riyal", "decimals": 2},
     "QAR": {"symbol": "﷼", "name": "Qatari Riyal", "decimals": 2},
+    # Audit I1 — three-decimal Gulf/oil-trading currencies. Adding them
+    # explicitly means ``format_money`` and ``MoneyValue.convert`` quantise
+    # to the correct fils/dirhams instead of rounding to 2 decimals.
+    "KWD": {"symbol": "د.ك", "name": "Kuwaiti Dinar", "decimals": 3},
+    "BHD": {"symbol": "ب.د", "name": "Bahraini Dinar", "decimals": 3},
+    "OMR": {"symbol": "ر.ع.", "name": "Omani Rial", "decimals": 3},
+    "JOD": {"symbol": "د.أ", "name": "Jordanian Dinar", "decimals": 3},
+    "IQD": {"symbol": "ع.د", "name": "Iraqi Dinar", "decimals": 3},
+    "LYD": {"symbol": "ل.د", "name": "Libyan Dinar", "decimals": 3},
+    "VND": {"symbol": "₫", "name": "Vietnamese Đồng", "decimals": 0},
+    "ISK": {"symbol": "kr", "name": "Icelandic Króna", "decimals": 0},
+    "BIF": {"symbol": "FBu", "name": "Burundian Franc", "decimals": 0},
+    "DJF": {"symbol": "Fdj", "name": "Djiboutian Franc", "decimals": 0},
+    "GNF": {"symbol": "FG", "name": "Guinean Franc", "decimals": 0},
+    "KMF": {"symbol": "CF", "name": "Comorian Franc", "decimals": 0},
+    "VUV": {"symbol": "VT", "name": "Vanuatu Vatu", "decimals": 0},
+    "XPF": {"symbol": "₣", "name": "CFP Franc", "decimals": 0},
     "ZAR": {"symbol": "R", "name": "South African Rand", "decimals": 2},
     "EGP": {"symbol": "E£", "name": "Egyptian Pound", "decimals": 2},
     "NGN": {"symbol": "₦", "name": "Nigerian Naira", "decimals": 2},
@@ -197,10 +214,21 @@ class MoneyValue(BaseModel):
         Returns:
             A new ``MoneyValue`` with the converted amount.  The original
             amount is preserved as the base amount.
+
+        Audit I1 — uses the target currency's ISO-4217 minor-unit count
+        for quantisation instead of the previous hardcoded
+        ``Decimal("0.01")``. The old behaviour silently introduced a
+        fractional fil/yen/won on every JPY/KWD conversion (e.g.
+        100 USD * 142.5 = 14250.00 JPY, but the JPY value should be an
+        integer). Falls back to 2 decimals when the target currency
+        isn't in our registry.
         """
         rate_dec = Decimal(str(rate))
+        target_info = CURRENCIES.get(target_currency)
+        decimals = target_info["decimals"] if target_info else 2
+        quantum = Decimal(10) ** -decimals if decimals > 0 else Decimal("1")
         converted = (self.to_decimal() * rate_dec).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+            quantum, rounding=ROUND_HALF_UP
         )
         return MoneyValue(
             amount=str(converted),

@@ -407,7 +407,7 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
   function renderPOModal() {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-lg animate-fade-in">
-        <div className="w-full max-w-2xl bg-surface-elevated rounded-xl shadow-xl border border-border animate-card-in mx-4 max-h-[85vh] flex flex-col" role="dialog" aria-label={t('procurement.new_po', { defaultValue: 'New Purchase Order' })}>
+        <div className="w-full max-w-5xl bg-surface-elevated rounded-xl shadow-xl border border-border animate-card-in mx-4 max-h-[88vh] flex flex-col" role="dialog" aria-label={t('procurement.new_po', { defaultValue: 'New Purchase Order' })}>
           <div className="flex items-center justify-between px-6 py-4 border-b border-border-light sticky top-0 z-10 bg-surface-elevated rounded-t-xl">
             <h2 className="text-lg font-semibold text-content-primary">
               {t('procurement.new_po', { defaultValue: 'New Purchase Order' })}
@@ -421,14 +421,19 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
             </button>
           </div>
           <div className="px-6 py-5 space-y-5 overflow-y-auto flex-1">
-            {/* ── Section: Order Details ── */}
+            {/* ── Section: Order Details ──
+                The widened modal (max-w-5xl) gives us room to surface
+                vendor + PO type + delivery date as a single 3-column row
+                on >=lg breakpoints, while still collapsing cleanly on
+                phones. The previous single-column stack made the form
+                feel "narrow" even on a 27" monitor. */}
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-3">
                 {t('procurement.section_order_details', { defaultValue: 'Order Details' })}
               </h3>
-              <div className="space-y-3">
-                {/* Vendor */}
-                <div ref={firstFieldRef}>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Vendor — takes 2 columns on lg to keep the search input usable */}
+                <div ref={firstFieldRef} className="lg:col-span-2">
                   <label className="block text-sm font-medium text-content-primary mb-1.5">
                     {t('procurement.vendor', { defaultValue: 'Vendor' })}
                   </label>
@@ -441,12 +446,24 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
                     browseContactTypes={['supplier', 'subcontractor']}
                   />
                 </div>
-                {/* PO Type — visual toggle */}
+                {/* Delivery date */}
                 <div>
+                  <label className="block text-sm font-medium text-content-primary mb-1.5">
+                    {t('procurement.delivery_date', { defaultValue: 'Delivery Date' })}
+                  </label>
+                  <input
+                    type="date"
+                    value={poForm.delivery_date}
+                    onChange={(e) => setPoForm((f) => ({ ...f, delivery_date: e.target.value }))}
+                    className={inputCls}
+                  />
+                </div>
+                {/* PO Type — visual toggle, full-row */}
+                <div className="lg:col-span-3">
                   <label className="block text-sm font-medium text-content-primary mb-2">
                     {t('procurement.po_type', { defaultValue: 'PO Type' })}
                   </label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {(['standard', 'blanket', 'service'] as const).map((typ) => (
                       <button
                         key={typ}
@@ -463,18 +480,6 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
                       </button>
                     ))}
                   </div>
-                </div>
-                {/* Delivery date */}
-                <div>
-                  <label className="block text-sm font-medium text-content-primary mb-1.5">
-                    {t('procurement.delivery_date', { defaultValue: 'Delivery Date' })}
-                  </label>
-                  <input
-                    type="date"
-                    value={poForm.delivery_date}
-                    onChange={(e) => setPoForm((f) => ({ ...f, delivery_date: e.target.value }))}
-                    className={inputCls}
-                  />
                 </div>
               </div>
             </div>

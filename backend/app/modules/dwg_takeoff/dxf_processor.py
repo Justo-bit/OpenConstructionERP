@@ -383,9 +383,15 @@ def calculate_entity_measurement(entity_data: dict[str, Any]) -> float:
         return 2 * math.pi * radius
 
     elif entity_type == "ARC":
+        # Bugfix (C3): start_angle/end_angle are ALREADY in radians (see
+        # _extract_geometry above which writes math.radians(dxf.start_angle)).
+        # The previous code applied math.radians() a second time, so arc
+        # lengths came out off by (π/180)² ≈ 3.05e-4 — a 90° arc rendered
+        # as ~0 metres. Use the stored radians directly; defensive modulo
+        # 2π keeps sweep angles in [0, 2π) regardless of source orientation.
         radius = geometry.get("radius", 0)
-        start_angle = math.radians(geometry.get("start_angle", 0))
-        end_angle = math.radians(geometry.get("end_angle", 0))
+        start_angle = geometry.get("start_angle", 0)
+        end_angle = geometry.get("end_angle", 0)
         angle = end_angle - start_angle
         if angle < 0:
             angle += 2 * math.pi

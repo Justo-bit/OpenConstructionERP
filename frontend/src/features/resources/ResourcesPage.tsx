@@ -39,13 +39,17 @@ import {
   proposeAssignment,
   listSkills,
   listWindows,
+  listRequests,
   createResource,
   type Resource,
   type ResourceType,
+  type ResourceRequest,
+  type RequestStatus,
   type Assignment,
   type AssignmentStatus,
   type BoardConflict,
 } from './api';
+import { projectsApi } from '@/features/projects/api';
 
 type Tab = 'resources' | 'requests' | 'assignments';
 
@@ -396,22 +400,205 @@ function ResourceTable({
 }
 
 /* ─── Requests tab ─── */
+//
+// "Resource requests" are demand-side records — a foreman or project
+// manager raises a request like "I need 2 carpenters with formwork
+// experience next Tuesday-Friday". Dispatchers fulfil them by matching
+// an available resource (supply side) → assignment. They are scoped per
+// project, so this tab needs a project picker to render real data.
+//
+// Earlier the tab just showed a "select a project elsewhere" message,
+// which made the column feel broken. We now load the user's projects
+// directly and let the dispatcher pick one without leaving this page.
 
-function RequestsTab({ onSelectResource: _ }: { onSelectResource: (id: string) => void }) {
+function RequestsTab({
+  onSelectResource: _,
+}: {
+  onSelectResource: (id: string) => void;
+}) {
   const { t } = useTranslation();
-  // Requests are scoped per project; without a project picker we render an
-  // explanatory empty state. Callers can still propose ad-hoc assignments.
+  const [projectId, setProjectId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<RequestStatus | ''>('open');
+
+  const projectsQ = useQuery({
+    queryKey: ['resources', 'requests-projects'],
+    queryFn: () => projectsApi.list(),
+    staleTime: 60_000,
+  });
+
+  const requestsQ = useQuery({
+    queryKey: ['resources', 'requests', projectId, statusFilter],
+    queryFn: () =>
+      listRequests({
+        project_id: projectId,
+        status: statusFilter || undefined,
+        limit: 200,
+      }),
+    enabled: !!projectId,
+  });
+
   return (
-    <EmptyState
-      icon={<ClipboardList size={22} />}
-      title={t('resources.requests_empty_title', {
-        defaultValue: 'Resource requests are scoped per project',
-      })}
-      description={t('resources.requests_empty_desc', {
-        defaultValue:
-          'Open a project to see its open resource requests. From there, dispatchers can match a resource and fulfil the request.',
-      })}
-    />
+    <div className="space-y-4">
+      <Card padding="md">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[240px]">
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('resources.requests_project_label', {
+                defaultValue: 'Project',
+              })}
+            </label>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className={inputCls}
+              disabled={projectsQ.isLoading}
+            >
+              <option value="">
+                — {t('resources.requests_project_picker_placeholder', {
+                  defaultValue: 'Select a project to see its requests…',
+                })} —
+              </option>
+              {(projectsQ.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-[160px]">
+            <label className="block text-xs font-medium text-content-secondary mb-1">
+              {t('resources.requests_status_label', {
+                defaultValue: 'Status',
+              })}
+            </label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as RequestStatus | '')}
+              className={inputCls}
+            >
+              <option value="">{t('resources.status_all', { defaultValue: 'All' })}</option>
+              <option value="open">{t('resources.req_status_open', { defaultValue: 'Open' })}</option>
+              <option value="fulfilled">{t('resources.req_status_fulfilled', { defaultValue: 'Fulfilled' })}</option>
+              <option value="cancelled">{t('resources.req_status_cancelled', { defaultValue: 'Cancelled' })}</option>
+            </select>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-content-secondary leading-relaxed">
+          {t('resources.requests_explainer', {
+            defaultValue:
+              'Resource requests are "demand-side" records — foremen and PMs raise them when they need people or equipment on a specific date range. Dispatchers fulfil each request by matching one of your resources to it; that creates an assignment row in the Assignments tab.',
+          })}
+        </p>
+      </Card>
+
+      {!projectId ? (
+        <Card padding="md">
+          <EmptyState
+            icon={<ClipboardList size={22} />}
+            title={t('resources.requests_pick_project_title', {
+              defaultValue: 'Pick a project above to load its requests',
+            })}
+            description={t('resources.requests_pick_project_desc', {
+              defaultValue:
+                'Requests are project-scoped — choose a project to see the open queue and start fulfilling.',
+            })}
+          />
+        </Card>
+      ) : requestsQ.isLoading ? (
+        <Card padding="md">
+          <SkeletonTable rows={6} columns={5} />
+        </Card>
+      ) : (requestsQ.data ?? []).length === 0 ? (
+        <Card padding="md">
+          <EmptyState
+            icon={<ClipboardList size={22} />}
+            title={t('resources.requests_none_title', {
+              defaultValue: 'No requests match the current filter',
+            })}
+            description={t('resources.requests_none_desc', {
+              defaultValue:
+                'Try switching the status filter to "All" to see fulfilled or cancelled requests.',
+            })}
+          />
+        </Card>
+      ) : (
+        <Card padding="none">
+          <RequestsTable rows={requestsQ.data ?? []} />
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function RequestsTable({ rows }: { rows: ResourceRequest[] }) {
+  const { t } = useTranslation();
+  const REQUEST_STATUS_VARIANT: Record<
+    RequestStatus,
+    'neutral' | 'blue' | 'success' | 'warning' | 'error'
+  > = {
+    open: 'warning',
+    fulfilled: 'success',
+    cancelled: 'neutral',
+  };
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="bg-surface-secondary/50 border-b border-border-light">
+          <tr className="text-xs uppercase text-content-secondary">
+            <th className="text-left px-4 py-2 font-medium">
+              {t('resources.req_col_title', { defaultValue: 'Title' })}
+            </th>
+            <th className="text-left px-4 py-2 font-medium">
+              {t('resources.req_col_window', { defaultValue: 'Window' })}
+            </th>
+            <th className="text-left px-4 py-2 font-medium">
+              {t('resources.req_col_qty', { defaultValue: 'Qty' })}
+            </th>
+            <th className="text-left px-4 py-2 font-medium">
+              {t('resources.req_col_skills', { defaultValue: 'Skills' })}
+            </th>
+            <th className="text-left px-4 py-2 font-medium">
+              {t('common.status', { defaultValue: 'Status' })}
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-light">
+          {rows.map((r) => (
+            <tr key={r.id} className="hover:bg-surface-secondary/30">
+              <td className="px-4 py-2.5">
+                <div className="font-medium text-content-primary truncate max-w-xs">
+                  {r.title}
+                </div>
+                {r.description && (
+                  <div className="text-xs text-content-tertiary truncate max-w-xs">
+                    {r.description}
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-xs text-content-secondary tabular-nums whitespace-nowrap">
+                <DateDisplay value={r.start_at} />
+                {' → '}
+                <DateDisplay value={r.end_at} />
+              </td>
+              <td className="px-4 py-2.5 tabular-nums">{r.quantity}</td>
+              <td className="px-4 py-2.5">
+                <div className="flex flex-wrap gap-1 max-w-xs">
+                  {r.required_skills.slice(0, 4).map((s) => (
+                    <Badge key={s} variant="neutral">{s}</Badge>
+                  ))}
+                  {r.required_skills.length > 4 && (
+                    <span className="text-xs text-content-tertiary">
+                      +{r.required_skills.length - 4}
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="px-4 py-2.5">
+                <Badge variant={REQUEST_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1222,7 +1409,7 @@ function ModalShell({
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40" />
       <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
+        className="relative w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

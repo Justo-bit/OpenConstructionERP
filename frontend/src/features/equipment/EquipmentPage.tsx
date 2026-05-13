@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -13,6 +13,9 @@ import {
   ShieldCheck,
   AlertTriangle,
   MapPin,
+  Pencil,
+  Trash2,
+  Save,
 } from 'lucide-react';
 import {
   Button,
@@ -21,6 +24,7 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  ConfirmDialog,
 } from '@/shared/ui';
 import { MoneyDisplay } from '@/shared/ui/MoneyDisplay';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
@@ -29,6 +33,8 @@ import { getErrorMessage } from '@/shared/lib/api';
 import {
   listEquipment,
   createEquipment,
+  updateEquipment,
+  deleteEquipment,
   listTelemetry,
   listMaintenanceWorkOrders,
   listInspections,
@@ -39,6 +45,7 @@ import {
   type InspectionResult,
   type DamageSeverity,
   type Ownership,
+  type CreateEquipmentPayload,
 } from './api';
 
 type DrawerTab = 'utilization' | 'maintenance' | 'certifications' | 'damage';
@@ -239,7 +246,12 @@ export function EquipmentPage() {
         <DetailDrawer id={selectedId} onClose={() => setSelectedId(null)} />
       )}
 
-      {createOpen && <CreateModal onClose={() => setCreateOpen(false)} />}
+      {createOpen && (
+        <EquipmentFormModal
+          mode="create"
+          onClose={() => setCreateOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -335,7 +347,14 @@ function AssetTable({
 
 function DetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
   const [tab, setTab] = useState<DrawerTab>('utilization');
+  // Edit + delete UI state — both gated to the loaded equipment so the
+  // header buttons can't fire stale operations against a different id.
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const eqQ = useQuery({
     queryKey: ['equipment', 'detail', id],
@@ -345,6 +364,31 @@ function DetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
       ),
   });
   const eq = eqQ.data;
+
+  const handleDelete = async () => {
+    if (!eq) return;
+    setDeleting(true);
+    try {
+      await deleteEquipment(eq.id);
+      addToast({
+        type: 'success',
+        title: t('equipment.deleted', {
+          defaultValue: '{{name}} deleted',
+          name: eq.name,
+        }),
+      });
+      // Invalidate every cached query that referenced this asset so the
+      // list page, the dashboard and any open child drawers (telemetry,
+      // work orders, inspections, damage) drop their stale rows.
+      qc.invalidateQueries({ queryKey: ['equipment'] });
+      setDeleteOpen(false);
+      onClose();
+    } catch (err) {
+      addToast({ type: 'error', title: getErrorMessage(err) });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const telemetryQ = useQuery({
     queryKey: ['equipment', 'telemetry', id],
@@ -377,23 +421,56 @@ function DetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         className="relative h-full w-full max-w-2xl overflow-y-auto bg-surface-elevated shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-light bg-surface-elevated px-5 py-3">
-          <div>
-            <h2 className="text-base font-semibold">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-light bg-surface-elevated px-5 py-3 gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold truncate">
               {eq ? `${eq.code} · ${eq.name}` : t('common.loading', { defaultValue: 'Loading…' })}
             </h2>
             {eq?.serial && (
               <p className="text-xs text-content-tertiary">SN: {eq.serial}</p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
-            aria-label={t('common.close', { defaultValue: 'Close' })}
-          >
-            <X size={16} />
-          </button>
+          {/* Action toolbar — Edit + Delete + Close. Disabled while the
+              equipment is still loading so the buttons cannot fire
+              against an undefined id. Each control is its own
+              accessible button with aria-label rather than a tooltip-
+              only icon, so screen-reader users get the same affordance. */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setEditOpen(true)}
+              disabled={!eq}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border-light bg-surface-primary px-2.5 py-1.5 text-xs font-medium text-content-secondary hover:text-oe-blue hover:border-oe-blue hover:bg-oe-blue-subtle transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label={t('common.edit', { defaultValue: 'Edit' })}
+              title={t('equipment.edit_hint', {
+                defaultValue: 'Edit equipment details',
+              })}
+            >
+              <Pencil size={12} />
+              {t('common.edit', { defaultValue: 'Edit' })}
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              disabled={!eq}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border-light bg-surface-primary px-2.5 py-1.5 text-xs font-medium text-content-secondary hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label={t('common.delete', { defaultValue: 'Delete' })}
+              title={t('equipment.delete_hint', {
+                defaultValue: 'Permanently remove this asset',
+              })}
+            >
+              <Trash2 size={12} />
+              {t('common.delete', { defaultValue: 'Delete' })}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-1 rounded p-1 hover:bg-surface-secondary"
+              aria-label={t('common.close', { defaultValue: 'Close' })}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {eq && (
@@ -503,6 +580,42 @@ function DetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           </>
         )}
       </div>
+
+      {/* Edit modal — only mounts when the user clicks "Edit" AND the
+          equipment record has finished loading. The modal is portalled
+          to fixed positioning so it escapes the drawer's overflow-y. */}
+      {editOpen && eq && (
+        <EquipmentFormModal
+          mode="edit"
+          existing={eq}
+          onClose={() => setEditOpen(false)}
+        />
+      )}
+      {/* Delete confirmation — destructive action, intentionally requires
+          a second click. The danger-variant ConfirmDialog already
+          handles focus trapping + Escape. */}
+      <ConfirmDialog
+        open={deleteOpen}
+        title={t('equipment.delete_title', {
+          defaultValue: 'Delete equipment?',
+        })}
+        message={
+          eq
+            ? t('equipment.delete_message', {
+                defaultValue:
+                  'Delete "{{name}}" ({{code}})? This removes all telemetry, work orders, inspections and damage reports linked to this asset. This action cannot be undone.',
+                name: eq.name,
+                code: eq.code,
+              })
+            : ''
+        }
+        confirmLabel={t('common.delete', { defaultValue: 'Delete' })}
+        cancelLabel={t('common.cancel', { defaultValue: 'Cancel' })}
+        variant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteOpen(false)}
+        loading={deleting}
+      />
     </div>
   );
 }
@@ -835,24 +948,145 @@ function KV({ label, value }: { label: React.ReactNode; value: React.ReactNode }
   );
 }
 
-/* ─── Create modal ─── */
+/* ─── Equipment form modal (create + edit) ────────────────────────────
+ *
+ * Single component used for both new-asset registration and editing an
+ * existing record. Centralising create + edit in one form keeps the
+ * field list, validation rules and UX in lock-step — when a senior
+ * reviewer adds a new property (warranty_expiry, GPS provider, …)
+ * they only touch one component.
+ *
+ * Mode semantics:
+ *   • mode="create" — POST /api/v1/equipment/equipment/. ``existing`` MUST be omitted.
+ *   • mode="edit"   — PATCH /api/v1/equipment/equipment/{id}. ``existing`` is required;
+ *                     fields are pre-filled from it and only changed
+ *                     fields end up in the PATCH body (avoids touching
+ *                     server-managed columns like depreciation_method
+ *                     when the user only edits the name).
+ *
+ * All numeric inputs accept blank strings to mean "no value"; converted
+ * to ``number | undefined`` on submit so the backend's Decimal columns
+ * receive nulls instead of zeros when the field is intentionally empty.
+ */
 
-function CreateModal({ onClose }: { onClose: () => void }) {
+interface EquipmentFormState {
+  code: string;
+  name: string;
+  type_code: string;
+  manufacturer: string;
+  model: string;
+  serial: string;
+  ownership: Ownership;
+  status: EquipmentStatus;
+  year: string;                   // text input — empty = unset
+  purchase_date: string;          // ISO yyyy-mm-dd, empty = unset
+  purchase_value: string;
+  currency: string;
+  useful_life_years: string;
+  residual_value: string;
+  hour_meter: string;
+  odometer_km: string;
+  location_lat: string;
+  location_lng: string;
+  notes: string;
+}
+
+function _toFormState(eq: Equipment | undefined): EquipmentFormState {
+  // Decimal/numeric columns come back as ``number | string`` from the
+  // backend (depending on JSON serialiser). Normalise to string so the
+  // <input> stays controlled and round-trips losslessly.
+  const numStr = (v: number | string | null | undefined): string =>
+    v === null || v === undefined || v === '' ? '' : String(v);
+  return {
+    code: eq?.code ?? '',
+    name: eq?.name ?? '',
+    type_code: eq?.type_code ?? 'other',
+    manufacturer: eq?.manufacturer ?? '',
+    model: eq?.model ?? '',
+    serial: eq?.serial ?? '',
+    ownership: (eq?.ownership ?? 'owned') as Ownership,
+    status: (eq?.status ?? 'active') as EquipmentStatus,
+    year: eq?.year ? String(eq.year) : '',
+    purchase_date: eq?.purchase_date ?? '',
+    purchase_value: numStr(eq?.purchase_value),
+    currency: eq?.currency ?? '',
+    useful_life_years: eq?.useful_life_years
+      ? String(eq.useful_life_years)
+      : '',
+    residual_value: numStr(eq?.residual_value),
+    hour_meter: numStr(eq?.hour_meter),
+    odometer_km: numStr(eq?.odometer_km),
+    location_lat: numStr(eq?.location_lat),
+    location_lng: numStr(eq?.location_lng),
+    notes: eq?.notes ?? '',
+  };
+}
+
+function _toPayload(
+  form: EquipmentFormState,
+): CreateEquipmentPayload {
+  // Empty-string → undefined so backend models leave server-managed
+  // defaults (e.g. depreciation_method, decimal columns) alone.
+  const toOptStr = (v: string): string | undefined =>
+    v.trim() === '' ? undefined : v.trim();
+  const toOptNum = (v: string): number | undefined => {
+    if (v.trim() === '') return undefined;
+    const n = Number(v.replace(',', '.'));
+    return Number.isFinite(n) ? n : undefined;
+  };
+  return {
+    code: form.code.trim(),
+    name: form.name.trim(),
+    type_code: form.type_code.trim() || 'other',
+    manufacturer: toOptStr(form.manufacturer),
+    model: toOptStr(form.model),
+    serial: toOptStr(form.serial),
+    year: toOptNum(form.year),
+    ownership: form.ownership,
+    status: form.status,
+    hour_meter: toOptNum(form.hour_meter),
+    odometer_km: toOptNum(form.odometer_km),
+    purchase_date: toOptStr(form.purchase_date),
+    purchase_value: toOptNum(form.purchase_value),
+    currency: toOptStr(form.currency),
+    notes: toOptStr(form.notes),
+  };
+}
+
+interface EquipmentFormModalProps {
+  mode: 'create' | 'edit';
+  existing?: Equipment;
+  onClose: () => void;
+}
+
+function EquipmentFormModal({
+  mode,
+  existing,
+  onClose,
+}: EquipmentFormModalProps) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const addToast = useToastStore((s) => s.addToast);
   const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState<EquipmentFormState>(() =>
+    _toFormState(existing),
+  );
 
-  const [form, setForm] = useState({
-    code: '',
-    name: '',
-    type_code: 'other',
-    manufacturer: '',
-    model: '',
-    serial: '',
-    ownership: 'owned' as Ownership,
-    status: 'active' as EquipmentStatus,
-  });
+  // Close on Escape — symmetric with the rest of the modal stack so
+  // keyboard users get a predictable dismissal.
+  // No focus trap here (the existing CreateModal didn't have one
+  // either) — handled separately when we add the design-system Modal.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handler, { capture: true });
+    return () =>
+      document.removeEventListener('keydown', handler, { capture: true });
+  }, [busy, onClose]);
 
   const submit = async () => {
     if (!form.code.trim() || !form.name.trim()) {
@@ -866,20 +1100,52 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     }
     setBusy(true);
     try {
-      await createEquipment({
-        code: form.code.trim(),
-        name: form.name.trim(),
-        type_code: form.type_code.trim() || 'other',
-        manufacturer: form.manufacturer.trim() || undefined,
-        model: form.model.trim() || undefined,
-        serial: form.serial.trim() || undefined,
-        ownership: form.ownership,
-        status: form.status,
-      });
-      addToast({
-        type: 'success',
-        title: t('equipment.created', { defaultValue: 'Equipment created' }),
-      });
+      const payload = _toPayload(form);
+      if (mode === 'edit' && existing) {
+        // Diff against the original so server-managed columns aren't
+        // touched when only the name was changed. This also keeps PATCH
+        // requests small and audit logs readable.
+        const originalPayload = _toPayload(_toFormState(existing));
+        const diff: Partial<CreateEquipmentPayload> = {};
+        // Index through ``unknown`` first to satisfy strict-mode TS —
+        // CreateEquipmentPayload doesn't carry an index signature, so
+        // we explicitly opt into property-bag semantics for the diff.
+        const originalRecord = originalPayload as unknown as Record<
+          string,
+          unknown
+        >;
+        const newRecord = payload as unknown as Record<string, unknown>;
+        const diffRecord = diff as unknown as Record<string, unknown>;
+        (Object.keys(payload) as (keyof CreateEquipmentPayload)[]).forEach(
+          (k) => {
+            if (originalRecord[k] !== newRecord[k]) {
+              diffRecord[k] = newRecord[k];
+            }
+          },
+        );
+        if (Object.keys(diff).length === 0) {
+          // Nothing changed — close without surprising the user with a
+          // toast that says "updated" when nothing actually changed.
+          onClose();
+          return;
+        }
+        await updateEquipment(existing.id, diff);
+        addToast({
+          type: 'success',
+          title: t('equipment.updated', {
+            defaultValue: '{{name}} updated',
+            name: form.name.trim(),
+          }),
+        });
+      } else {
+        await createEquipment(payload);
+        addToast({
+          type: 'success',
+          title: t('equipment.created', { defaultValue: 'Equipment created' }),
+        });
+      }
+      // Invalidate the whole equipment query family so every dashboard
+      // (list view + detail drawer + fleet kpis) re-fetches.
       qc.invalidateQueries({ queryKey: ['equipment'] });
       onClose();
     } catch (err) {
@@ -889,159 +1155,405 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const set = <K extends keyof EquipmentFormState>(
+    key: K,
+    value: EquipmentFormState[K],
+  ): void => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const isEdit = mode === 'edit';
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={onClose}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-3"
+      onClick={() => !busy && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="equipment-form-title"
     >
-      <div className="absolute inset-0 bg-black/40" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
       <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
+        className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">
-            {t('equipment.new', { defaultValue: 'New Asset' })}
+          <h2
+            id="equipment-form-title"
+            className="text-lg font-semibold text-content-primary"
+          >
+            {isEdit
+              ? t('equipment.edit_title', {
+                  defaultValue: 'Edit equipment',
+                })
+              : t('equipment.new', { defaultValue: 'New Asset' })}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
+            disabled={busy}
+            className="rounded p-1 hover:bg-surface-secondary disabled:opacity-50"
+            aria-label={t('common.close', { defaultValue: 'Close' })}
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('equipment.col_code', { defaultValue: 'Code' })} *
-              </label>
-              <input
-                value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value })}
-                className={inputCls}
-                placeholder="EXC-001"
-              />
+        <div className="space-y-4">
+          {/* ── Section: Identity ─────────────────────────────────── */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-2">
+              {t('equipment.section_identity', {
+                defaultValue: 'Identity',
+              })}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.col_code', { defaultValue: 'Code' })}{' '}
+                  <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={form.code}
+                  onChange={(e) => set('code', e.target.value)}
+                  className={inputCls}
+                  placeholder="EXC-001"
+                  // Code is the human-readable handle for the asset and
+                  // is also used in URLs / barcodes — disallow editing
+                  // on existing records to keep cross-references stable.
+                  disabled={isEdit}
+                  title={
+                    isEdit
+                      ? t('equipment.code_immutable_hint', {
+                          defaultValue:
+                            'Asset code is immutable after creation to keep barcodes / external references stable.',
+                        })
+                      : undefined
+                  }
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.col_type', { defaultValue: 'Type code' })}
+                </label>
+                <input
+                  value={form.type_code}
+                  onChange={(e) => set('type_code', e.target.value)}
+                  className={inputCls}
+                  placeholder="excavator, crane, generator…"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelCls}>
+                  {t('equipment.col_name', { defaultValue: 'Name' })}{' '}
+                  <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  value={form.name}
+                  onChange={(e) => set('name', e.target.value)}
+                  className={inputCls}
+                  placeholder={t('equipment.name_placeholder', {
+                    defaultValue: 'CAT 320 Excavator – Site A',
+                  })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.manufacturer', { defaultValue: 'Manufacturer' })}
+                </label>
+                <input
+                  value={form.manufacturer}
+                  onChange={(e) => set('manufacturer', e.target.value)}
+                  className={inputCls}
+                  placeholder="Caterpillar"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.model', { defaultValue: 'Model' })}
+                </label>
+                <input
+                  value={form.model}
+                  onChange={(e) => set('model', e.target.value)}
+                  className={inputCls}
+                  placeholder="320 GC"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.serial', { defaultValue: 'Serial number' })}
+                </label>
+                <input
+                  value={form.serial}
+                  onChange={(e) => set('serial', e.target.value)}
+                  className={inputCls}
+                  placeholder="VIN / serial / asset number"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.year', { defaultValue: 'Year of manufacture' })}
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1900}
+                  max={new Date().getFullYear() + 1}
+                  value={form.year}
+                  onChange={(e) => set('year', e.target.value)}
+                  className={inputCls}
+                  placeholder="2022"
+                />
+              </div>
             </div>
-            <div>
-              <label className={labelCls}>
-                {t('equipment.col_type', { defaultValue: 'Type code' })}
-              </label>
-              <input
-                value={form.type_code}
-                onChange={(e) => setForm({ ...form, type_code: e.target.value })}
-                className={inputCls}
-                placeholder="excavator"
-              />
+          </section>
+
+          {/* ── Section: Lifecycle ──────────────────────────────── */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-2">
+              {t('equipment.section_lifecycle', {
+                defaultValue: 'Lifecycle & status',
+              })}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.ownership', { defaultValue: 'Ownership' })}
+                </label>
+                <select
+                  value={form.ownership}
+                  onChange={(e) =>
+                    set('ownership', e.target.value as Ownership)
+                  }
+                  className={inputCls}
+                >
+                  {(['owned', 'rented', 'leased'] as Ownership[]).map((o) => (
+                    <option key={o} value={o}>
+                      {t(`equipment.ownership_${o}`, {
+                        defaultValue: o,
+                      })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.col_status', { defaultValue: 'Status' })}
+                </label>
+                <select
+                  value={form.status}
+                  onChange={(e) =>
+                    set('status', e.target.value as EquipmentStatus)
+                  }
+                  className={inputCls}
+                >
+                  {(
+                    [
+                      'active',
+                      'under_maintenance',
+                      'decommissioned',
+                      'reserved',
+                    ] as EquipmentStatus[]
+                  ).map((s) => (
+                    <option key={s} value={s}>
+                      {t(`equipment.status_${s}`, {
+                        defaultValue: s,
+                      })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.purchase_date', {
+                    defaultValue: 'Purchase / start date',
+                  })}
+                </label>
+                <input
+                  type="date"
+                  value={form.purchase_date}
+                  onChange={(e) => set('purchase_date', e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.useful_life_years', {
+                    defaultValue: 'Useful life (years)',
+                  })}
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={100}
+                  value={form.useful_life_years}
+                  onChange={(e) => set('useful_life_years', e.target.value)}
+                  className={inputCls}
+                  placeholder="10"
+                />
+              </div>
             </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('equipment.col_name', { defaultValue: 'Name' })} *
-            </label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className={inputCls}
+          </section>
+
+          {/* ── Section: Financial ─────────────────────────────── */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-2">
+              {t('equipment.section_financial', {
+                defaultValue: 'Financial',
+              })}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.purchase_value', {
+                    defaultValue: 'Purchase value',
+                  })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.purchase_value}
+                  onChange={(e) => set('purchase_value', e.target.value)}
+                  className={inputCls}
+                  placeholder="125000"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.residual_value', {
+                    defaultValue: 'Residual value',
+                  })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.residual_value}
+                  onChange={(e) => set('residual_value', e.target.value)}
+                  className={inputCls}
+                  placeholder="15000"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.currency', { defaultValue: 'Currency' })}
+                </label>
+                <input
+                  value={form.currency}
+                  onChange={(e) => set('currency', e.target.value.toUpperCase().slice(0, 3))}
+                  className={inputCls}
+                  placeholder="EUR"
+                  maxLength={3}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* ── Section: Telemetry & location ───────────────── */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-2">
+              {t('equipment.section_telemetry', {
+                defaultValue: 'Telemetry & location',
+              })}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.hour_meter', { defaultValue: 'Hour meter' })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.hour_meter}
+                  onChange={(e) => set('hour_meter', e.target.value)}
+                  className={inputCls}
+                  placeholder="1234"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.odometer_km', { defaultValue: 'Odometer (km)' })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.odometer_km}
+                  onChange={(e) => set('odometer_km', e.target.value)}
+                  className={inputCls}
+                  placeholder="42000"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.location_lat', {
+                    defaultValue: 'Location latitude',
+                  })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.location_lat}
+                  onChange={(e) => set('location_lat', e.target.value)}
+                  className={inputCls}
+                  placeholder="52.5200"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  {t('equipment.location_lng', {
+                    defaultValue: 'Location longitude',
+                  })}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={form.location_lng}
+                  onChange={(e) => set('location_lng', e.target.value)}
+                  className={inputCls}
+                  placeholder="13.4050"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* ── Section: Notes ───────────────────────────────── */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-2">
+              {t('equipment.section_notes', { defaultValue: 'Notes' })}
+            </h3>
+            <textarea
+              value={form.notes}
+              onChange={(e) => set('notes', e.target.value)}
+              className={clsx(inputCls, 'min-h-[80px] py-2 leading-snug')}
+              placeholder={t('equipment.notes_placeholder', {
+                defaultValue:
+                  'Operator notes, warranty contact, attachments, certificate IDs…',
+              })}
+              maxLength={2000}
+              rows={3}
             />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('equipment.manufacturer', { defaultValue: 'Manufacturer' })}
-              </label>
-              <input
-                value={form.manufacturer}
-                onChange={(e) =>
-                  setForm({ ...form, manufacturer: e.target.value })
-                }
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>
-                {t('equipment.model', { defaultValue: 'Model' })}
-              </label>
-              <input
-                value={form.model}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-                className={inputCls}
-              />
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('equipment.serial', { defaultValue: 'Serial' })}
-            </label>
-            <input
-              value={form.serial}
-              onChange={(e) => setForm({ ...form, serial: e.target.value })}
-              className={inputCls}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('equipment.ownership', { defaultValue: 'Ownership' })}
-              </label>
-              <select
-                value={form.ownership}
-                onChange={(e) =>
-                  setForm({ ...form, ownership: e.target.value as Ownership })
-                }
-                className={inputCls}
-              >
-                {(['owned', 'rented', 'leased'] as Ownership[]).map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>
-                {t('equipment.col_status', { defaultValue: 'Status' })}
-              </label>
-              <select
-                value={form.status}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    status: e.target.value as EquipmentStatus,
-                  })
-                }
-                className={inputCls}
-              >
-                {(
-                  [
-                    'active',
-                    'under_maintenance',
-                    'decommissioned',
-                    'reserved',
-                  ] as EquipmentStatus[]
-                ).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          </section>
         </div>
 
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>
+        <div className="flex justify-end gap-2 mt-5 sticky bottom-0 pt-3 -mx-5 -mb-5 px-5 pb-3 bg-surface-elevated border-t border-border-light">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
             variant="primary"
             onClick={submit}
             loading={busy}
-            icon={busy ? <Loader2 size={14} /> : <Plus size={14} />}
+            icon={
+              busy ? (
+                <Loader2 size={14} />
+              ) : isEdit ? (
+                <Save size={14} />
+              ) : (
+                <Plus size={14} />
+              )
+            }
           >
-            {t('common.create', { defaultValue: 'Create' })}
+            {isEdit
+              ? t('common.save', { defaultValue: 'Save changes' })
+              : t('common.create', { defaultValue: 'Create' })}
           </Button>
         </div>
       </div>

@@ -80,6 +80,46 @@ def _get_service(session: SessionDep) -> HSEAdvancedService:
 # ── Investigations ─────────────────────────────────────────────────────────
 
 
+@router.get("/investigations/", response_model=list[InvestigationResponse])
+async def list_investigations(
+    session: SessionDep,
+    user_id: CurrentUserId,
+    project_id: uuid.UUID | None = Query(default=None),
+    incident_ref: uuid.UUID | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    status_filter: str | None = Query(default=None, alias="status"),
+    _perm: None = Depends(RequirePermission("hse_advanced.read")),
+    service: HSEAdvancedService = Depends(_get_service),
+) -> list[InvestigationResponse]:
+    """List investigations, optionally scoped to a project or incident.
+
+    The HSE Advanced dashboard surfaces a "project's investigations" view
+    even though investigations are keyed by ``incident_ref`` rather than
+    by ``project_id`` directly. We resolve this either through an
+    ``incident_ref`` filter (single incident drill-down) or through a
+    join on the safety module's incident table when ``project_id`` is
+    supplied (HSE dashboard view).
+    """
+    if project_id is not None:
+        await verify_project_access(project_id, user_id, session)
+        rows, _ = await service.investigation_repo.list_for_project(
+            project_id,
+            offset=offset,
+            limit=limit,
+            status=status_filter,
+        )
+    elif incident_ref is not None:
+        rows, _ = await service.investigation_repo.list_for_incident(
+            incident_ref, offset=offset, limit=limit,
+        )
+    else:
+        # No scope provided — return empty list rather than 422 so the
+        # dashboard renders cleanly when no project is active.
+        return []
+    return [InvestigationResponse.model_validate(r) for r in rows]
+
+
 @router.post(
     "/investigations/",
     response_model=InvestigationResponse,

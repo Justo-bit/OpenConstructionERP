@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -606,16 +607,45 @@ def _lancedb_search(
 
 _qdrant_instance: Any = None
 _qdrant_tried: bool = False
+_qdrant_last_attempt_ts: float = 0.0
+_QDRANT_RETRY_COOLDOWN_S: float = 5.0
+
+
+def reset_qdrant_client() -> None:
+    """Drop the cached client so the next ``_get_qdrant`` call reconnects.
+
+    Called by ``/api/v1/match_elements/qdrant/install`` after a successful
+    spawn — without this the rest of the backend keeps returning
+    ``"Qdrant not reachable"`` because the first boot-time probe latched
+    a ``None`` client. Cheap to call: no-op when nothing is cached.
+    """
+    global _qdrant_instance, _qdrant_tried, _qdrant_last_attempt_ts
+    _qdrant_instance = None
+    _qdrant_tried = False
+    _qdrant_last_attempt_ts = 0.0
 
 
 def _get_qdrant():
-    """Get Qdrant client (only used when VECTOR_BACKEND=qdrant)."""
-    global _qdrant_instance, _qdrant_tried
+    """Get Qdrant client (only used when VECTOR_BACKEND=qdrant).
+
+    First call attempts a connection and caches the result. On failure
+    we record the timestamp and rate-limit reconnect attempts to once
+    every ``_QDRANT_RETRY_COOLDOWN_S`` so a brief network blip doesn't
+    turn into a permanently-disabled vector backend for the lifetime
+    of the process. Explicit reconnect available via
+    ``reset_qdrant_client()`` (called by the install endpoint).
+    """
+    global _qdrant_instance, _qdrant_tried, _qdrant_last_attempt_ts
     if _qdrant_instance is not None:
         return _qdrant_instance
     if _qdrant_tried:
-        return None
+        # Self-healing: retry after the cooldown so a delayed Qdrant
+        # spawn (manual start, supervisor restart, brief container
+        # restart) recovers without a process restart.
+        if (time.monotonic() - _qdrant_last_attempt_ts) < _QDRANT_RETRY_COOLDOWN_S:
+            return None
     _qdrant_tried = True
+    _qdrant_last_attempt_ts = time.monotonic()
     try:
         from qdrant_client import QdrantClient
 

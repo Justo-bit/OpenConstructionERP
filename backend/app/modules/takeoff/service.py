@@ -2,6 +2,9 @@
 
 import io
 import logging
+import math
+import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,9 +14,353 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.takeoff.models import TakeoffDocument, TakeoffMeasurement
 from app.modules.takeoff.repository import MeasurementRepository, TakeoffRepository
-from app.modules.takeoff.schemas import TakeoffMeasurementCreate, TakeoffMeasurementUpdate
+from app.modules.takeoff.schemas import (
+    PointSchema,
+    TakeoffMeasurementCreate,
+    TakeoffMeasurementUpdate,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ── PDF stability gates (Indian-user ticket, v3.0.x) ────────────────────────
+
+
+def _is_encrypted_pdf(content: bytes) -> bool:
+    """Detect password-protected PDFs by sniffing the trailer block.
+
+    PDF encryption flags live in the trailer dictionary as
+    ``/Encrypt N N R``. We scan only the LAST 8 KB of the file (where
+    trailers live) to keep false positives from "/Encrypt" appearing
+    as a literal string inside content streams much earlier in the
+    file. Empty or sub-8KB files are treated as not encrypted (the
+    upstream gate already rejects them as zero-byte uploads).
+    """
+    if not content:
+        return False
+    tail = content[-8192:] if len(content) > 8192 else content
+    return bool(re.search(rb"/Encrypt\s+\d", tail))
+
+
+def _max_upload_bytes() -> int:
+    """Effective per-upload byte cap from ``OE_TAKEOFF_MAX_UPLOAD_MB``.
+
+    Returns 0 ("unlimited") when the env var is missing, empty,
+    unparseable, zero, or negative — matches the product policy
+    (v2.9.12) of NOT capping uploads by default. Operators on
+    constrained deployments can opt in via the env var.
+    """
+    raw = os.environ.get("OE_TAKEOFF_MAX_UPLOAD_MB", "").strip()
+    if not raw:
+        return 0
+    try:
+        mb = int(raw)
+    except (ValueError, TypeError):
+        return 0
+    if mb <= 0:
+        return 0
+    return mb * 1024 * 1024
+
+
+def _ocr_dpi() -> int:
+    """OCR rendering DPI for scanned PDFs. Defaults 200, clamped 72-600."""
+    raw = os.environ.get("OE_TAKEOFF_OCR_DPI", "").strip()
+    if not raw:
+        return 200
+    try:
+        dpi = int(raw)
+    except (ValueError, TypeError):
+        return 200
+    return max(72, min(600, dpi))
+
+
+def _ocr_langs() -> list[str]:
+    """Languages fed to PaddleOCR — defaults cover Indian + Arabic scripts.
+
+    English, Hindi (Devanagari), Tamil, Telugu, Arabic by default.
+    Operators on locale-specific deployments can override via
+    ``OE_TAKEOFF_OCR_LANGS=en,hi,zh``.
+    """
+    raw = os.environ.get("OE_TAKEOFF_OCR_LANGS", "").strip()
+    if not raw:
+        return ["en", "hi", "ta", "te", "ar"]
+    return [tok.strip() for tok in raw.split(",") if tok.strip()]
+
+
+def _parse_indian_number(value: Any) -> float:
+    """Parse Indian / US / EU / imperial number strings, never raises.
+
+    Handles:
+
+    * Indian lakh/crore grouping: ``1,00,000`` -> 100000
+    * US/UK thousand-grouping: ``1,500.50`` -> 1500.5
+    * German/EU thousands-dot + decimal-comma: ``1.500,50`` -> 1500.5
+    * Decimal-comma alone: ``12,5`` -> 12.5
+    * Trailing unit suffixes: ``1500mm`` -> 1500
+    * Imperial feet-inches: ``5'-6"`` -> 5.5
+    * Empty / None / pure-text -> 0.0
+
+    Returns 0.0 (never raises) so one bad cell does not kill the
+    whole row in ``extract_tables``.
+    """
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return 0.0
+
+    # Imperial feet-inches: 5'-6" -> 5.5
+    fi = re.match(r"^([\-+]?\d+)\s*'\s*-?\s*(\d+)\s*\"?$", text)
+    if fi:
+        feet = int(fi.group(1))
+        inches = int(fi.group(2))
+        sign = -1 if feet < 0 else 1
+        return sign * (abs(feet) + inches / 12.0)
+
+    # Strip trailing unit suffix to expose the numeric core. Units may
+    # carry digits themselves (m2, m3, ft2) so we allow that in the
+    # match group. The regex is intentionally permissive — anything
+    # after the first run of digits/separators is treated as a unit
+    # suffix and discarded for the purpose of *number* parsing.
+    m = re.match(r"^([\-+]?[\d.,]+)\s*([a-zA-Z²³.\d\s]*)$", text)
+    numeric_part = m.group(1).strip() if m else text
+
+    # EU style: thousands-dot + decimal-comma (1.500,50)
+    if re.fullmatch(r"[\-+]?\d{1,3}(\.\d{3})+,\d+", numeric_part):
+        return float(numeric_part.replace(".", "").replace(",", "."))
+
+    # Indian style: 1,23,45,678 — 2-digit groups give it away.
+    if re.fullmatch(r"[\-+]?\d{1,3}(,\d{2})+,\d{3}", numeric_part):
+        return float(numeric_part.replace(",", ""))
+
+    # US/UK style: thousands-comma + decimal-dot
+    if re.fullmatch(r"[\-+]?\d{1,3}(,\d{3})+(\.\d+)?", numeric_part):
+        return float(numeric_part.replace(",", ""))
+
+    # Decimal-comma alone (12,5)
+    if re.fullmatch(r"[\-+]?\d+,\d+", numeric_part):
+        return float(numeric_part.replace(",", "."))
+
+    # Plain int / float
+    try:
+        return float(numeric_part)
+    except ValueError:
+        pass
+
+    # Last-resort: pull the first digit run from the raw string.
+    fallback = re.search(r"[\-+]?\d+(\.\d+)?", text)
+    if fallback:
+        try:
+            return float(fallback.group(0))
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+# Unit alias map. Keys are case-folded, dot-stripped, whitespace-collapsed.
+_UNIT_ALIASES: dict[str, str] = {
+    # Length
+    "m": "m",
+    "rmt": "m",
+    "rm": "m",
+    "runningmetre": "m",
+    "runningmeter": "m",
+    "lm": "m",
+    "ml": "m",
+    "mm": "mm",
+    "cm": "cm",
+    # Area
+    "m2": "m2",
+    "sqm": "m2",
+    "sq m": "m2",
+    "squaremetre": "m2",
+    "squaremeter": "m2",
+    "sft": "sft",
+    "sqft": "sft",
+    "sq ft": "sft",
+    "squarefeet": "sft",
+    "squarefoot": "sft",
+    # Volume
+    "m3": "m3",
+    "cum": "m3",
+    "cu m": "m3",
+    "cubicmetre": "m3",
+    "cubicmeter": "m3",
+    "cft": "cft",
+    "cuft": "cft",
+    "cu ft": "cft",
+    "cubicfeet": "cft",
+    # Weight
+    "kg": "kg",
+    "g": "g",
+    "t": "t",
+    "mt": "t",
+    "tonne": "t",
+    "ton": "t",
+    # Count
+    "pcs": "pcs",
+    "pc": "pcs",
+    "nos": "pcs",
+    "no": "pcs",
+    "number": "pcs",
+    "qty": "pcs",
+    "ea": "pcs",
+    # Lump sum
+    "lsum": "lsum",
+    "ls": "lsum",
+    "lumpsum": "lsum",
+}
+
+
+def _normalize_unit(raw: Any) -> str:
+    """Map an arbitrary unit string to the canonical BOQ form.
+
+    Returns ``"pcs"`` for empty / ``None`` input. Unknown units pass
+    through lowercased — rejecting a real-world unit would be worse
+    UX than letting the user edit post-import.
+    """
+    if raw is None:
+        return "pcs"
+    text = str(raw).strip()
+    if not text:
+        return "pcs"
+    key = re.sub(r"\s+", " ", text.lower().replace(".", "")).strip()
+    if key in _UNIT_ALIASES:
+        return _UNIT_ALIASES[key]
+    nospace = key.replace(" ", "")
+    if nospace in _UNIT_ALIASES:
+        return _UNIT_ALIASES[nospace]
+    return key
+
+
+# ── Audit B8: server-side measurement recompute ─────────────────────────────
+
+
+def _points_to_xy(points: list[Any]) -> list[tuple[float, float]]:
+    """Normalise a points list into ``[(x, y), ...]`` floats.
+
+    Accepts both Pydantic ``PointSchema`` and raw dicts (the bulk-create
+    path passes the former, restored DB rows pass the latter). Bad
+    entries are dropped silently — geometry just falls back to whatever
+    is salvageable rather than rejecting the whole measurement.
+    """
+    out: list[tuple[float, float]] = []
+    for p in points or []:
+        try:
+            if isinstance(p, PointSchema):
+                out.append((float(p.x), float(p.y)))
+            elif isinstance(p, dict):
+                out.append((float(p["x"]), float(p["y"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _shoelace_area(pts: list[tuple[float, float]]) -> float:
+    """Polygon area via the shoelace formula, in **pixel-squared** units.
+
+    The first point is treated as the polygon's start and the boundary
+    is closed back to it automatically (so the caller can pass either
+    open or closed vertex lists).
+    """
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+def _polyline_length(pts: list[tuple[float, float]]) -> float:
+    """Sum of euclidean distances between consecutive points, in pixels."""
+    n = len(pts)
+    if n < 2:
+        return 0.0
+    total = 0.0
+    for i in range(1, n):
+        dx = pts[i][0] - pts[i - 1][0]
+        dy = pts[i][1] - pts[i - 1][1]
+        total += math.hypot(dx, dy)
+    return total
+
+
+def recompute_measurement_value(
+    *,
+    measurement_type: str | None,
+    points: list[Any] | None,
+    scale_pixels_per_unit: float | None,
+    count_value: int | None,
+    client_value: float | None,
+) -> float | None:
+    """Recompute ``measurement_value`` server-side from raw geometry.
+
+    Audit B8 — was a cost-integrity hole. The client used to send both
+    the raw ``points`` array AND the derived ``measurement_value``, so
+    a malicious or buggy client could draw a tiny rectangle and claim
+    9999 m² (which then flowed straight into BOQ totals via link-to-BOQ).
+    We now derive ``measurement_value`` from (points × scale) on the
+    server. The client's ``client_value`` is only used as a fallback
+    for measurement types where we can't reconstruct geometry
+    (``count``, ``text``, ``arrow``, ``highlight``, ``cloud``,
+    ``rectangle``) or when ``scale_pixels_per_unit`` is missing.
+
+    Returns:
+        Server-derived value when computable, otherwise the
+        ``client_value`` echo so external annotation flows aren't
+        broken. ``None`` if nothing is recoverable.
+    """
+    mtype = (measurement_type or "").strip().lower()
+    xy = _points_to_xy(points or [])
+    scale = scale_pixels_per_unit or 0.0
+
+    # Count types ignore points; trust the explicit count_value field.
+    if mtype == "count":
+        if count_value is not None and count_value >= 0:
+            return float(count_value)
+        return client_value
+
+    # Annotation types don't carry a measurement value at all — but if
+    # the client sent one we preserve it (e.g. for "text" labels that
+    # carry a numeric tag for downstream reporting).
+    if mtype in {"cloud", "arrow", "text", "rectangle", "highlight"}:
+        return client_value
+
+    # Geometry-driven types require a scale and at least 2 points to be
+    # meaningfully recomputable.
+    if scale <= 0 or len(xy) < 2:
+        return client_value
+
+    if mtype == "distance":
+        # Linear measure: total polyline length. For two-point
+        # distance this collapses to a straight-line euclidean.
+        return _polyline_length(xy) / scale
+
+    if mtype == "polyline":
+        # Same math as distance — explicit alias so the client can
+        # signal intent ("walking path" vs "wall length").
+        return _polyline_length(xy) / scale
+
+    if mtype == "area":
+        # 2D polygon area. Scale is pixels per linear unit, so divide
+        # by scale² to convert pixel² to unit².
+        return _shoelace_area(xy) / (scale * scale)
+
+    if mtype == "volume":
+        # Volume on a takeoff page is always area × depth. We
+        # recompute the base area here and leave depth multiplication
+        # to the caller (it lives in a separate field).
+        return _shoelace_area(xy) / (scale * scale)
+
+    # Unknown type — preserve client value rather than nulling it out.
+    return client_value
 
 # Directory where uploaded PDF files are stored on disk
 _TAKEOFF_DOCUMENTS_DIR = Path.home() / ".openestimator" / "takeoff_documents"
@@ -154,18 +501,86 @@ class TakeoffService:
     ) -> TakeoffDocument:
         """Upload and process a PDF document for takeoff.
 
-        If PDF parsing fails on both pdfplumber and pymupdf the document
-        is still persisted (with 0 pages and empty text) and a
-        structured error line is emitted — the caller sees a generic
-        ``HTTPException(400)`` via the router layer, and the operator
-        sees the full stack + input fingerprint server-side.
+        Pre-parser gates (Indian-user ticket, v3.0.x):
+
+        1. 0-byte uploads → 400 (don't hand garbage to pdfplumber).
+        2. Optional ``OE_TAKEOFF_MAX_UPLOAD_MB`` cap → 413 with the
+           env-var name in the message so the user/operator can act.
+        3. Password-protected PDFs → 400 with a hint about Acrobat/qpdf.
+
+        Scanned PDFs (no embedded text layer) are persisted with
+        ``status="needs_ocr"`` instead of erroring — the user sees the
+        upload in the list and the operator gets a one-line log hint
+        telling them to install the ``[cv]`` extra to enable OCR.
+
+        If both pdfplumber and pymupdf fail the document is still
+        persisted (with 0 pages and empty text); the structured error
+        line + input fingerprint goes to the server log.
         """
+        # Gate 1: zero-byte upload.
+        if not content or size_bytes == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Uploaded file is empty. Please re-export the PDF "
+                    "and try again."
+                ),
+            )
+
+        # Gate 2: optional operator-configured size cap.
+        cap = _max_upload_bytes()
+        if cap > 0 and len(content) > cap:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=(
+                    f"PDF file is too large ({len(content) / 1024 / 1024:.1f} MB). "
+                    f"This deployment caps takeoff uploads at "
+                    f"{cap // 1024 // 1024} MB; raise the limit by setting "
+                    f"OE_TAKEOFF_MAX_UPLOAD_MB on the server."
+                ),
+            )
+
+        # Gate 3: password-protected PDFs. Catch BEFORE the parser
+        # because pdfplumber will spin for a long time on these and
+        # then return an opaque error.
+        if _is_encrypted_pdf(content):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "This PDF is password-protected. Remove the password "
+                    "first (Acrobat > File > Properties > Security > "
+                    "No Security, or `qpdf --decrypt input.pdf output.pdf`) "
+                    "and upload the unprotected file."
+                ),
+            )
+
         # Count pages (failure-safe: logs internally and returns 0)
         page_count = _count_pdf_pages(content, filename=filename)
 
         # Extract text from each page (failure-safe: logs internally)
         page_data = _extract_pdf_pages(content, filename=filename)
         full_text = "\n\n".join(p["text"] for p in page_data if p["text"])
+
+        # Scanned-PDF path: every page returns empty text. We persist
+        # the doc with ``needs_ocr`` so the user still sees it in the
+        # list and can either install [cv] (PaddleOCR) or share the
+        # source CAD with us. The OCR install hint is logged for the
+        # operator — not raised — because the upload should still
+        # succeed in this case.
+        is_scanned = bool(page_data) and not full_text.strip()
+        if is_scanned:
+            try:
+                import paddleocr  # noqa: F401
+                paddle_available = True
+            except Exception:
+                paddle_available = False
+            if not paddle_available:
+                logger.info(
+                    "takeoff.upload_document: scanned PDF with no text layer; "
+                    "install [cv] extra (paddleocr) to enable OCR fallback "
+                    "(filename=%r, pages=%d)",
+                    filename, page_count,
+                )
 
         if page_count == 0 and not page_data:
             # Both parsers failed — neither _count_pdf_pages nor
@@ -190,13 +605,18 @@ class TakeoffService:
         file_path = _TAKEOFF_DOCUMENTS_DIR / f"{doc_id}.pdf"
         file_path.write_bytes(content)
 
+        # Scanned PDFs without OCR get a distinct status so the UI
+        # can surface a "needs OCR" affordance instead of silently
+        # presenting an empty extracted-text panel.
+        doc_status = "needs_ocr" if is_scanned else "uploaded"
+
         doc = TakeoffDocument(
             id=doc_id,
             filename=filename,
             pages=page_count,
             size_bytes=size_bytes,
             content_type="application/pdf",
-            status="uploaded",
+            status=doc_status,
             owner_id=uuid.UUID(owner_id),
             project_id=uuid.UUID(project_id) if project_id else None,
             extracted_text=full_text,
@@ -240,14 +660,21 @@ class TakeoffService:
                     qty_str = row[1] if len(row) > 1 else "0"
                     unit = row[2] if len(row) > 2 else "pcs"
 
-                    try:
-                        qty = float(qty_str.replace(",", "."))
-                    except (ValueError, AttributeError):
+                    # Indian-locale number parsing (lakh / crore / decimal-comma
+                    # / feet-inches / mm/m suffixes). Falls back to 1.0 only when
+                    # the parser returns exactly 0 AND the input was non-empty —
+                    # otherwise an empty quantity column flips to "1 pcs" silently.
+                    qty = _parse_indian_number(qty_str)
+                    if qty == 0.0 and not str(qty_str).strip():
                         qty = 1.0
 
                     idx += 1
                     clean_desc = desc.strip()
-                    clean_unit = unit.strip() or "pcs"
+                    # Canonicalise the unit alias (Nos → pcs, RMt → m,
+                    # SqM → m2, MT → t, …) so downstream BOQ logic
+                    # sees one unit per concept regardless of how the
+                    # source PDF spelled it.
+                    clean_unit = _normalize_unit(unit) if unit else "pcs"
 
                     # Compute confidence based on data quality
                     has_real_qty = qty_str.strip() != "" and qty > 0
@@ -269,13 +696,33 @@ class TakeoffService:
                     else:
                         confidence = 0.6
 
+                    # Audit D4 — formula-injection defence.
+                    #
+                    # ``clean_desc`` and ``clean_unit`` come from PDF
+                    # table extraction (pdfplumber / pymupdf), which
+                    # faithfully preserves whatever the source document
+                    # contained. An attacker who supplied the PDF can
+                    # plant ``=cmd|'/c calc'!A1`` or HYPERLINK-style
+                    # payloads in those cells. Without this guard those
+                    # strings later flow into BOQ exports (Excel / CSV)
+                    # and execute when a downstream user opens the file.
+                    #
+                    # We neutralise at the extraction boundary — the
+                    # earliest point the data enters our system — so
+                    # every downstream consumer (BOQ, takeoff, AI
+                    # enrichment, AG-Grid editing) sees a safe string.
+                    # The leading apostrophe is rendered invisibly by
+                    # spreadsheet apps but blocks formula evaluation.
+                    from app.core.csv_safety import neutralise_formula  # noqa: PLC0415
                     elements.append(
                         {
                             "id": f"ext_{idx}",
                             "category": "general",
-                            "description": clean_desc or f"Item {idx}",
+                            "description": neutralise_formula(
+                                clean_desc or f"Item {idx}"
+                            ),
                             "quantity": qty,
-                            "unit": clean_unit,
+                            "unit": neutralise_formula(clean_unit),
                             "confidence": confidence,
                         }
                     )
@@ -314,7 +761,20 @@ class TakeoffService:
         *,
         created_by: str = "",
     ) -> TakeoffMeasurement:
-        """Create a single takeoff measurement."""
+        """Create a single takeoff measurement.
+
+        Audit B8 — server-side recompute of ``measurement_value`` from
+        the raw geometry. See ``recompute_measurement_value`` for the
+        threat model: prevents client-supplied measurement_value from
+        diverging from the actual drawn shape.
+        """
+        recomputed = recompute_measurement_value(
+            measurement_type=data.type,
+            points=data.points,
+            scale_pixels_per_unit=data.scale_pixels_per_unit,
+            count_value=data.count_value,
+            client_value=data.measurement_value,
+        )
         measurement = TakeoffMeasurement(
             project_id=data.project_id,
             document_id=data.document_id,
@@ -324,7 +784,7 @@ class TakeoffService:
             group_color=data.group_color,
             annotation=data.annotation,
             points=[p.model_dump() for p in data.points],
-            measurement_value=data.measurement_value,
+            measurement_value=recomputed,
             measurement_unit=data.measurement_unit,
             depth=data.depth,
             volume=data.volume,
@@ -337,10 +797,12 @@ class TakeoffService:
         )
         measurement = await self.measurement_repo.create(measurement)
         logger.info(
-            "Measurement created: %s type=%s project=%s",
+            "Measurement created: %s type=%s project=%s value=%s (client=%s)",
             measurement.id,
             data.type,
             data.project_id,
+            recomputed,
+            data.measurement_value,
         )
         return measurement
 
@@ -381,7 +843,15 @@ class TakeoffService:
         measurement_id: uuid.UUID,
         data: TakeoffMeasurementUpdate,
     ) -> TakeoffMeasurement:
-        """Update measurement fields."""
+        """Update measurement fields.
+
+        Audit B8 — recompute ``measurement_value`` whenever any input
+        that feeds into the calculation changes (points, scale, type,
+        count_value). We merge "current row state" with "patch fields"
+        before calling the recompute so partial updates work correctly
+        (e.g. caller bumps just ``scale_pixels_per_unit`` without
+        re-sending the whole points array).
+        """
         item = await self.get_measurement(measurement_id)
 
         fields = data.model_dump(exclude_unset=True)
@@ -389,6 +859,31 @@ class TakeoffService:
             fields["metadata_"] = fields.pop("metadata")
         if "points" in fields and fields["points"] is not None:
             fields["points"] = [p.model_dump() for p in data.points]  # type: ignore[union-attr]
+
+        # Recompute measurement_value if any geometry-relevant field
+        # is touched. We need the *effective post-update* state, so
+        # we merge patch over current.
+        recompute_triggers = {"points", "scale_pixels_per_unit", "type", "count_value", "measurement_value"}
+        if recompute_triggers & fields.keys():
+            effective_type = fields.get("type") if "type" in fields else item.type
+            effective_points = fields.get("points") if "points" in fields else (item.points or [])
+            effective_scale = (
+                fields.get("scale_pixels_per_unit")
+                if "scale_pixels_per_unit" in fields
+                else item.scale_pixels_per_unit
+            )
+            effective_count = (
+                fields.get("count_value") if "count_value" in fields else item.count_value
+            )
+            client_value = fields.get("measurement_value", item.measurement_value)
+            recomputed = recompute_measurement_value(
+                measurement_type=effective_type,
+                points=effective_points,
+                scale_pixels_per_unit=effective_scale,
+                count_value=effective_count,
+                client_value=client_value,
+            )
+            fields["measurement_value"] = recomputed
 
         if not fields:
             return item
@@ -411,7 +906,12 @@ class TakeoffService:
         *,
         created_by: str = "",
     ) -> list[TakeoffMeasurement]:
-        """Bulk create measurements (e.g. importing from localStorage)."""
+        """Bulk create measurements (e.g. importing from localStorage).
+
+        Audit B8 — recompute ``measurement_value`` for every row so
+        the localStorage→server import path can't be used to bypass
+        the per-row create guard.
+        """
         measurements = [
             TakeoffMeasurement(
                 project_id=data.project_id,
@@ -422,7 +922,13 @@ class TakeoffService:
                 group_color=data.group_color,
                 annotation=data.annotation,
                 points=[p.model_dump() for p in data.points],
-                measurement_value=data.measurement_value,
+                measurement_value=recompute_measurement_value(
+                    measurement_type=data.type,
+                    points=data.points,
+                    scale_pixels_per_unit=data.scale_pixels_per_unit,
+                    count_value=data.count_value,
+                    client_value=data.measurement_value,
+                ),
                 measurement_unit=data.measurement_unit,
                 depth=data.depth,
                 volume=data.volume,
@@ -436,7 +942,7 @@ class TakeoffService:
             for data in items
         ]
         result = await self.measurement_repo.create_bulk(measurements)
-        logger.info("Bulk created %d measurements", len(result))
+        logger.info("Bulk created %d measurements (server-side recomputed)", len(result))
         return result
 
     async def get_measurement_summary(self, project_id: uuid.UUID) -> dict[str, Any]:

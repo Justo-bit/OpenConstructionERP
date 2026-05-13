@@ -23,6 +23,9 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  WideModal,
+  WideModalSection,
+  WideModalField,
 } from '@/shared/ui';
 import { MoneyDisplay } from '@/shared/ui/MoneyDisplay';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
@@ -1414,98 +1417,19 @@ function CreatePackageModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">
-            {t('bid_management.new_package', { defaultValue: 'New Package' })}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
-            aria-label={t('common.close', { defaultValue: 'Close' })}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className={labelCls}>
-              {t('bid_management.code', { defaultValue: 'Code' })} *
-            </label>
-            <input
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-              className={inputCls}
-              placeholder="BP-001"
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('bid_management.title_col', { defaultValue: 'Title' })}
-            </label>
-            <input
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('bid_management.scope', { defaultValue: 'Scope description' })}
-            </label>
-            <textarea
-              value={form.scope_description}
-              onChange={(e) => setForm({ ...form, scope_description: e.target.value })}
-              rows={3}
-              className={clsx(inputCls, 'h-auto py-2')}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('bid_management.deadline', { defaultValue: 'Deadline' })}
-              </label>
-              <input
-                type="date"
-                value={form.submission_deadline}
-                onChange={(e) => setForm({ ...form, submission_deadline: e.target.value })}
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>
-                {t('common.currency', { defaultValue: 'Currency' })}
-              </label>
-              <input
-                value={form.currency}
-                onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                className={inputCls}
-                maxLength={3}
-              />
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('bid_management.budget', { defaultValue: 'Budget estimate' })}
-            </label>
-            <input
-              type="number"
-              value={form.total_budget_estimate}
-              onChange={(e) => setForm({ ...form, total_budget_estimate: e.target.value })}
-              className={inputCls}
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={t('bid_management.new_package', { defaultValue: 'New bid package' })}
+      subtitle={t('bid_management.new_package_subtitle', {
+        defaultValue:
+          'A bid package groups the scope you are putting out to tender. After you create it, add bidders and send invitations from the package detail view.',
+      })}
+      size="lg"
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
@@ -1516,8 +1440,89 @@ function CreatePackageModal({
           >
             {t('common.create', { defaultValue: 'Create' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <WideModalSection columns={2}>
+        <WideModalField
+          label={t('bid_management.code', { defaultValue: 'Code' })}
+          required
+          hint={t('bid_management.code_hint', {
+            defaultValue: 'Short identifier used in emails — e.g. BP-001.',
+          })}
+        >
+          <input
+            value={form.code}
+            onChange={(e) => setForm({ ...form, code: e.target.value })}
+            className={inputCls}
+            placeholder="BP-001"
+            autoFocus
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('bid_management.title_col', { defaultValue: 'Title' })}
+        >
+          <input
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            className={inputCls}
+            placeholder={t('bid_management.title_placeholder', {
+              defaultValue: 'Façade cladding works',
+            })}
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('bid_management.scope', { defaultValue: 'Scope description' })}
+          hint={t('bid_management.scope_hint', {
+            defaultValue: 'High-level summary sent to all invited bidders.',
+          })}
+          span={2}
+        >
+          <textarea
+            value={form.scope_description}
+            onChange={(e) => setForm({ ...form, scope_description: e.target.value })}
+            rows={4}
+            className={clsx(inputCls, 'h-auto py-2 resize-y')}
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('bid_management.deadline', { defaultValue: 'Submission deadline' })}
+        >
+          <input
+            type="date"
+            value={form.submission_deadline}
+            onChange={(e) => setForm({ ...form, submission_deadline: e.target.value })}
+            className={inputCls}
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('common.currency', { defaultValue: 'Currency' })}
+          hint={t('bid_management.currency_hint', { defaultValue: 'ISO-4217 3-letter code.' })}
+        >
+          <input
+            value={form.currency}
+            onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
+            className={inputCls}
+            maxLength={3}
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('bid_management.budget', { defaultValue: 'Budget estimate' })}
+          hint={t('bid_management.budget_hint', {
+            defaultValue: 'Internal anchor — not shared with bidders.',
+          })}
+          span={2}
+        >
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.total_budget_estimate}
+            onChange={(e) => setForm({ ...form, total_budget_estimate: e.target.value })}
+            className={inputCls}
+          />
+        </WideModalField>
+      </WideModalSection>
+    </WideModal>
   );
 }

@@ -1157,18 +1157,55 @@ async def lock_boq(
     """Lock a BOQ to prevent further edits.
 
     Sets is_locked=True, approved_by to the current user, approved_at to now.
+
+    Audit B7 / CC4 — was vulnerable to a TOCTOU race. The old flow was
+    READ → CHECK → UPDATE, which let two concurrent callers both pass
+    the "not locked" check and both write their (different) approval
+    metadata. We now use a single compare-and-swap UPDATE:
+
+        UPDATE boqs SET is_locked=true, approved_by=:u, approved_at=:t,
+                       status='final'
+        WHERE id=:boq_id AND is_locked=false
+
+    If rowcount == 0, either the BOQ doesn't exist or it was already
+    locked by another caller (race winner) — both are 409 Conflict so
+    the loser can distinguish the second case via the message and
+    just refresh.
     """
     from datetime import datetime
 
-    boq = await service.get_boq(boq_id)
+    from sqlalchemy import update as sa_update
+
+    from app.modules.boq.models import BOQ
+
+    # Existence check up-front: gives us a clean 404 (vs the ambiguous
+    # 409 you'd otherwise get from a race-loser-or-missing row).
+    await service.get_boq(boq_id)  # raises 404 if missing
+
     now_iso = datetime.now(UTC).isoformat()
-    await service.boq_repo.update_fields(
-        boq_id,
-        is_locked=True,
-        approved_by=user_id,
-        approved_at=now_iso,
-        status="final",
+    stmt = (
+        sa_update(BOQ)
+        .where(BOQ.id == boq_id)
+        .where(BOQ.is_locked == False)  # noqa: E712 — SQLAlchemy needs explicit ==
+        .values(
+            is_locked=True,
+            approved_by=user_id,
+            approved_at=now_iso,
+            status="final",
+        )
     )
+    result = await service.session.execute(stmt)
+    await service.session.flush()
+    service.session.expire_all()
+
+    if result.rowcount == 0:  # type: ignore[union-attr]
+        # Lost the race. Surface a 409 so the client can decide whether
+        # to refresh or surface an "already locked" message.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="BOQ is already locked.",
+        )
+
     boq = await service.get_boq(boq_id)
     return BOQResponse.model_validate(boq)
 
@@ -1189,7 +1226,15 @@ async def unlock_boq(
 
     Only admin or manager roles can unlock. Sets is_locked=False and
     status back to "draft". Returns a warning if revisions exist.
+
+    Audit B7 / CC4 — symmetrical CAS treatment with ``lock_boq``: the
+    UPDATE only fires when ``is_locked = true``, so double-unlock
+    races degrade cleanly into a 400 instead of double-recording
+    "draft" reverts in the activity log.
     """
+    from sqlalchemy import update as sa_update
+
+    from app.modules.boq.models import BOQ
 
     role = payload.get("role", "")
     if role not in ("admin", "manager"):
@@ -1198,18 +1243,28 @@ async def unlock_boq(
             detail="Only admin or manager can unlock a BOQ.",
         )
 
-    boq = await service.get_boq(boq_id)
-    if not boq.is_locked:
+    # Existence check first (separates 404 from race-loser).
+    await service.get_boq(boq_id)
+
+    stmt = (
+        sa_update(BOQ)
+        .where(BOQ.id == boq_id)
+        .where(BOQ.is_locked == True)  # noqa: E712
+        .values(
+            is_locked=False,
+            status="draft",
+        )
+    )
+    result = await service.session.execute(stmt)
+    await service.session.flush()
+    service.session.expire_all()
+
+    if result.rowcount == 0:  # type: ignore[union-attr]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="BOQ is not locked.",
         )
 
-    await service.boq_repo.update_fields(
-        boq_id,
-        is_locked=False,
-        status="draft",
-    )
     boq = await service.get_boq(boq_id)
     return BOQResponse.model_validate(boq)
 

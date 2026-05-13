@@ -52,6 +52,14 @@ export { BOQPicker } from './BOQPicker';
 export { ConfirmDialog } from './ConfirmDialog';
 export type { ConfirmDialogProps } from './ConfirmDialog';
 
+export { WideModal, WideModalSection, WideModalField } from './WideModal';
+export type {
+  WideModalProps,
+  WideModalSectionProps,
+  WideModalFieldProps,
+  WideModalSize,
+} from './WideModal';
+
 export { Breadcrumb } from './Breadcrumb';
 
 export { ProjectMap, buildGeocodeQuery } from './ProjectMap';

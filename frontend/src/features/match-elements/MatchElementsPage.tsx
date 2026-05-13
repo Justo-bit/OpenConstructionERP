@@ -75,6 +75,7 @@ import {
 import { EmbedderStatusCard } from './EmbedderStatusCard';
 import { MatchAnalyticsCard } from './MatchAnalyticsCard';
 import { CataloguesPanelCard } from './CataloguesPanelCard';
+import { QdrantHealthCard } from './QdrantHealthCard';
 import { unwrapCataloguesPayload } from './catalogues-payload';
 import { MatchWizard } from './MatchWizard';
 import { MatchProgressCard } from './MatchProgressCard';
@@ -1853,6 +1854,11 @@ export function MatchElementsPage() {
 
   return (
     <div className="p-3 lg:p-4 max-w-[1600px] mx-auto">
+      {/* Qdrant readiness — only renders when vector DB is unreachable.
+          One-click "Install Qdrant (no Docker)" + Refresh. Mounted above
+          the hero so a fresh install can't proceed past a broken vector
+          stack without seeing the fix. */}
+      <QdrantHealthCard />
       {/* Hero — single compact row. Eyebrow chip + title inline; subtitle
           dropped (the rest of the page makes the purpose obvious) and the
           oversized icon + decorative blur removed to claw back ~120px of

@@ -66,6 +66,57 @@ _STOREY_TYPES = {"IFCBUILDINGSTOREY", "IFCFACILITYPART", "IFCBRIDGEPART", "IFCRO
 _LINE_RE = re.compile(r"^#(\d+)\s*=\s*(\w+)\s*\((.*)\)\s*;", re.DOTALL)
 _STRING_RE = re.compile(r"'([^']*)'")
 
+# Placeholder used to escape doubled apostrophes (''-style ISO-10303 escape)
+# while parsing, then restored after _STRING_RE.findall. Without this an
+# entity such as IFCWALL('22…','#5','O''Brien Tower','…') would have its
+# GUID truncated to "O" because the first '' would terminate the second
+# string. See audit C1 — affects every RVT export where someone typed an
+# apostrophe in a name field. The placeholder is chosen so it can never
+# legally appear inside a STEP P21 string (no \x00 in STEP serialisation).
+_STEP_DOUBLE_QUOTE_PLACEHOLDER = "\x00DDC_STEP_DQ\x00"
+
+
+def _decode_step_string(s: str) -> str:
+    """Decode STEP-21 escape sequences inside a quoted string.
+
+    Handles:
+      * ``\\X\\NN``        → Latin-1 byte (one hex pair, ISO-10303-21)
+      * ``\\X2\\NNNN\\X0\\`` → UTF-16BE codepoint block
+      * ``\\S\\X``         → Latin-1 with high bit set (legacy)
+      * ``''``             → single apostrophe (replaces our placeholder)
+    Anything we cannot decode falls through unchanged. Non-ASCII text in
+    Tekla/Allplan/SOFiSTiK exports survives intact instead of being kept
+    as raw ``\\X2\\…`` escape sequences in BIMElement.name (audit C4).
+    """
+    if not s:
+        return s
+    # Restore doubled-apostrophes first so the rest of the decode sees
+    # them as the user intended (single ' inside the string body).
+    s = s.replace(_STEP_DOUBLE_QUOTE_PLACEHOLDER, "'")
+    if "\\" not in s:
+        return s
+    # \X2\…\X0\ — UTF-16BE block (greedy until terminator)
+    def _x2(match: "re.Match[str]") -> str:
+        hexstr = match.group(1)
+        try:
+            return bytes.fromhex(hexstr).decode("utf-16-be", errors="replace")
+        except ValueError:
+            return match.group(0)
+    s = re.sub(r"\\X2\\([0-9A-Fa-f]+)\\X0\\", _x2, s)
+    # \X\NN — Latin-1 (single byte)
+    def _x1(match: "re.Match[str]") -> str:
+        try:
+            return bytes.fromhex(match.group(1)).decode("latin-1", errors="replace")
+        except ValueError:
+            return match.group(0)
+    s = re.sub(r"\\X\\([0-9A-Fa-f]{2})", _x1, s)
+    # \S\X — Latin-1 high-bit (ASCII char + 0x80)
+    def _ss(match: "re.Match[str]") -> str:
+        ch = match.group(1)
+        return chr(ord(ch) | 0x80) if len(ch) == 1 else match.group(0)
+    s = re.sub(r"\\S\\(.)", _ss, s)
+    return s
+
 
 def _try_cad2data(ifc_path: Path, output_dir: Path, *, conversion_depth: str = "standard") -> dict[str, Any] | None:
     """‌⁠‍Try to convert CAD files using DDC converters.
@@ -998,11 +1049,36 @@ def process_ifc_file(
 
     logger.info("Processing IFC (text parser): %s (%d bytes)", ifc_path.name, len(content))
 
-    # Parse all entities
+    # Parse all entities.
+    #
+    # Bugfix (C5): split by ';' instead of '\n'. STEP-21 statements are
+    # terminated by ';', and exporters routinely write multi-line entities
+    # (large IFCRELAGGREGATES, IFCPOLYLOOP, IFCINDEXEDPOLYCURVE). Splitting
+    # by newline lost those entities silently — only single-line
+    # statements were ever parsed.
+    #
+    # Bugfix (C6): strip /* … */ comments before tokenising. Tekla/Allplan
+    # exports embed comments with #N-style references that would otherwise
+    # match _LINE_RE and produce false phantom entities.
+    #
+    # Bugfix (C1): replace '' (doubled apostrophe = escaped quote in
+    # STEP-21) with a placeholder before regex tokenisation so apostrophes
+    # inside string bodies do not terminate the match prematurely. The
+    # placeholder is restored to a single ' by _decode_step_string when
+    # individual fields are extracted.
+    #
+    # Get rid of inline /* */ blocks (multi-line safe).
+    content_clean = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+    # Escape doubled-apostrophes so they survive regex tokenisation.
+    content_clean = content_clean.replace("''", _STEP_DOUBLE_QUOTE_PLACEHOLDER)
     entities: dict[int, dict] = {}
-    for line in content.split("\n"):
-        line = line.strip()
-        m = _LINE_RE.match(line)
+    for raw in content_clean.split(";"):
+        line = raw.strip()
+        if not line.startswith("#"):
+            continue
+        # The closing ';' is now implicit (we split on it). Re-add for the
+        # _LINE_RE pattern below.
+        m = _LINE_RE.match(line + ";")
         if m:
             eid = int(m.group(1))
             etype = m.group(2).upper()
@@ -1011,10 +1087,39 @@ def process_ifc_file(
                 "id": eid,
                 "type": etype,
                 "args_raw": args_str,
-                "strings": _STRING_RE.findall(args_str),
+                "strings": [
+                    _decode_step_string(s) for s in _STRING_RE.findall(args_str)
+                ],
             }
 
     logger.info("Parsed %d IFC entities", len(entities))
+
+    # Audit C2 — IFC unit-assignment awareness.
+    #
+    # Policy (CLAUDE.md, ADR-002): we do NOT carry a full IFC parser in
+    # this codebase. All CAD → canonical conversion is routed through
+    # the DDC cad2data pipeline which already handles
+    # IFCUNITASSIGNMENT / IFCSIUNIT / IFCCONVERSIONBASEDUNIT correctly.
+    # This text-fallback exists only as a degraded last resort when the
+    # DDC binary is unavailable, and it deliberately stays minimal.
+    #
+    # That said: silently inheriting whatever raw numbers the IFC
+    # contains is dangerous — an IFC exported in millimetres looks
+    # identical to one in metres at the lexical level, but volumes
+    # come out 10⁹× larger. So when we run in fallback we PROBE the
+    # IFCUNITASSIGNMENT block: if it claims anything other than SI
+    # metres (LENGTHUNIT) the quantities are flagged with
+    # ``unit_uncertain=True`` so the UI / validation rules can refuse
+    # to roll them up into a BOQ.  We do not attempt to rescale —
+    # that's the job of cad2data — but we do refuse to lie about it.
+    unit_uncertain = _ifc_units_are_non_si_metres(entities)
+    if unit_uncertain:
+        logger.warning(
+            "IFC text-fallback: file declares non-SI metre length units "
+            "(or units are missing). Quantities will be marked "
+            "unit_uncertain=True. Install the DDC IFC converter for "
+            "accurate unit-aware extraction."
+        )
 
     # Extract storeys (IFC2x3 IfcBuildingStorey + IFC4x3 facility parts)
     storeys: dict[int, str] = {}
@@ -1071,6 +1176,12 @@ def process_ifc_file(
                 "discipline": discipline,
                 "properties": {"ifc_type": ifc_type, "ifc_id": eid},
                 "quantities": quantities,
+                # Audit C2 — propagate the unit-assignment probe result
+                # so downstream code (validation rules, BOQ aggregator,
+                # frontend viewer) can decide whether to trust these
+                # numbers. True when units are not canonical SI metres
+                # OR when no LENGTHUNIT row is declared at all.
+                "unit_uncertain": unit_uncertain,
                 "geometry_hash": geo_hash,
                 # Both bbox and mesh_ref are populated post-loop from the
                 # placeholder COLLADA we generate (node id = "n{index}").
@@ -1119,7 +1230,83 @@ def process_ifc_file(
         # into BIMModel.metadata_ so the frontend can show a "placeholder
         # geometry" banner without having to inspect every element.
         "geometry_quality": "placeholder",
+        # Audit C2 — surface the unit-assignment uncertainty at the
+        # model level so the bim_hub router can warn the user to
+        # install the DDC converter instead of trusting the fallback
+        # numbers. cad2data-converted models never set this flag.
+        "unit_uncertain": unit_uncertain,
     }
+
+
+def _ifc_units_are_non_si_metres(entities: dict[int, dict]) -> bool:
+    """Return True iff the IFC's length unit is anything other than SI metres.
+
+    The text-fallback parser does NOT rescale quantities by IFC units —
+    that responsibility lives in the DDC ``cad2data`` pipeline per
+    ADR-002. We use this probe purely to set the ``unit_uncertain``
+    flag on extracted elements so the UI can refuse to roll them up
+    into a BOQ.
+
+    Probe shape (IFC2x3 + IFC4 + IFC4x3 all use the same):
+
+        #N= IFCSIUNIT($,.LENGTHUNIT.,$,.METRE.);            ← SI metres → False
+        #N= IFCSIUNIT($,.LENGTHUNIT.,.MILLI.,.METRE.);      ← mm        → True
+        #N= IFCCONVERSIONBASEDUNIT(...,.LENGTHUNIT.,'INCH',...);  ← imp  → True
+
+    If no LENGTHUNIT row is found at all we conservatively return True:
+    a missing unit assignment is a known exporter bug (some Allplan
+    versions) and we'd rather refuse to trust the numbers than silently
+    treat them as metres.
+
+    We deliberately do not parse the IFCUNITASSIGNMENT entity that
+    points at these IFCSIUNIT rows — that lookup chain is fragile under
+    the regex parser (multi-line statements, comma-aware splitting) and
+    DDC handles it correctly anyway. Scanning every IFCSIUNIT /
+    IFCCONVERSIONBASEDUNIT row that mentions LENGTHUNIT catches every
+    practical case we've seen in the wild.
+    """
+    found_si_metre = False
+    found_other = False
+    for ent in entities.values():
+        if ent["type"] not in ("IFCSIUNIT", "IFCCONVERSIONBASEDUNIT"):
+            continue
+        args_raw = ent["args_raw"].upper()
+        if "LENGTHUNIT" not in args_raw:
+            continue
+        if ent["type"] == "IFCSIUNIT":
+            # IFCSIUNIT(Dimensions, UnitType, Prefix, Name).
+            # SI-metre = no prefix ($) + METRE.
+            #
+            # Splitting by ',' is approximate (we ignore parenthesised
+            # sub-arguments) but for IFCSIUNIT every positional arg is
+            # atomic so the simple split is safe.
+            parts = [p.strip() for p in args_raw.split(",")]
+            # Find the prefix arg — it's the one right before .METRE.
+            # The canonical SI-metre row is:
+            #   ($,.LENGTHUNIT.,$,.METRE.)
+            # Anything with a non-$ prefix (MILLI, CENTI, …) is NOT
+            # canonical SI-metre even though the name is still METRE.
+            is_metre = ".METRE." in args_raw
+            # Walk parts to find ".LENGTHUNIT." then take the next
+            # positional element as the prefix.
+            prefix: str | None = None
+            for i, p in enumerate(parts):
+                if ".LENGTHUNIT." in p and i + 1 < len(parts):
+                    prefix = parts[i + 1]
+                    break
+            if is_metre and prefix == "$":
+                found_si_metre = True
+            else:
+                found_other = True
+        else:
+            # IFCCONVERSIONBASEDUNIT is by definition non-SI (inch, ft, …).
+            found_other = True
+    if found_si_metre and not found_other:
+        return False
+    if found_other:
+        return True
+    # No length unit declared at all → conservative "uncertain".
+    return True
 
 
 def _extract_quantities_for_element(
@@ -1130,41 +1317,71 @@ def _extract_quantities_for_element(
     quantities: dict[str, float] = {}
 
     for ent in entities.values():
-        if ent["type"] == "IFCRELDEFINESBYPROPERTIES":
-            refs = re.findall(r"#(\d+)", ent["args_raw"])
-            if not refs:
+        if ent["type"] != "IFCRELDEFINESBYPROPERTIES":
+            continue
+        # Bugfix (C8): IFCRELDEFINESBYPROPERTIES has the shape
+        #   (GlobalId, OwnerHistory, Name, Description,
+        #    RelatedObjects=(#a,#b,…), RelatingPropertyDefinition=#z)
+        # The previous code took refs[:-1] which included OwnerHistory.
+        # On at least one major exporter the OwnerHistory id collided with
+        # element ids and we associated unrelated property sets to walls.
+        # Real RelatedObjects live INSIDE the SET literal — pull them
+        # explicitly. The relating definition is the very last #ref in the
+        # statement.
+        args_raw = ent["args_raw"]
+        # RelatedObjects parenthesised list — non-greedy match.
+        set_match = re.search(r"\(([^()]*)\)\s*,\s*#\d+\s*$", args_raw)
+        related_ids: list[int] = []
+        if set_match:
+            related_ids = [int(x) for x in re.findall(r"#(\d+)", set_match.group(1))]
+        if not related_ids:
+            # Some exporters write a single ref instead of a parenthesised
+            # list when there's only one related object. Fall through to
+            # the legacy refs[:-1] for that case but skip the first 2
+            # refs (OwnerHistory typically appears at position 0-1).
+            all_refs = re.findall(r"#(\d+)", args_raw)
+            related_ids = [int(x) for x in all_refs[2:-1]]
+        if element_id not in related_ids:
+            continue
+        # Last ref in the entire statement is the property definition.
+        all_refs = re.findall(r"#(\d+)", args_raw)
+        if not all_refs:
+            continue
+        pdef_id = int(all_refs[-1])
+        pdef = entities.get(pdef_id)
+        if not pdef or pdef["type"] != "IFCELEMENTQUANTITY":
+            continue
+        # IFCELEMENTQUANTITY args: (GlobalId, OwnerHistory, Name,
+        # Description, MethodOfMeasurement, Quantities=(#q1, #q2, …))
+        q_refs = re.findall(r"#(\d+)", pdef["args_raw"])
+        for qr in q_refs:
+            q_ent = entities.get(int(qr))
+            if not q_ent:
                 continue
-            # Check if this element is in the related objects
-            if str(element_id) not in [r for r in refs[:-1]]:
+            if q_ent["type"] not in (
+                "IFCQUANTITYLENGTH", "IFCQUANTITYAREA",
+                "IFCQUANTITYVOLUME", "IFCQUANTITYWEIGHT", "IFCQUANTITYCOUNT",
+            ):
                 continue
-            # Last ref is the property definition
-            pdef_id = int(refs[-1])
-            pdef = entities.get(pdef_id)
-            if not pdef:
-                continue
-            if pdef["type"] == "IFCELEMENTQUANTITY":
-                # Find quantity refs in the element quantity
-                q_refs = re.findall(r"#(\d+)", pdef["args_raw"])
-                for qr in q_refs:
-                    q_ent = entities.get(int(qr))
-                    if not q_ent:
-                        continue
-                    if q_ent["type"] in (
-                        "IFCQUANTITYLENGTH", "IFCQUANTITYAREA",
-                        "IFCQUANTITYVOLUME", "IFCQUANTITYWEIGHT", "IFCQUANTITYCOUNT",
-                    ):
-                        q_strings = q_ent["strings"]
-                        q_name = q_strings[0] if q_strings else "unknown"
-                        # Try to extract numeric value
-                        nums = re.findall(r"[\d.]+(?:E[+-]?\d+)?", q_ent["args_raw"])
-                        for n in nums:
-                            try:
-                                val = float(n)
-                                if val > 0:
-                                    quantities[q_name] = val
-                                    break
-                            except ValueError:
-                                continue
+            q_strings = q_ent["strings"]
+            q_name = q_strings[0] if q_strings else "unknown"
+            # Bugfix (C7): the old regex r"[\d.]+(?:E[+-]?\d+)?" also
+            # matched the digit portion of #N references — so
+            # IFCQUANTITYAREA('NetArea',$,$,#5,42.5) parsed as nums[0]="5"
+            # and we recorded NetArea=5 m² instead of 42.5. Strip all
+            # #N tokens first, then look for the trailing numeric literal.
+            args_no_refs = re.sub(r"#\d+", "", q_ent["args_raw"])
+            nums = re.findall(r"-?\d+\.?\d*(?:[Ee][+-]?\d+)?", args_no_refs)
+            # The measurement value is the LAST positional argument of an
+            # IFCQUANTITY* entity, so prefer the last numeric we found.
+            for n in reversed(nums):
+                try:
+                    val = float(n)
+                except ValueError:
+                    continue
+                if val > 0:
+                    quantities[q_name] = val
+                    break
 
     return quantities
 

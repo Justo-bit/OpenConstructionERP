@@ -126,6 +126,11 @@ class TestComputedFields:
             app_debug=False,
             database_url="sqlite+aiosqlite:///./test.db",
             database_sync_url="sqlite:///./test.db",
+            # The _refuse_default_jwt_in_non_dev model validator refuses
+            # to instantiate Settings in non-dev environments when the
+            # JWT secret is still the bundled dev default. Tests must
+            # supply a non-default secret to exercise production code.
+            jwt_secret="test-secret-not-the-bundled-default-32bytes",
         )
 
     def test_is_production_false_in_dev(self, dev_settings):

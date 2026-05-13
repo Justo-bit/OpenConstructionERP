@@ -669,6 +669,25 @@ async def download_report_file(
 
     if not os.path.exists(run.file_path):
         raise _not_found("Report file missing on disk")
+
+    # Path traversal guard. ``run.file_path`` is written by our own
+    # report-builder so it should already point inside the reports
+    # directory, but if a future bug or direct DB tamper plants
+    # ``/etc/passwd`` here we refuse rather than serve it. Also drops
+    # the file if it's a symlink — defence against a malicious local
+    # actor swapping the on-disk artefact between write and read.
+    from pathlib import Path as _Path
+
+    from app.modules.bi_dashboards.report_builder import _reports_dir
+    resolved = _Path(run.file_path).resolve()
+    base = _Path(_reports_dir()).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise _not_found("Report file not accessible") from exc
+    if resolved.is_symlink():
+        raise _not_found("Report file not accessible")
+
     media_type = {
         "pdf": "application/pdf",
         "xlsx": (
@@ -677,7 +696,7 @@ async def download_report_file(
         "csv": "text/csv",
     }.get(run.output_format, "application/octet-stream")
     return FileResponse(
-        run.file_path,
+        str(resolved),
         media_type=media_type,
         filename=os.path.basename(run.file_path),
     )
@@ -704,10 +723,26 @@ async def export_widget(
         raise _not_found("Widget not found")
     path, _size = out
     import os
+    from pathlib import Path as _Path
+
+    from app.modules.bi_dashboards.report_builder import _reports_dir
+
+    # Same containment check as ``download_report_file``: ``path`` is
+    # constructed by the widget exporter so it should sit inside the
+    # reports directory, but we refuse anything outside in case of
+    # a future bug or hostile DB row.
+    resolved = _Path(path).resolve()
+    base = _Path(_reports_dir()).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise _not_found("Widget export not accessible") from exc
+    if resolved.is_symlink():
+        raise _not_found("Widget export not accessible")
 
     media_type = "image/svg+xml" if format.lower() == "svg" else "text/csv"
     return FileResponse(
-        path,
+        str(resolved),
         media_type=media_type,
         filename=os.path.basename(path),
     )

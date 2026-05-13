@@ -3018,12 +3018,35 @@ async def bim_vector_reindex(
     or even one model at a time without re-embedding the entire
     tenant.  Set ``purge_first=true`` to wipe the matching subset
     before re-encoding — useful when the embedding model has changed.
+
+    Audit B2 — was a critical IDOR. Before this fix any user with the
+    ``bim.update`` permission could:
+      • pass any other tenant's ``project_id`` and re-embed their model
+      • pass any other tenant's ``model_id`` and with ``purge_first=true``
+        wipe their vector index, denying them search until they manually
+        re-reindex.
+    Now both filter parameters are validated through the project-
+    access helpers before any DB / Qdrant work happens. Tenant-wide
+    reindex (both parameters omitted) is left to admins — the
+    permission grant + the ``RequirePermission`` dependency already
+    gate that.
     """
     from sqlalchemy.orm import selectinload
 
     from app.core.vector_index import reindex_collection
     from app.modules.bim_hub.models import BIMElement, BIMModel
     from app.modules.bim_hub.vector_adapter import bim_element_vector_adapter
+
+    # Audit B2 — gate scoped reindex requests on project ownership.
+    if model_id is not None:
+        # Resolve model → project_id then verify ownership.
+        await _verify_model_access(
+            service=BIMHubService(session),
+            model_id=model_id,
+            user_id=_user_id,
+        )
+    elif project_id is not None:
+        await _verify_project_access(session, project_id, _user_id)
 
     stmt = select(BIMElement).options(selectinload(BIMElement.model))
     if model_id is not None:
@@ -3060,11 +3083,32 @@ async def bim_element_similar(
 
     Returns a list of :class:`VectorHit` dicts plus the original row
     id so the frontend can highlight the source.
+
+    Audit B3 — was a critical cross-tenant leak. Two issues:
+
+      1. The source element itself was loaded without verifying
+         project access. ``element_id`` is a UUID — guess-resistant
+         in practice but the previous code returned 404 only when
+         the id was missing; for a real foreign id the user got back
+         the element's full payload + similarity hits.
+
+      2. With ``cross_project=true`` we forwarded the flag to
+         ``find_similar`` which then dropped the project filter at
+         the Qdrant layer, returning hits from EVERY tenant.
+
+    Fix:
+      1. Verify project access on the source element's model.
+      2. Re-scope ``cross_project=true`` to "every project the user
+         actually has access to" by post-filtering hits through the
+         tenant-aware access helper. We collect the unique project
+         ids from the candidate hits and walk them through the
+         access helper, then drop any hits whose project the user
+         can't see.
     """
     from sqlalchemy.orm import selectinload
 
     from app.core.vector_index import find_similar
-    from app.modules.bim_hub.models import BIMElement
+    from app.modules.bim_hub.models import BIMElement, BIMModel
     from app.modules.bim_hub.vector_adapter import bim_element_vector_adapter
 
     stmt = (
@@ -3081,13 +3125,71 @@ async def bim_element_similar(
         if row.model is not None and row.model.project_id is not None
         else None
     )
+
+    # Audit B3 — gate the source element on project access. Foreign
+    # element ids now 404 the same way a missing one does.
+    if project_id is not None:
+        await _verify_project_access(
+            session, uuid.UUID(project_id), _user_id,
+        )
     hits = await find_similar(
         bim_element_vector_adapter,
         row,
         project_id=project_id,
         cross_project=cross_project,
-        limit=limit,
+        limit=limit if not cross_project else min(limit * 4, 80),
     )
+
+    if cross_project and hits:
+        # Audit B3 — post-filter hits the user has no access to.
+        # We collect the unique project_ids surfaced by the candidate
+        # hits and verify each against the access helper. The 4× over-
+        # fetch above (capped at 80) gives the helper enough room to
+        # still return ``limit`` hits after filtering.
+        hit_models: dict[uuid.UUID, uuid.UUID | None] = {}
+        for h in hits:
+            mid_raw = (h.payload or {}).get("model_id") if hasattr(h, "payload") else None
+            try:
+                hit_models[uuid.UUID(str(h.id))] = (
+                    uuid.UUID(str(mid_raw)) if mid_raw else None
+                )
+            except (ValueError, TypeError):
+                continue
+        # Bulk-load all referenced models in one go to avoid N+1
+        # queries against the projects table.
+        mids = {m for m in hit_models.values() if m is not None}
+        proj_by_model: dict[uuid.UUID, uuid.UUID] = {}
+        if mids:
+            mstmt = select(BIMModel.id, BIMModel.project_id).where(
+                BIMModel.id.in_(mids),
+            )
+            for mid, pid in (await session.execute(mstmt)).all():
+                if pid is not None:
+                    proj_by_model[mid] = pid
+        # Build a set of allowed project_ids by probing the access
+        # helper once per unique pid. _verify_project_access raises
+        # HTTPException(404) on denial — we catch and skip.
+        allowed: set[uuid.UUID] = set()
+        for pid in set(proj_by_model.values()):
+            try:
+                await _verify_project_access(session, pid, _user_id)
+                allowed.add(pid)
+            except HTTPException:
+                continue
+        filtered_hits = []
+        for h in hits:
+            try:
+                hid = uuid.UUID(str(h.id))
+            except (ValueError, TypeError):
+                continue
+            mid = hit_models.get(hid)
+            if mid is None:
+                continue
+            if proj_by_model.get(mid) in allowed:
+                filtered_hits.append(h)
+            if len(filtered_hits) >= limit:
+                break
+        hits = filtered_hits
     return {
         "source_id": str(element_id),
         "limit": limit,
@@ -3298,10 +3400,14 @@ async def get_dataframe_schema(
 
     Used by the frontend to build dynamic filter dropdowns for the full
     DDC property set (1000+ columns).
+
+    Audit B1 — was a sweeping IDOR: previously called
+    ``service.get_model(model_id)`` directly with NO project-access
+    check, so any authenticated user could enumerate another tenant's
+    BIM schemas. Now gated via ``_verify_model_access`` which both
+    loads the model AND raises 404 if the caller has no access.
     """
-    model = await service.get_model(model_id)
-    if not model:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found")
+    model = await _verify_model_access(service, model_id, _user)
 
     import asyncio
 
@@ -3333,10 +3439,13 @@ async def query_dataframe(
             ],
             "limit": 500
         }
+
+    Audit B1 — see ``get_dataframe_schema``. This endpoint is the
+    highest-impact of the three: ``query_parquet`` returns up to
+    50 000 rows of property data on a single call, so the cross-tenant
+    leak would have exfiltrated entire BIM property sets in one POST.
     """
-    model = await service.get_model(model_id)
-    if not model:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found")
+    model = await _verify_model_access(service, model_id, _user)
 
     import asyncio
 
@@ -3367,10 +3476,11 @@ async def get_column_values(
     """Return value counts for a column (for filter autocomplete).
 
     Returns ``[{"value": "F90", "count": 42}, ...]`` sorted by count desc.
+
+    Audit B1 — same IDOR class as the two endpoints above. Gated here
+    via ``_verify_model_access``.
     """
-    model = await service.get_model(model_id)
-    if not model:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Model not found")
+    model = await _verify_model_access(service, model_id, _user)
 
     import asyncio
 

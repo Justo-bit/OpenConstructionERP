@@ -38,6 +38,88 @@ from app.modules.dwg_takeoff.schemas import (
 logger = logging.getLogger(__name__)
 
 
+# ── DWG version sniff & gating (Indian-user stability ticket 2026-05-13) ────
+
+
+# AutoCAD R18 (2010) is the oldest format DDC's DwgExporter is
+# regression-tested against. Older versions sometimes work, sometimes
+# silently produce empty Excel — we'd rather refuse upfront with a
+# clear "upgrade to AutoCAD 2010+" message.
+_DWG_MIN_SUPPORTED_VERSION_CODE = "AC1024"
+
+# Human-readable labels for the DWG magic-byte version codes we care
+# about. The mapping comes from Open Design Alliance's specs.
+_DWG_VERSION_LABELS: dict[str, str] = {
+    "AC1014": "AutoCAD R14 (1997)",
+    "AC1015": "AutoCAD 2000 (R15)",
+    "AC1018": "AutoCAD 2004 (R16)",
+    "AC1021": "AutoCAD 2007 (R17)",
+    "AC1024": "AutoCAD 2010 (R18)",
+    "AC1027": "AutoCAD 2013 (R19)",
+    "AC1032": "AutoCAD 2018 (R22)",
+}
+
+
+def _sniff_dwg_version(path: str) -> tuple[str | None, str]:
+    """Read the 6-byte DWG magic prefix and return ``(code, label)``.
+
+    Returns ``(None, "")`` for anything that doesn't match the
+    ``AC\\d{4}`` pattern — that includes:
+
+    * Renamed PDFs (start with ``%PDF-``)
+    * Renamed ZIPs (start with ``PK\\x03\\x04``)
+    * Empty / truncated files
+    * Files whose first 6 bytes are non-ASCII or arbitrary text
+
+    Without this guard, the upstream DDC DwgExporter spends 90+ s
+    chewing on the garbage input and then returns a misleading "empty
+    output" error to the user. The Indian-user ticket (2026-05-13)
+    traced 4 of 5 reported failures to PDF/ZIP files renamed with a
+    ``.dwg`` extension by mistake.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(6)
+    except OSError:
+        return None, ""
+
+    if len(head) < 6:
+        return None, ""
+
+    # Must be ASCII first, then match the AC#### pattern.
+    try:
+        text = head.decode("ascii")
+    except UnicodeDecodeError:
+        return None, ""
+
+    if not (text.startswith("AC") and text[2:].isdigit()):
+        return None, ""
+
+    label = _DWG_VERSION_LABELS.get(text, f"DWG ({text})")
+    return text, label
+
+
+def _dwg_version_too_old(code: str | None) -> bool:
+    """Return True if a sniffed DWG version code predates R18 (2010).
+
+    ``None`` is the "couldn't sniff" sentinel — we say False (not too
+    old) so the caller's downstream "is this a real DWG at all?"
+    check fires first with the friendlier error message. Non-numeric
+    tails are also tolerated as forward-compat: a future AC#### we
+    don't recognise gets a chance instead of a blanket refusal.
+    """
+    if code is None:
+        return False
+    if not (code.startswith("AC") and code[2:].isdigit()):
+        return False
+    try:
+        version_num = int(code[2:])
+        floor_num = int(_DWG_MIN_SUPPORTED_VERSION_CODE[2:])
+    except ValueError:
+        return False
+    return version_num < floor_num
+
+
 def _normalize_entity(raw: dict[str, Any], index: int) -> dict[str, Any]:
     """‌⁠‍Flatten stored entity format to the shape the frontend DxfViewer expects.
 
@@ -334,7 +416,45 @@ class DwgTakeoffService:
             logger.exception("Failed to process drawing %s: %s", drawing_id, exc)
 
     async def _handle_dwg(self, drawing_id: uuid.UUID, file_path: str) -> None:
-        """Process DWG via DDC DwgExporter → Excel → parse entities."""
+        """Process DWG via DDC DwgExporter → Excel → parse entities.
+
+        Pre-conversion stability guards (Indian-user ticket 2026-05-13):
+
+        1. ``_sniff_dwg_version`` checks the 6-byte ``AC####`` magic
+           prefix. Renamed PDFs/ZIPs and truncated files are rejected
+           here with a clean 422 instead of being handed to the
+           converter (which spends 90+ s on them and then returns a
+           confusing "empty output" error).
+
+        2. ``_dwg_version_too_old`` rejects DWGs older than AutoCAD
+           2010 (R18). DDC's DwgExporter occasionally produces silent
+           empty output for R14/R15/R16/R17 files; the upgrade hint
+           is a much better UX than "no entities found".
+        """
+        version_code, version_label = _sniff_dwg_version(file_path)
+        if version_code is None:
+            await self.drawing_repo.update_fields(
+                drawing_id,
+                status="error",
+                error_message=(
+                    "This file does not look like a valid DWG. "
+                    "If you renamed a PDF or ZIP archive to .dwg, please "
+                    "upload the original CAD file instead."
+                ),
+            )
+            return
+        if _dwg_version_too_old(version_code):
+            await self.drawing_repo.update_fields(
+                drawing_id,
+                status="error",
+                error_message=(
+                    f"{version_label} is older than the supported DWG "
+                    f"format. Re-save the file as AutoCAD 2010 (R18) "
+                    f"or newer and upload again."
+                ),
+            )
+            return
+
         try:
             from app.modules.boq.cad_import import find_converter
 

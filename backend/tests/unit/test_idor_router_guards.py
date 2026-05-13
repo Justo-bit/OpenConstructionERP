@@ -43,7 +43,39 @@ ROUTER_HANDLERS: dict[str, list[str]] = {
     "meetings": ["get_meeting", "update_meeting", "delete_meeting"],
     "punchlist": ["get_item", "update_item", "delete_item"],
     "risk": ["get_risk", "update_risk", "delete_risk"],
-    "takeoff": ["delete_document"],
+    "takeoff": [
+        "delete_document",
+        # Audit B4 — takeoff measurement IDOR sweep
+        "list_measurements",
+        "get_measurement",
+        "update_measurement",
+        "delete_measurement",
+        "link_measurement_to_boq",
+        "measurement_summary",
+        "export_measurements",
+        "create_measurement",
+        "bulk_create_measurements",
+        # Audit B5 — takeoff document IDOR sweep
+        "upload_document",
+        "get_document",
+        "extract_tables",
+        "download_document",
+        "analyze_document",
+        # Audit B6 — CAD session IDOR sweep
+        "cad_data_elements",
+        "cad_data_aggregate",
+        "cad_data_save",
+        "cad_data_list_sessions",
+        "cad_data_delete_session",
+        "cad_group",
+        "get_group_elements",
+        "create_boq_from_cad_qto",
+        "export_cad_group",
+        "cad_data_describe",
+        "cad_data_missingness",
+        "cad_data_value_counts",
+        "save_session_to_project",
+    ],
     # v2.6.44 sweep
     "rfi": ["get_rfi", "update_rfi", "delete_rfi"],
     "submittals": ["get_submittal", "update_submittal", "delete_submittal"],
@@ -94,7 +126,36 @@ def _arg_names(fn: ast.AsyncFunctionDef) -> list[str]:
 _GUARD_WRAPPERS = frozenset({
     "verify_project_access",
     "_authorize_stamp_mutation",
+    # documents.router replaced raw verify_project_access with a strict
+    # superset that *also* checks folder ACLs (v2.9.42 refactor).
+    "_verify_project_membership_or_404",
+    # Audit B5 — takeoff document access helper (gates by owning project
+    # or owner-user for standalone uploads).
+    "_verify_takeoff_doc_access",
+    # Audit B6 — CAD extraction session access helper.
+    "_verify_cad_session_access",
 })
+
+
+# Handlers that don't use the canonical `session` arg name. Each entry
+# maps "module.handler" -> the actual session-parameter name. Most
+# routers use `session: SessionDep` but some (notably takeoff's CAD
+# subsystem) use `db_session` to disambiguate from CAD-session objects.
+_SESSION_ARG_OVERRIDES: dict[str, str] = {
+    "takeoff.cad_data_elements": "db_session",
+    "takeoff.cad_data_aggregate": "db_session",
+    "takeoff.cad_data_save": "db_session",
+    "takeoff.cad_data_list_sessions": "db_session",
+    "takeoff.cad_data_delete_session": "db_session",
+    "takeoff.cad_group": "db_session",
+    "takeoff.get_group_elements": "db_session",
+    "takeoff.create_boq_from_cad_qto": "db_session",
+    "takeoff.export_cad_group": "db_session",
+    "takeoff.cad_data_describe": "db_session",
+    "takeoff.cad_data_missingness": "db_session",
+    "takeoff.cad_data_value_counts": "db_session",
+    "takeoff.save_session_to_project": "db_session",
+}
 
 
 def _calls_verify_project_access(fn: ast.AsyncFunctionDef) -> bool:
@@ -132,14 +193,21 @@ def test_handler_calls_verify_project_access(module: str, handler: str) -> None:
 @pytest.mark.parametrize(("module", "handler"),
     [(m, h) for m, hs in ROUTER_HANDLERS.items() for h in hs])
 def test_handler_takes_session_dep(module: str, handler: str) -> None:
-    """Each handler must accept a `session` param so the IDOR helper can
-    do its DB lookup. Catches refactors that drop the param along with
-    the verify call.
+    """Each handler must accept a session-style param so the IDOR helper
+    can do its DB lookup. Catches refactors that drop the param along
+    with the verify call.
+
+    Most modules use ``session: SessionDep``; takeoff's CAD-data
+    endpoints rename it to ``db_session`` to disambiguate from the
+    CAD-extraction "session" concept — those are listed in
+    ``_SESSION_ARG_OVERRIDES``.
     """
     tree = _load_module_ast(module)
     fn = _find_handler(tree, handler)
     assert fn is not None
-    assert "session" in _arg_names(fn), (
-        f"{module}.router.{handler} no longer takes a `session` arg — "
+    args = _arg_names(fn)
+    expected = _SESSION_ARG_OVERRIDES.get(f"{module}.{handler}", "session")
+    assert expected in args, (
+        f"{module}.router.{handler} no longer takes a `{expected}` arg — "
         f"verify_project_access cannot run"
     )

@@ -21,7 +21,11 @@ import {
   EmptyState,
   Breadcrumb,
   SkeletonTable,
+  WideModal,
+  WideModalSection,
+  WideModalField,
 } from '@/shared/ui';
+import { projectsApi } from '@/features/projects/api';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
 import { getErrorMessage } from '@/shared/lib/api';
@@ -71,7 +75,7 @@ const ACTION_VARIANT: Record<string, 'neutral' | 'blue' | 'success' | 'warning' 
 const inputCls =
   'h-9 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm focus:outline-none focus:ring-2 focus:ring-oe-blue/30 focus:border-oe-blue';
 
-const labelCls = 'block text-xs font-medium text-content-secondary mb-1';
+// Legacy labelCls removed — modals migrated to <WideModalField>.
 
 /* ─── Page ─── */
 
@@ -917,111 +921,19 @@ function InviteModal({
   const canSubmit = form.email.trim().length > 3 && form.email.includes('@');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">
-            {t('portal.invite_user', { defaultValue: 'Invite User' })}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className={labelCls}>
-              {t('portal.email', { defaultValue: 'Email' })} *
-            </label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className={inputCls}
-              placeholder="customer@example.com"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('portal.full_name', { defaultValue: 'Full name' })}
-            </label>
-            <input
-              value={form.full_name}
-              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-              className={inputCls}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('portal.role', { defaultValue: 'Role' })} *
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {ROLES.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setForm({ ...form, portal_role: r })}
-                  className={clsx(
-                    'rounded-full border px-3 py-1 text-xs transition-colors',
-                    form.portal_role === r
-                      ? 'border-oe-blue bg-oe-blue text-content-inverse'
-                      : 'border-border bg-surface-primary text-content-secondary hover:border-oe-blue/50',
-                  )}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('portal.language', { defaultValue: 'Language' })}
-              </label>
-              <input
-                value={form.language}
-                onChange={(e) => setForm({ ...form, language: e.target.value })}
-                className={inputCls}
-                maxLength={10}
-                placeholder="en"
-              />
-            </div>
-            <div>
-              <label className={labelCls}>
-                {t('portal.timezone', { defaultValue: 'Timezone' })}
-              </label>
-              <input
-                value={form.timezone}
-                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
-                className={inputCls}
-                placeholder="UTC"
-              />
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('portal.redirect_path', { defaultValue: 'Redirect path (optional)' })}
-            </label>
-            <input
-              value={form.redirect_path}
-              onChange={(e) => setForm({ ...form, redirect_path: e.target.value })}
-              className={inputCls}
-              placeholder="/projects/abc/documents"
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={t('portal.invite_user', { defaultValue: 'Invite a portal user' })}
+      subtitle={t('portal.invite_subtitle', {
+        defaultValue:
+          'Send a magic-link invite to a client, investor, consultant or other external party. They will set up their own password on first login.',
+      })}
+      size="lg"
+      busy={inviteMut.isPending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={inviteMut.isPending}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
@@ -1033,9 +945,105 @@ function InviteModal({
           >
             {t('portal.send_invite', { defaultValue: 'Send invite' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <WideModalSection columns={2}>
+        <WideModalField
+          label={t('portal.email', { defaultValue: 'Email' })}
+          required
+        >
+          <input
+            type="email"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            className={inputCls}
+            placeholder="customer@example.com"
+            autoFocus
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('portal.full_name', { defaultValue: 'Full name' })}
+          hint={t('portal.full_name_hint', {
+            defaultValue: 'Optional — used in the email salutation.',
+          })}
+        >
+          <input
+            value={form.full_name}
+            onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+            className={inputCls}
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('portal.role', { defaultValue: 'Role' })}
+          required
+          hint={t('portal.role_hint', {
+            defaultValue: 'Drives default permissions & UI scope.',
+          })}
+          span={2}
+        >
+          <div className="flex flex-wrap gap-1.5">
+            {ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setForm({ ...form, portal_role: r })}
+                className={clsx(
+                  'rounded-full border px-3 py-1 text-xs transition-colors',
+                  form.portal_role === r
+                    ? 'border-oe-blue bg-oe-blue text-content-inverse'
+                    : 'border-border bg-surface-primary text-content-secondary hover:border-oe-blue/50',
+                )}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </WideModalField>
+        <WideModalField
+          label={t('portal.language', { defaultValue: 'Language' })}
+          hint={t('portal.language_hint', {
+            defaultValue: '2-letter ISO code (en, de, ru, …)',
+          })}
+        >
+          <input
+            value={form.language}
+            onChange={(e) => setForm({ ...form, language: e.target.value })}
+            className={inputCls}
+            maxLength={10}
+            placeholder="en"
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('portal.timezone', { defaultValue: 'Timezone' })}
+          hint={t('portal.timezone_hint', {
+            defaultValue: 'IANA TZ ID, e.g. "Europe/Berlin".',
+          })}
+        >
+          <input
+            value={form.timezone}
+            onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+            className={inputCls}
+            placeholder="UTC"
+          />
+        </WideModalField>
+        <WideModalField
+          label={t('portal.redirect_path', { defaultValue: 'Redirect path' })}
+          hint={t('portal.redirect_path_hint', {
+            defaultValue:
+              'Optional — page to open after the user signs in. Defaults to the portal dashboard.',
+          })}
+          span={2}
+        >
+          <input
+            value={form.redirect_path}
+            onChange={(e) => setForm({ ...form, redirect_path: e.target.value })}
+            className={inputCls}
+            placeholder="/projects/abc/documents"
+          />
+        </WideModalField>
+      </WideModalSection>
+    </WideModal>
   );
 }
 
@@ -1083,106 +1091,37 @@ function GrantAccessModal({
   const canSubmit =
     form.portal_user_id && form.resource_type && form.resource_id.length > 8;
 
+  // Load projects so we can show a friendly project picker when the
+  // resource type is "project". This addresses the user's complaint
+  // ("нужно давать понять к какому проекту даётся доступ"): instead of
+  // pasting a UUID, the inviter picks the project by name and we still
+  // submit the UUID to the backend.
+  const projectsQ = useQuery({
+    queryKey: ['portal-grant', 'projects'],
+    queryFn: () => projectsApi.list(),
+    // Only load projects when the active resource type actually uses
+    // project ids — saves a list call when granting access to e.g. an
+    // invoice.
+    enabled: form.resource_type === 'project',
+    staleTime: 60_000,
+  });
+
+  const selectedPortalUser = users.find((u) => u.id === form.portal_user_id);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-surface-elevated p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">
-            {t('portal.grant_access', { defaultValue: 'Grant Access' })}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 hover:bg-surface-secondary"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className={labelCls}>
-              {t('portal.user', { defaultValue: 'Portal user' })} *
-            </label>
-            <select
-              value={form.portal_user_id}
-              onChange={(e) => setForm({ ...form, portal_user_id: e.target.value })}
-              className={inputCls}
-            >
-              <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.email} ({u.portal_role})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>
-                {t('portal.resource_type', { defaultValue: 'Resource type' })} *
-              </label>
-              <select
-                value={form.resource_type}
-                onChange={(e) => setForm({ ...form, resource_type: e.target.value })}
-                className={inputCls}
-              >
-                <option value="project">project</option>
-                <option value="development">development</option>
-                <option value="document">document</option>
-                <option value="ticket">ticket</option>
-                <option value="invoice">invoice</option>
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>
-                {t('portal.permission', { defaultValue: 'Permission' })}
-              </label>
-              <select
-                value={form.permission}
-                onChange={(e) =>
-                  setForm({ ...form, permission: e.target.value as AccessPermission })
-                }
-                className={inputCls}
-              >
-                {PERMISSIONS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('portal.resource_id', { defaultValue: 'Resource ID (UUID)' })} *
-            </label>
-            <input
-              value={form.resource_id}
-              onChange={(e) => setForm({ ...form, resource_id: e.target.value })}
-              className={inputCls}
-              placeholder="00000000-0000-0000-0000-000000000000"
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              {t('portal.expires', { defaultValue: 'Expires (optional)' })}
-            </label>
-            <input
-              type="datetime-local"
-              value={form.expires_at}
-              onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
-              className={inputCls}
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>
+    <WideModal
+      open
+      onClose={onClose}
+      title={t('portal.grant_access', { defaultValue: 'Grant access' })}
+      subtitle={t('portal.grant_access_subtitle', {
+        defaultValue:
+          'Pick a portal user, choose what they should be able to see, and select the resource. We will create a row in the access-rules table and the user will see it on their next login.',
+      })}
+      size="lg"
+      busy={grantMut.isPending}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={grantMut.isPending}>
             {t('common.cancel', { defaultValue: 'Cancel' })}
           </Button>
           <Button
@@ -1192,10 +1131,146 @@ function GrantAccessModal({
             icon={<Plus size={14} />}
             onClick={() => grantMut.mutate()}
           >
-            {t('portal.grant', { defaultValue: 'Grant' })}
+            {t('portal.grant', { defaultValue: 'Grant access' })}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <WideModalSection
+        title={t('portal.grant_who_section', { defaultValue: 'Who' })}
+        columns={2}
+      >
+        <WideModalField
+          label={t('portal.user', { defaultValue: 'Portal user' })}
+          required
+          hint={selectedPortalUser
+            ? t('portal.grant_who_hint_selected', {
+                defaultValue: 'Role: {{role}} — {{status}}',
+                role: selectedPortalUser.portal_role,
+                status: selectedPortalUser.status,
+              })
+            : t('portal.grant_who_hint', {
+                defaultValue: 'External party that will receive the link.',
+              })}
+          span={2}
+        >
+          <select
+            value={form.portal_user_id}
+            onChange={(e) => setForm({ ...form, portal_user_id: e.target.value })}
+            className={inputCls}
+          >
+            <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.email} ({u.portal_role})
+              </option>
+            ))}
+          </select>
+        </WideModalField>
+      </WideModalSection>
+
+      <WideModalSection
+        title={t('portal.grant_what_section', { defaultValue: 'What' })}
+        description={t('portal.grant_what_desc', {
+          defaultValue:
+            'Each rule covers ONE resource. To grant access to multiple projects, create multiple rules.',
+        })}
+        columns={2}
+      >
+        <WideModalField
+          label={t('portal.resource_type', { defaultValue: 'Resource type' })}
+          required
+        >
+          <select
+            value={form.resource_type}
+            onChange={(e) =>
+              // Clear the resource id when switching types so we do not
+              // submit a stale project id under e.g. "invoice".
+              setForm({ ...form, resource_type: e.target.value, resource_id: '' })
+            }
+            className={inputCls}
+          >
+            <option value="project">{t('portal.rt_project', { defaultValue: 'Project' })}</option>
+            <option value="development">{t('portal.rt_development', { defaultValue: 'Development' })}</option>
+            <option value="document">{t('portal.rt_document', { defaultValue: 'Document' })}</option>
+            <option value="ticket">{t('portal.rt_ticket', { defaultValue: 'Service ticket' })}</option>
+            <option value="invoice">{t('portal.rt_invoice', { defaultValue: 'Invoice' })}</option>
+          </select>
+        </WideModalField>
+        <WideModalField
+          label={t('portal.permission', { defaultValue: 'Permission' })}
+          hint={t('portal.permission_hint', {
+            defaultValue:
+              'View — read only. Comment — read + add comments. Submit — upload responses. Sign — apply legal e-signature.',
+          })}
+        >
+          <select
+            value={form.permission}
+            onChange={(e) =>
+              setForm({ ...form, permission: e.target.value as AccessPermission })
+            }
+            className={inputCls}
+          >
+            {PERMISSIONS.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </WideModalField>
+        {form.resource_type === 'project' ? (
+          <WideModalField
+            label={t('portal.project', { defaultValue: 'Project' })}
+            required
+            hint={t('portal.project_hint', {
+              defaultValue: 'The portal user will only see the data inside this project.',
+            })}
+            span={2}
+          >
+            <select
+              value={form.resource_id}
+              onChange={(e) => setForm({ ...form, resource_id: e.target.value })}
+              className={inputCls}
+              disabled={projectsQ.isLoading}
+            >
+              <option value="">— {t('common.select', { defaultValue: 'Select' })} —</option>
+              {(projectsQ.data ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </WideModalField>
+        ) : (
+          <WideModalField
+            label={t('portal.resource_id', { defaultValue: 'Resource ID' })}
+            required
+            hint={t('portal.resource_id_hint', {
+              defaultValue: 'Open the resource in the app and copy the UUID from the URL.',
+            })}
+            span={2}
+          >
+            <input
+              value={form.resource_id}
+              onChange={(e) => setForm({ ...form, resource_id: e.target.value })}
+              className={inputCls}
+              placeholder="00000000-0000-0000-0000-000000000000"
+            />
+          </WideModalField>
+        )}
+        <WideModalField
+          label={t('portal.expires', { defaultValue: 'Expires' })}
+          hint={t('portal.expires_hint', {
+            defaultValue: 'Leave empty for an open-ended grant.',
+          })}
+          span={2}
+        >
+          <input
+            type="datetime-local"
+            value={form.expires_at}
+            onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
+            className={inputCls}
+          />
+        </WideModalField>
+      </WideModalSection>
+    </WideModal>
   );
 }

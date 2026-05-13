@@ -49,6 +49,52 @@ _CHUNK = 1 * 1024 * 1024  # 1 MiB
 _HEAD_BYTES = 64  # enough for every magic-byte check we run
 
 
+# ── Proportional subprocess timeout ─────────────────────────────────────────
+
+
+def proportional_timeout(
+    size_bytes: int,
+    *,
+    min_sec: float = 600.0,
+    sec_per_mb: float = 30.0,
+    max_sec: float | None = None,
+) -> float:
+    """Derive a subprocess wall-time from the size of the input file.
+
+    The old fixed 300 s ceiling we used for CAD/RVT/IFC conversion was a
+    silent ceiling on legitimate uploads — a 100 MB hospital RVT model
+    routinely needs 8-12 minutes of converter time, and the 5 min cap
+    just SIGTERMed it without explanation. We now scale the timeout
+    linearly with input size so big-but-real files succeed while a
+    runaway converter still gets killed eventually.
+
+    Args:
+        size_bytes: Size of the input file on disk.  Negative values are
+            clamped to 0 (defensive — callers occasionally pass
+            ``stat().st_size`` of a missing file as -1).
+        min_sec: Floor — used even for empty/tiny inputs, because
+            converter startup itself takes 60-180 s regardless of
+            input size. Default 600 s = 10 minutes.
+        sec_per_mb: Linear growth rate.  Default 30 s/MB matches the
+            slowest real-world DDC converter (Revit shelling out to the
+            Teigha format readers on cold-cache).
+        max_sec: Optional hard ceiling.  ``None`` (default) means
+            unbounded — relies on ``min_sec`` as the only floor and
+            the per-MB rate to scale up.
+
+    Returns:
+        Timeout in seconds as a float, suitable for
+        ``asyncio.wait_for`` or ``subprocess.run(..., timeout=...)``.
+    """
+    if size_bytes < 0:
+        size_bytes = 0
+    mb = size_bytes / (1024 * 1024)
+    scaled = max(min_sec, sec_per_mb * mb)
+    if max_sec is not None:
+        scaled = min(scaled, max_sec)
+    return float(scaled)
+
+
 @dataclass(frozen=True)
 class StreamedUpload:
     """The result of streaming a request body to disk."""
