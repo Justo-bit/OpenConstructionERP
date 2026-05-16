@@ -41,6 +41,8 @@ import {
   Layers,
   Boxes,
   Cuboid,
+  Link2,
+  Link2Off,
 } from 'lucide-react';
 
 import {
@@ -336,6 +338,17 @@ export interface BOQGridProps {
   onRepickResourceVariant?: (positionId: string, resourceIndex: number, variantCode: string) => void;
   onAddManualResource?: (positionId: string, resource: ManualResource) => void;
   onDuplicatePosition?: (positionId: string) => void;
+  /**
+   * Issue #127 — reuse an existing project code at a given placement.
+   * Prompts for the code and creates a linked instance (own ordinal + own
+   * editable quantity). `sectionId` scopes the placement when invoked from
+   * a section row.
+   */
+  onReuseCode?: (sectionId?: string) => void;
+  /** Issue #127 — open the linked-positions modal for a position. */
+  onShowLinks?: (positionId: string) => void;
+  /** Issue #127 — detach a position from its shared code (value-preserving). */
+  onUnlinkPosition?: (positionId: string) => void;
   /* AI features */
   onSuggestRate?: (positionId: string) => void;
   onClassify?: (positionId: string) => void;
@@ -400,6 +413,9 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
   onRepickResourceVariant,
   onAddManualResource,
   onDuplicatePosition,
+  onReuseCode,
+  onShowLinks,
+  onUnlinkPosition,
   onSuggestRate,
   onClassify,
   // onCheckAnomalies is consumed by BOQToolbar, not directly by the grid
@@ -1984,6 +2000,29 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
                   label={t('boq.duplicate_position', { defaultValue: 'Duplicate Position' })}
                   onClick={() => { onDuplicatePosition?.(d.id as string); closeContextMenu(); }}
                 />
+                {/* ── Issue #127: reuse / linked-positions ──────────── */}
+                {onReuseCode && (
+                  <CtxItem icon={<Link2 size={14}/>}
+                    label={t('boq.reuse_code_action', { defaultValue: 'Reuse Existing Code…' })}
+                    onClick={() => { onReuseCode(d.parent_id as string | undefined); closeContextMenu(); }}
+                  />
+                )}
+                {(d.link_role === 'master' || d.link_role === 'instance') && (
+                  <>
+                    {onShowLinks && (
+                      <CtxItem icon={<Link2 size={14}/>}
+                        label={t('boq.show_linked', { defaultValue: 'Show Linked Positions' })}
+                        onClick={() => { onShowLinks(d.id as string); closeContextMenu(); }}
+                      />
+                    )}
+                    {onUnlinkPosition && (
+                      <CtxItem icon={<Link2Off size={14}/>}
+                        label={t('boq.unlink_this', { defaultValue: 'Unlink this position‌⁠‍' })}
+                        onClick={() => { onUnlinkPosition(d.id as string); closeContextMenu(); }}
+                      />
+                    )}
+                  </>
+                )}
                 <CtxItem icon={<MessageSquare size={14}/>}
                   label={cmtCount > 0
                     ? t('boq.view_comments', { defaultValue: 'Comments ({{count}})', count: cmtCount })
@@ -2085,6 +2124,12 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
                   label={t('boq.add_position', { defaultValue: 'Add Position' })}
                   onClick={() => { onAddPosition(d.id as string); closeContextMenu(); }}
                 />
+                {onReuseCode && (
+                  <CtxItem icon={<Link2 size={14}/>}
+                    label={t('boq.reuse_code_action', { defaultValue: 'Reuse Existing Code…' })}
+                    onClick={() => { onReuseCode(d.id as string); closeContextMenu(); }}
+                  />
+                )}
                 <CtxItem icon={isCollapsed ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
                   label={isCollapsed ? t('boq.expand_section', { defaultValue: 'Expand Section' }) : t('boq.collapse_section', { defaultValue: 'Collapse Section' })}
                   onClick={() => { onToggleSection(d.id as string); closeContextMenu(); }}

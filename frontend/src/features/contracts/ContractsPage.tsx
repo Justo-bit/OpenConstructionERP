@@ -35,6 +35,7 @@ import {
 import { MoneyDisplay } from '@/shared/ui/MoneyDisplay';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
+import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { getErrorMessage } from '@/shared/lib/api';
 import { projectsApi, type Project } from '@/features/projects/api';
 import {
@@ -167,6 +168,7 @@ function ContractTypeChip({ type }: { type: ContractType }) {
 export function ContractsPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('contracts');
+  const activeProjectId = useProjectContextStore((s) => s.activeProjectId);
   const [projectId, setProjectId] = useState<string>('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<ContractType | ''>('');
@@ -181,11 +183,10 @@ export function ContractsPage() {
   });
 
   useEffect(() => {
-    if (!projectId && projectsQ.data?.length) {
-      const first = projectsQ.data[0];
-      if (first) setProjectId(first.id);
-    }
-  }, [projectsQ.data, projectId]);
+    if (projectId) return;
+    const seed = activeProjectId || projectsQ.data?.[0]?.id;
+    if (seed) setProjectId(seed);
+  }, [activeProjectId, projectsQ.data, projectId]);
 
   const contractsQ = useQuery({
     queryKey: ['contracts', 'list', projectId],

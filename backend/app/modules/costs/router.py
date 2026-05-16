@@ -1138,12 +1138,27 @@ async def qdrant_smoke_search(
             filters=filters,
             limit=limit,
         )
+    except (ImportError, ModuleNotFoundError) as exc:
+        # The optional [semantic] extra (qdrant_client / FlagEmbedding) is
+        # not installed. A lazy ``from qdrant_client...`` deep inside
+        # search() raised a bare ModuleNotFoundError — never echo the raw
+        # "No module named 'qdrant_client'" text to the client (NEW-B-105).
+        logger.info("CWICR Qdrant search unavailable (optional extra missing): %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Semantic search is not available on this deployment. "
+                "Install the optional extra: pip install openconstructionerp[semantic]"
+            ),
+        ) from exc
     except RuntimeError as exc:
         # Optional [semantic] extra missing or no Qdrant reachable.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("CWICR Qdrant smoke search failed")
-        raise HTTPException(status_code=500, detail=f"qdrant search failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail="qdrant search failed (see server logs)"
+        ) from exc
 
     rate_codes = [h.rate_code for h in hits]
     full_rows = await lookup_full_rows(country=country, rate_codes=rate_codes)
@@ -1994,11 +2009,23 @@ async def semantic_search(
     Finds cost items whose descriptions are semantically similar
     to the query, even if the exact words don't match.
     E.g. "concrete wall" finds "reinforced partition C30/37".
-    """
-    from app.core.vector import encode_texts, vector_search
 
-    query_vector = encode_texts([q])[0]
-    return vector_search(query_vector, region=region, limit=limit)
+    Degrades gracefully (NEW-B-105): when the optional ``[semantic]``
+    extra is not installed (no embedding model / no ``qdrant_client``)
+    the endpoint returns an empty result list with HTTP 200 instead of
+    leaking an ``ImportError`` / ``RuntimeError`` as a 500. The lexical
+    SQL search (``/costs/?q=``) remains the always-available path.
+    """
+    try:
+        from app.core.vector import encode_texts, vector_search
+
+        query_vector = encode_texts([q])[0]
+        return vector_search(query_vector, region=region, limit=limit)
+    except (ImportError, ModuleNotFoundError, RuntimeError) as exc:
+        # Optional semantic stack absent / no embedding model loaded.
+        # Never surface the raw import text to the client.
+        logger.info("Semantic search unavailable, returning empty result: %s", exc)
+        return []
 
 
 # ── Categories (distinct classification.collection values) ───────────────

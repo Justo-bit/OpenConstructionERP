@@ -8,6 +8,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.events import event_bus
@@ -518,7 +519,21 @@ class FinanceService:
             forecast_final=data.forecast_final,
             metadata_=data.metadata,
         )
-        budget = await self.budgets.create(budget)
+        try:
+            budget = await self.budgets.create(budget)
+        except IntegrityError as exc:
+            # ``oe_finance_budget`` has a UNIQUE constraint on
+            # (project_id, wbs_id, category). A duplicate budget line is a
+            # caller error, not a server fault — surface a clean 409 instead
+            # of letting the IntegrityError bubble as a raw 500.
+            await self.session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"A budget line for WBS '{data.wbs_id}' / category "
+                    f"'{data.category}' already exists for this project."
+                ),
+            ) from exc
         logger.info("Budget created: project=%s cat=%s", data.project_id, data.category)
         return budget
 

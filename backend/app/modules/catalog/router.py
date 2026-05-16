@@ -75,6 +75,36 @@ def _fmt_price(value: float) -> str:
     return "0" if out in ("-0", "-0.0") else out
 
 
+def _normalise_band(
+    base: float, lo: float, hi: float
+) -> tuple[float, float, float]:
+    """Enforce the price-band invariant ``min <= base <= max`` (CAT-001).
+
+    ``CatalogResourceCreate._check_price_band`` rejects an inverted /
+    out-of-band resource at create time, but the bulk ``adjust-prices``
+    and GitHub-import write paths bypassed that model validator, so an
+    inverted band could still be *persisted* (a pre-existing inversion
+    survives a uniform multiply; a CSV row may already be inverted).
+    Every downstream "is the rate within band?" check then becomes
+    meaningless.
+
+    A band is only meaningful when both ``lo`` and ``hi`` are > 0 (0 is
+    the documented "no band" sentinel, mirroring the create validator);
+    single-price resources are left untouched. We *normalise* rather
+    than reject so a bulk run / large import is not aborted by a few
+    dirty rows: swap an inverted ``lo``/``hi``, then clamp ``base`` into
+    ``[lo, hi]``. Returns the corrected ``(base, lo, hi)`` triple.
+    """
+    if lo > 0 and hi > 0:
+        if lo > hi:
+            lo, hi = hi, lo
+        if base < lo:
+            base = lo
+        elif base > hi:
+            base = hi
+    return base, lo, hi
+
+
 # ── Region-to-GitHub mapping ─────────────────────────────────────────────
 
 REGION_MAP: dict[str, str] = {
@@ -201,6 +231,14 @@ async def import_catalog_from_github(
                 specifications[key] = val
 
         try:
+            # CAT-001: normalise the price band on import — a CSV row may
+            # ship price_min > price_max (or an avg outside the band),
+            # and this write path bypasses the create-time validator.
+            _b, _lo, _hi = _normalise_band(
+                float(row.get("price_avg") or 0),
+                float(row.get("price_min") or 0),
+                float(row.get("price_max") or 0),
+            )
             resource = CatalogResource(
                 resource_code=resource_code,
                 name=(row.get("name") or resource_code).strip()[:500],
@@ -209,9 +247,9 @@ async def import_catalog_from_github(
                 unit=(row.get("unit") or "unit").strip()[:20],
                 # CAT-003: preserve source precision; do not truncate to
                 # 2dp on import (compounds with later adjust-prices passes).
-                base_price=_fmt_price(float(row.get("price_avg") or 0)),
-                min_price=_fmt_price(float(row.get("price_min") or 0)),
-                max_price=_fmt_price(float(row.get("price_max") or 0)),
+                base_price=_fmt_price(_b),
+                min_price=_fmt_price(_lo),
+                max_price=_fmt_price(_hi),
                 currency=(row.get("currency") or "").strip(),
                 usage_count=int(float(row.get("usage_count") or 0)),
                 source="github_import",
@@ -339,9 +377,21 @@ async def adjust_prices(
                 # so repeated factor passes drifted (and factor→1/factor
                 # never restored the original). ``_fmt_price`` trims only
                 # trailing-zero noise, not significant digits.
-                res.base_price = _fmt_price(float(res.base_price) * factor)
-                res.min_price = _fmt_price(float(res.min_price) * factor)
-                res.max_price = _fmt_price(float(res.max_price) * factor)
+                new_base = float(res.base_price) * factor
+                new_lo = float(res.min_price) * factor
+                new_hi = float(res.max_price) * factor
+                # CAT-001: a uniform positive multiply preserves order,
+                # so it cannot *create* an inversion — but a row that
+                # was ALREADY inverted (e.g. from an old import that
+                # predated the band validator) would survive every bulk
+                # run untouched. Normalise here so the invariant is
+                # restored on the next adjust-prices pass.
+                new_base, new_lo, new_hi = _normalise_band(
+                    new_base, new_lo, new_hi
+                )
+                res.base_price = _fmt_price(new_base)
+                res.min_price = _fmt_price(new_lo)
+                res.max_price = _fmt_price(new_hi)
                 adjusted_ids.append(str(res.id))
             except (ValueError, TypeError):
                 pass

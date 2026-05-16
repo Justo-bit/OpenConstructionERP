@@ -15,6 +15,16 @@ export interface BOQ {
   updated_at: string;
 }
 
+/**
+ * Linked-position role (Issue #127 — reuse the same code across a project).
+ *  - `master`   — the definition-of-record for a shared `reference_code`.
+ *  - `instance` — a linked copy that follows the master's definition
+ *                 (description/unit/unit_rate/classification/subtree) but
+ *                 keeps its OWN ordinal and OWN editable quantity.
+ *  - `null`     — a plain standalone position (not part of any link group).
+ */
+export type LinkRole = 'master' | 'instance' | null;
+
 export interface Position {
   id: string;
   boq_id: string;
@@ -32,9 +42,56 @@ export interface Position {
   validation_status: string;
   /** BIM element IDs linked to this position (cross-highlight source). */
   cad_element_ids?: string[];
+  /**
+   * Issue #127 — reusable code, distinct from `ordinal`. When two positions
+   * in the SAME project share a `reference_code` they form a link group: one
+   * `master` plus N `instance`s that inherit its definition.
+   */
+  reference_code?: string | null;
+  /** Role within the link group (see {@link LinkRole}). */
+  link_role?: LinkRole;
+  /** Stable id shared by every member of the link group. */
+  link_group_id?: string | null;
+  /** Number of linked instances — populated for masters on single-position
+   *  GET/PATCH/create/unlink responses (absent on the bulk BOQ fetch). */
+  linked_instance_count?: number | null;
   /** Backend returns `metadata_` (aliased) — normalize to `metadata` in fetch layer */
   metadata: Record<string, unknown>;
   metadata_?: Record<string, unknown>;
+}
+
+/**
+ * Stamped onto `metadata.link_propagation` by the backend AFTER a master
+ * definition edit (Issue #127). `propagated_to` counts the linked instances
+ * the change was fanned out to; `unlinked` is true when the edited row was an
+ * instance whose definition diverged → the backend auto-detached it.
+ */
+export interface LinkPropagationMeta {
+  propagated_to: number;
+  unlinked: boolean;
+}
+
+/** One member of a reference-code link group. */
+export interface PositionLinkMember {
+  id: string;
+  boq_id: string;
+  ordinal: string;
+  description: string;
+  quantity: number;
+  total: number;
+  link_role: LinkRole;
+  is_master: boolean;
+}
+
+/** Response of `GET /v1/boq/positions/{id}/links/`. */
+export interface PositionLinksResponse {
+  reference_code: string | null;
+  link_group_id: string | null;
+  linked: boolean;
+  master_id: string | null;
+  total_count: number;
+  instance_count: number;
+  members: PositionLinkMember[];
 }
 
 export interface BOQWithPositions extends BOQ {
@@ -94,6 +151,15 @@ export interface CreateBOQData {
   description?: string;
 }
 
+/**
+ * Issue #127 — how a create/update should resolve when its `reference_code`
+ * collides with an existing code in the project:
+ *  - `link`       — (default) attach as a linked instance of the master.
+ *  - `copy`       — one-time unlinked clone (snapshot, does not follow master).
+ *  - `standalone` — force a plain new position, bypass reuse entirely.
+ */
+export type LinkMode = 'link' | 'copy' | 'standalone';
+
 export interface CreatePositionData {
   boq_id: string;
   ordinal: string;
@@ -103,6 +169,11 @@ export interface CreatePositionData {
   unit_rate: number;
   classification?: Record<string, string>;
   parent_id?: string;
+  /** Issue #127 — reusable code. When it collides with an existing project
+   *  code AND `link_mode` != "standalone", the backend returns 201 with a
+   *  linked instance (own ordinal + own quantity) instead of a 409. */
+  reference_code?: string | null;
+  link_mode?: LinkMode | null;
 }
 
 export interface UpdatePositionData {
@@ -116,6 +187,9 @@ export interface UpdatePositionData {
   source?: string;
   metadata?: Record<string, unknown>;
   sort_order?: number;
+  /** Issue #127 — set/change the reusable code on an existing position. */
+  reference_code?: string | null;
+  link_mode?: LinkMode | null;
 }
 
 /* ── Normalize backend metadata_ → metadata ─────────────────────── */
@@ -856,6 +930,16 @@ export const boqApi = {
       { variant_code: variantCode },
     ),
   deletePosition: (posId: string) => apiDelete(`/v1/boq/positions/${posId}`),
+
+  /* ── Linked positions (Issue #127 — reuse the same code) ──────────── */
+  /** List every member of this position's reference-code link group. */
+  getPositionLinks: (posId: string) =>
+    apiGet<PositionLinksResponse>(`/v1/boq/positions/${posId}/links/`),
+  /** Value-preserving detach: keeps the code & current values, stops
+   *  following the master, may promote another instance to master.
+   *  Returns the updated PositionResponse. */
+  unlinkPosition: (posId: string) =>
+    apiPost<Position>(`/v1/boq/positions/${posId}/unlink/`, {}),
 
   /* Position reorder (drag-and-drop) */
   reorderPositions: (boqId: string, positionIds: string[]) =>

@@ -32,6 +32,7 @@ import {
 } from '@/shared/ui';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
+import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { getErrorMessage } from '@/shared/lib/api';
 import { projectsApi } from '@/features/projects/api';
 import {
@@ -154,6 +155,7 @@ function pctNumber(value: string | number | null | undefined): number {
 export function ScheduleAdvancedPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('master');
+  const activeProjectId = useProjectContextStore((s) => s.activeProjectId);
   const [projectId, setProjectId] = useState<string>('');
   const [masterId, setMasterId] = useState<string>('');
   const [lookAheadId, setLookAheadId] = useState<string>('');
@@ -169,13 +171,14 @@ export function ScheduleAdvancedPage() {
     queryFn: () => projectsApi.list(),
   });
 
-  // Auto-select first project once loaded
+  // Prefer the globally-selected active project; fall back to the first
+  // project only when no active project is set. Never override an explicit
+  // in-page selection.
   useEffect(() => {
-    if (!projectId && projectsQ.data && projectsQ.data.length > 0) {
-      const first = projectsQ.data[0];
-      if (first) setProjectId(first.id);
-    }
-  }, [projectId, projectsQ.data]);
+    if (projectId) return;
+    const seed = activeProjectId || projectsQ.data?.[0]?.id;
+    if (seed) setProjectId(seed);
+  }, [activeProjectId, projectsQ.data, projectId]);
 
   const masterQ = useQuery({
     queryKey: ['schedule-advanced', 'master', projectId],

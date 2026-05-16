@@ -102,18 +102,24 @@ def _compute_typed_total(
     rt = (resource_type or "").lower()
     try:
         if rt == "material":
-            waste = Decimal(str(metadata.get("waste_pct", 0) or 0))
-            if waste > 0:
-                return str(base * (Decimal("1") + waste / Decimal("100")))
+            waste = _safe_meta_multiplier(metadata.get("waste_pct"))
+            if waste is not None and waste > 0:
+                result = base * (Decimal("1") + waste / Decimal("100"))
+                if result.is_finite():
+                    return str(result)
         elif rt == "labor":
-            burden = Decimal(str(metadata.get("burden_pct", 0) or 0))
-            if burden > 0:
-                return str(base * (Decimal("1") + burden / Decimal("100")))
+            burden = _safe_meta_multiplier(metadata.get("burden_pct"))
+            if burden is not None and burden > 0:
+                result = base * (Decimal("1") + burden / Decimal("100"))
+                if result.is_finite():
+                    return str(result)
         elif rt == "equipment":
-            days = Decimal(str(metadata.get("rental_days", 0) or 0))
-            fuel = Decimal(str(metadata.get("fuel_cost", 0) or 0))
-            if days > 0 and fuel > 0:
-                return str(base + days * fuel)
+            days = _safe_meta_multiplier(metadata.get("rental_days"))
+            fuel = _safe_meta_multiplier(metadata.get("fuel_cost"))
+            if days is not None and fuel is not None and days > 0 and fuel > 0:
+                result = base + days * fuel
+                if result.is_finite():
+                    return str(result)
     except (InvalidOperation, ValueError):
         return base_str
 
@@ -128,6 +134,40 @@ def _str_to_float(value: str | None) -> float:
         return float(value)
     except (ValueError, TypeError):
         return 0.0
+
+
+# Upper bound for a metadata multiplier (waste_pct / burden_pct /
+# rental_days / fuel_cost). Mirrors ``schemas._NUM_MAX`` — far beyond
+# any real estimating value, yet keeps the typed-total product finite.
+_META_NUM_MAX = Decimal("1e12")
+
+
+def _safe_meta_multiplier(raw: object) -> Decimal | None:
+    """Coerce a FE-supplied metadata multiplier to a sane Decimal.
+
+    The typed-total formula (``_compute_typed_total``) reads free-form
+    ``metadata`` keys (waste_pct / burden_pct / rental_days /
+    fuel_cost). Those are NOT covered by the Pydantic ``ge/le/
+    allow_inf_nan`` bounds on factor/quantity/unit_cost, so a payload
+    like ``{"waste_pct": "Infinity"}`` or ``{"burden_pct": -50}`` would
+    otherwise flow straight into ``base * (1 + x/100)`` and persist a
+    non-finite / negative total (NEW-ASM-102).
+
+    Returns ``None`` for anything that is not a finite, non-negative,
+    in-range number — the caller then treats the multiplier as absent
+    (no-op), matching the existing "never punish the user with a
+    smaller total than the raw inputs imply" fall-through contract
+    rather than raising. Garbage never reaches the stored total.
+    """
+    if raw is None or isinstance(raw, (bool, dict, list)):
+        return None
+    try:
+        dec = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not dec.is_finite() or dec < 0 or dec > _META_NUM_MAX:
+        return None
+    return dec
 
 
 # Upper bound for an imported component numeric — mirrors
@@ -203,22 +243,44 @@ def _parse_import_decimal(raw: object, field: str, idx: int) -> Decimal:
 
 
 def _sum_component_totals(components: list[Component]) -> Decimal:
-    """Sum all component totals as Decimal."""
+    """Sum all component totals as Decimal.
+
+    ``Decimal("Infinity")`` / ``Decimal("NaN")`` parse WITHOUT raising,
+    so a single component carrying a non-finite stored ``total`` (e.g.
+    written by a legacy snapshot or an older code path) would otherwise
+    poison the whole subtotal and ultimately persist ``Infinity`` /
+    ``NaN`` into ``Assembly.total_rate`` (NEW-ASM-104). Skip any
+    non-finite component total instead of letting it propagate.
+    """
     total = Decimal("0")
     for comp in components:
         try:
-            total += Decimal(str(comp.total))
+            val = Decimal(str(comp.total))
         except (InvalidOperation, ValueError):
-            pass
+            continue
+        if not val.is_finite():
+            continue
+        total += val
     return total
 
 
 def _compute_assembly_total(components: list[Component], bid_factor: str) -> str:
-    """Compute assembly total_rate = sum(component totals) * bid_factor."""
+    """Compute assembly total_rate = sum(component totals) * bid_factor.
+
+    Hardened (NEW-ASM-104): a non-finite ``bid_factor`` string (or a
+    product that overflows to ``Infinity``) is rejected to "0" rather
+    than persisted, so ``Assembly.total_rate`` is always a finite
+    number the API can serialise.
+    """
     try:
         subtotal = _sum_component_totals(components)
         bf = Decimal(str(bid_factor))
-        return str(subtotal * bf)
+        if not bf.is_finite():
+            return "0"
+        result = subtotal * bf
+        if not result.is_finite():
+            return "0"
+        return str(result)
     except (InvalidOperation, ValueError):
         return "0"
 
@@ -935,7 +997,17 @@ class AssemblyService:
         )
 
         logger.info("Assembly cloned: %s → %s", source.code, new_code)
-        return cloned
+        # Re-fetch WITH components eagerly loaded. ``cloned`` came from
+        # ``create()`` (only ``refresh()``-ed its column attrs) so its
+        # ``components`` selectin relationship is unloaded; the router's
+        # ``_assembly_to_response`` reads ``assembly.components`` which
+        # would trigger a sync lazy-load outside the async greenlet
+        # (MissingGreenlet → HTTP 500 / component_count=0). The
+        # with-components query the GET endpoint uses materialises the
+        # collection inside the greenlet so the response carries the
+        # real component_count (NEW-ASM-103 / ASM-001).
+        reloaded = await self.assembly_repo.get_by_id_with_components(cloned.id)
+        return reloaded if reloaded is not None else cloned
 
     # ── Stats ─────────────────────────────────────────────────────────────
 
@@ -1193,7 +1265,19 @@ class AssemblyService:
         )
 
         logger.info("Assembly imported: %s (%s)", code, data.name)
-        return assembly
+        # Re-fetch WITH components + the freshly recalculated total_rate.
+        # ``assembly`` is the object returned by ``create()`` (its
+        # ``components`` selectin relationship is unloaded and its
+        # ``total_rate`` still reads the pre-recalc "0"). The router's
+        # ``_assembly_to_response`` touches ``assembly.components``,
+        # which would otherwise trigger a sync lazy-load outside the
+        # async greenlet → MissingGreenlet → HTTP 500 for EVERY valid
+        # import payload (ASM-001). Reloading via the with-components
+        # query (same one the GET endpoint uses) materialises the
+        # collection inside the greenlet and surfaces the correct
+        # total_rate + component_count (NEW-ASM-103).
+        reloaded = await self.assembly_repo.get_by_id_with_components(assembly.id)
+        return reloaded if reloaded is not None else assembly
 
     # ── Tags ─────────────────────────────────────────────────────────────
 

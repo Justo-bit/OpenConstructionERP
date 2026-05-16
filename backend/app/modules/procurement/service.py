@@ -556,10 +556,11 @@ class ProcurementService:
             )
             await self.gr_item_repo.create(item)
 
+        gr_id = gr.id
         await _safe_publish(
             "procurement.gr.created",
             {
-                "gr_id": str(gr.id),
+                "gr_id": str(gr_id),
                 "po_id": str(gr.po_id),
                 "project_id": str(po.project_id),
                 "status": gr.status,
@@ -568,7 +569,14 @@ class ProcurementService:
         )
 
         logger.info("GR created for PO %s (date=%s)", data.po_id, data.receipt_date)
-        return gr
+        # The freshly-flushed ``gr`` has no ``items`` collection loaded —
+        # ``selectin`` only fires on a query, not on a pending instance. The
+        # router serialises ``GRResponse`` (which includes ``items``), so a
+        # lazy load would be attempted outside the async greenlet
+        # (MissingGreenlet 500). Re-fetch so the relationship is hydrated.
+        self.session.expunge(gr)
+        refreshed = await self.gr_repo.get(gr_id)
+        return refreshed if refreshed is not None else gr
 
     async def get_goods_receipt(self, gr_id: uuid.UUID) -> GoodsReceipt:
         """Get goods receipt by ID. Raises 404 if not found."""

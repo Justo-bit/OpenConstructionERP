@@ -61,6 +61,7 @@ import { apiGet } from '../../shared/lib/api';
 import { useMeasurementPersistence } from './useMeasurementPersistence';
 import {
   type ScaleConfig,
+  type CalibrationUnit,
   COMMON_SCALES,
   pixelDistance,
   toRealDistance,
@@ -1460,21 +1461,29 @@ export default function TakeoffViewerModule({
     setScalePoints([]);
   }, []);
 
-  /** User confirmed the calibration dialog — persist the new scale. */
+  /** User confirmed the calibration dialog — persist the new scale.
+   *
+   *  `nextScale` is metric-canonical (label always `'m'`).  `entry` echoes
+   *  what the estimator actually typed (e.g. `10 ft`); we badge that unit
+   *  rather than a bare `'m'` so a feet/inches calibration is no longer
+   *  silently relabelled (D-TKC-016).  The metres value is also shown so
+   *  it's clear the conversion was honoured. */
   const handleCalibrationConfirm = useCallback(
-    (nextScale: ScaleConfig) => {
+    (nextScale: ScaleConfig, entry?: { realLength: number; unit: CalibrationUnit }) => {
       setScale(nextScale);
       setShowCalibrationDialog(false);
       setScalePoints([]);
       setIsCalibrated(true);
-      // Cache the derived "real length in meters" for the badge display.
-      // CalibrationDialog already converted to meters via deriveScale().
       const meters = calibrationPixels > 0 ? calibrationPixels / nextScale.pixelsPerUnit : 0;
-      setLastCalibration({ realLength: meters, unit: 'm' });
+      // Prefer the user's own entry/unit; fall back to derived metres.
+      const badge = entry ?? { realLength: meters, unit: 'm' as const };
+      setLastCalibration(badge);
+      const metricSuffix =
+        badge.unit === 'm' ? '' : ` (${meters.toFixed(2)} m)`;
       addToast({
         type: 'success',
         title: t('takeoff_viewer.calibrated', { defaultValue: 'Scale calibrated' }),
-        message: `${formatScaleRatio(nextScale)} · ${meters.toFixed(2)} m`,
+        message: `${formatScaleRatio(nextScale)} · ${badge.realLength} ${badge.unit}${metricSuffix}`,
       });
     },
     [addToast, t, calibrationPixels],
@@ -1522,13 +1531,27 @@ export default function TakeoffViewerModule({
         if (m.type === 'volume' && m.points.length >= 3 && m.depth != null) {
           const pixArea = polygonAreaPixels(m.points);
           const realArea = toRealArea(pixArea, scale);
-          const volume = realArea * m.depth;
+          // The polygon points are scale-independent (PDF user units), so
+          // ``realArea`` is freshly correct.  But ``m.depth`` is a stored
+          // real-world length captured against the PREVIOUS scale's unit.
+          // Multiplying the new-scale area by the old-scale depth produces
+          // a mixed-scale volume (D-TKC-020).  Re-project the depth through
+          // pixel space the same way the area is: old real \u2192 pixels via the
+          // previous ppu, pixels \u2192 new real via the current ppu.  When the
+          // previous scale was invalid (ppu <= 0) there is no meaningful
+          // factor, so keep the stored depth as-is rather than zeroing it.
+          const rescaledDepth =
+            prev.pixelsPerUnit > 0 && scale.pixelsPerUnit > 0
+              ? (m.depth * prev.pixelsPerUnit) / scale.pixelsPerUnit
+              : m.depth;
+          const volume = realArea * rescaledDepth;
           return {
             ...m,
             value: volume,
             area: realArea,
+            depth: rescaledDepth,
             unit: `${scale.unitLabel}\u00B3`,
-            label: `V = ${formatMeasurement(volume, scale.unitLabel + '\u00B3')} (A: ${formatMeasurement(realArea, scale.unitLabel + '\u00B2')} \u00D7 D: ${formatMeasurement(m.depth, scale.unitLabel)})`,
+            label: `V = ${formatMeasurement(volume, scale.unitLabel + '\u00B3')} (A: ${formatMeasurement(realArea, scale.unitLabel + '\u00B2')} \u00D7 D: ${formatMeasurement(rescaledDepth, scale.unitLabel)})`,
           };
         }
         return m;
@@ -2828,14 +2851,18 @@ export default function TakeoffViewerModule({
                   title={t('takeoff_viewer.calibrated_tooltip', {
                     defaultValue: 'Calibrated · {{ratio}}{{atLen}} — click to recalibrate',
                     ratio: formatScaleRatio(scale),
-                    atLen: lastCalibration ? ` @ ${lastCalibration.realLength.toFixed(2)} m` : '',
+                    atLen: lastCalibration
+                      ? ` @ ${lastCalibration.realLength} ${lastCalibration.unit}`
+                      : '',
                   })}
                   data-testid="calibration-badge"
                 >
                   <Check size={11} className="text-purple-500 shrink-0" />
                   <span>{formatScaleRatio(scale)}</span>
                   {lastCalibration && (
-                    <span className="text-purple-500/80">· {lastCalibration.realLength.toFixed(1)}m</span>
+                    <span className="text-purple-500/80">
+                      · {lastCalibration.realLength} {lastCalibration.unit}
+                    </span>
                   )}
                 </button>
               )}

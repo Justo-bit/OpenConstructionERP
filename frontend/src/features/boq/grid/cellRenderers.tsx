@@ -26,6 +26,7 @@ import {
   ExternalLink,
   Check,
   AlertTriangle,
+  Link2,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
@@ -913,12 +914,50 @@ export function OrdinalCellRenderer(params: ICellRendererParams) {
   if (!data || data._isSection || data._isFooter) return <span>{value}</span>;
 
   const ctx = context as FullGridContext | undefined;
-  const t = ctx?.t ?? ((key: string, opts?: Record<string, string>) => (opts?.defaultValue as string) ?? key);
+  const t = ctx?.t ?? ((key: string, opts?: Record<string, string | number>) => (opts?.defaultValue as string) ?? key);
   const status = data.validation_status ?? 'pending';
   const dotColor = VALIDATION_DOT_STYLES[status] ?? VALIDATION_DOT_STYLES.pending;
 
+  // ── Issue #127: linked-position indicator ──────────────────────────
+  // A "master" is the definition of record for a shared reference_code; an
+  // "instance" follows the master's definition but keeps its own ordinal &
+  // quantity. Distinct styling + a tooltip showing the shared code and how
+  // many positions share it.
+  const linkRole = data.link_role as 'master' | 'instance' | null | undefined;
+  const refCode = (data.reference_code as string | null | undefined) ?? '';
+  const linkedCount =
+    typeof data.linked_instance_count === 'number'
+      ? data.linked_instance_count
+      : 0;
+  const linkTooltip =
+    linkRole === 'master'
+      ? t('boq.link_badge_master', {
+          defaultValue: 'Master of code {{code}} — {{count}} linked‌⁠‍',
+          code: refCode || (value as string),
+          count: linkedCount,
+        })
+      : t('boq.link_badge_instance', {
+          defaultValue:
+            'Linked instance of code {{code}} — edits to its definition will diverge it‌⁠‍',
+          code: refCode || (value as string),
+        });
+
   return (
     <div className="flex items-center justify-end gap-1 overflow-hidden w-full">
+      {(linkRole === 'master' || linkRole === 'instance') && (
+        <span
+          className={`inline-flex h-4 shrink-0 items-center gap-0.5 rounded px-1 text-[9px] font-semibold ${
+            linkRole === 'master'
+              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+              : 'bg-oe-blue/10 text-oe-blue'
+          } cursor-help`}
+          title={linkTooltip}
+          aria-label={linkTooltip}
+        >
+          <Link2 size={9} />
+          {linkRole === 'master' && linkedCount > 0 ? linkedCount : null}
+        </span>
+      )}
       <span className="text-xs font-mono truncate min-w-0">{value}</span>
       <span
         className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dotColor} cursor-help`}

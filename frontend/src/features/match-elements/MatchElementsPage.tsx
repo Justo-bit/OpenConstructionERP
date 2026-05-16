@@ -392,142 +392,6 @@ function ProjectRegionLangChip({
   );
 }
 
-/** Workflow step indicator. Visualises the four-step BIM→BOQ flow as a
- *  horizontal "stepper" with completed checks, the current active dot,
- *  and pending dots. Lives in the hero block so the user always knows
- *  what step they are on without reading the section labels.
- *
- *  Steps: 1) BIM model · 2) Session · 3) Review groups · 4) Apply to BOQ */
-function WorkflowStepIndicator({
-  step,
-  totalGroups,
-  confirmedCount,
-  appliedCount,
-  hasModel,
-  hasSession,
-}: {
-  step: 1 | 2 | 3 | 4;
-  totalGroups: number;
-  confirmedCount: number;
-  appliedCount: number;
-  hasModel: boolean;
-  hasSession: boolean;
-}) {
-  const { t } = useTranslation();
-  const items: Array<{
-    n: 1 | 2 | 3 | 4;
-    label: string;
-    detail: string;
-  }> = [
-    {
-      n: 1,
-      label: t('match_elements.step_1_label', 'Pick model'),
-      detail: hasModel
-        ? t('match_elements.step_1_done', 'Selected')
-        : t('match_elements.step_1_help', 'Choose BIM model'),
-    },
-    {
-      n: 2,
-      label: t('match_elements.step_2_label', 'Open session'),
-      detail: hasSession
-        ? t('match_elements.step_2_done', 'Active')
-        : t('match_elements.step_2_help', 'Resume or create'),
-    },
-    {
-      n: 3,
-      label: t('match_elements.step_3_label', 'Review matches'),
-      detail:
-        totalGroups === 0
-          ? t('match_elements.step_3_empty', 'No groups yet')
-          : t(
-              'match_elements.step_3_progress',
-              '{{confirmed}}/{{total}} confirmed',
-              { confirmed: confirmedCount, total: totalGroups },
-            ),
-    },
-    {
-      n: 4,
-      label: t('match_elements.step_4_label', 'Apply to BOQ'),
-      detail:
-        appliedCount > 0
-          ? t('match_elements.step_4_done', '{{n}} applied', {
-              n: appliedCount,
-            })
-          : t('match_elements.step_4_help', 'Write to BOQ'),
-    },
-  ];
-
-  return (
-    <ol className="flex items-center gap-1 w-full overflow-x-auto" role="list">
-      {items.map((it, idx) => {
-        const isDone = step > it.n;
-        const isActive = step === it.n;
-        return (
-          <li
-            key={it.n}
-            className="flex items-center gap-1 min-w-0"
-            aria-current={isActive ? 'step' : undefined}
-          >
-            <div
-              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition ${
-                isActive
-                  ? 'bg-white dark:bg-surface-primary shadow-sm border border-indigo-300 dark:border-indigo-600 ring-2 ring-indigo-200/60 dark:ring-indigo-700/40'
-                  : isDone
-                    ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60'
-                    : 'bg-white/40 dark:bg-surface-primary/40 border border-transparent'
-              }`}
-            >
-              <span
-                className={`shrink-0 w-5 h-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold ${
-                  isDone
-                    ? 'bg-emerald-500 text-white'
-                    : isActive
-                      ? 'bg-gradient-to-br from-indigo-500 to-sky-500 text-white shadow-sm shadow-indigo-500/20'
-                      : 'bg-content-tertiary/15 text-content-tertiary'
-                }`}
-              >
-                {isDone ? <CheckCircle2 className="w-3 h-3" /> : it.n}
-              </span>
-              <div className="min-w-0">
-                <div
-                  className={`text-[11px] font-semibold leading-tight ${
-                    isActive
-                      ? 'text-content-primary'
-                      : isDone
-                        ? 'text-emerald-800 dark:text-emerald-200'
-                        : 'text-content-tertiary'
-                  }`}
-                >
-                  {it.label}
-                </div>
-                <div
-                  className={`text-[10px] leading-tight ${
-                    isActive
-                      ? 'text-indigo-700 dark:text-indigo-300'
-                      : 'text-content-tertiary'
-                  }`}
-                >
-                  {it.detail}
-                </div>
-              </div>
-            </div>
-            {idx < items.length - 1 && (
-              <ChevronRight
-                className={`w-3.5 h-3.5 shrink-0 ${
-                  step > it.n
-                    ? 'text-emerald-400 dark:text-emerald-500'
-                    : 'text-content-tertiary/40'
-                }`}
-                aria-hidden
-              />
-            )}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 /** Rich project context card — single source of truth for "which
  *  project + which CWICR collection is /match-elements pointed at?".
  *  Replaces the v2.9.x one-line bar so the user can verify at a glance
@@ -1859,21 +1723,6 @@ export function MatchElementsPage() {
     visibleSession?.construction_stage ?? '';
 
   // ── Render ───────────────────────────────────────────────────────────
-  // Derive workflow step (1-4) from current state to drive the step
-  // indicator. Step transitions are intentionally one-way semaphores —
-  // once you reach a step you stay until the prior signal goes missing.
-  const stepperTotalGroups = groupAgg.total;
-  const stepperConfirmedCount = groupAgg.confirmed;
-  const stepperAppliedCount = groupAgg.applied;
-
-  const workflowStep: 1 | 2 | 3 | 4 = !activeBimModelId
-    ? 1
-    : !sessionId
-      ? 2
-      : stepperAppliedCount > 0
-        ? 4
-        : 3;
-
   return (
     <div className="p-3 lg:p-4 max-w-[1600px] mx-auto">
       {/* Qdrant readiness — only renders when vector DB is unreachable.
@@ -2001,18 +1850,6 @@ export function MatchElementsPage() {
               <Sparkles className="w-2.5 h-2.5" />
               {t('match_elements.hero_eyebrow', 'BIM → BOQ')}
             </span>
-            {projectId && (
-              <div className="hidden md:block flex-1 min-w-0 ms-2">
-                <WorkflowStepIndicator
-                  step={workflowStep}
-                  totalGroups={stepperTotalGroups}
-                  confirmedCount={stepperConfirmedCount}
-                  appliedCount={stepperAppliedCount}
-                  hasModel={!!activeBimModelId}
-                  hasSession={!!sessionId}
-                />
-              </div>
-            )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {/* "New match" — opens the wizard. Visible only inside the
@@ -2078,21 +1915,6 @@ export function MatchElementsPage() {
             </button>
           </div>
         </div>
-        {/* Mobile-only workflow indicator (the desktop one is inline in
-            the hero strip above; on narrow screens we drop it to a second
-            row to avoid wrap-overflow). */}
-        {projectId && (
-          <div className="md:hidden px-3 pb-2">
-            <WorkflowStepIndicator
-              step={workflowStep}
-              totalGroups={stepperTotalGroups}
-              confirmedCount={stepperConfirmedCount}
-              appliedCount={stepperAppliedCount}
-              hasModel={!!activeBimModelId}
-              hasSession={!!sessionId}
-            />
-          </div>
-        )}
       </section>
 
       {/* "Beta · feedback wanted" banner.
@@ -2128,96 +1950,14 @@ export function MatchElementsPage() {
 
       <ProjectContextCard projectId={projectId} />
 
-      {/* Pipeline entry card — the headline path. Shown when a project
-          is picked but no session is active yet. One click creates a
-          session and drops the user straight into the visible 7-stage
-          pipeline. The legacy step-wizard stays below for power users
-          who want to pre-pick catalogue / source / construction stage. */}
-      {projectId && !sessionId && !matchInFlight && (
-        <div className="mt-2 rounded-xl border border-indigo-200/70 dark:border-indigo-800/50 bg-gradient-to-br from-indigo-50/80 via-white to-white dark:from-indigo-950/30 dark:via-surface-primary dark:to-surface-primary p-4 shadow-sm">
-          <div className="flex items-start gap-3 flex-wrap">
-            <span className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-200 inline-flex items-center justify-center shrink-0">
-              <Layers className="w-5 h-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-base font-bold text-content-primary">
-                {t(
-                  'match_elements.pipeline.intro_title',
-                  'Open the visible match pipeline',
-                )}
-              </h3>
-              <p className="text-xs text-content-secondary mt-0.5 leading-relaxed">
-                {t(
-                  'match_elements.pipeline.intro_blurb',
-                  'Seven steps from CAD file to priced BoQ — Convert, Load, Schema, Filter, Group, Match, Rollup. Every step is visible, explained, and tunable (prompts, LLM provider, group keys).',
-                )}
-              </p>
-              <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                {[
-                  'Convert',
-                  'Load',
-                  'Schema',
-                  'Filter',
-                  'Group',
-                  'Match',
-                  'Rollup',
-                ].map((s, i) => (
-                  <span
-                    key={s}
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-content-tertiary"
-                  >
-                    <span className="px-1.5 py-0.5 rounded bg-surface-secondary border border-border">
-                      {i + 1}. {s}
-                    </span>
-                    {i < 6 && (
-                      <ChevronsRight className="w-2.5 h-2.5 opacity-50" />
-                    )}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5 shrink-0">
-              <button
-                onClick={() => createSessionMut.mutate()}
-                disabled={createSessionMut.isPending}
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-oe-blue text-white hover:opacity-90 disabled:opacity-50"
-              >
-                {createSessionMut.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <PlayCircle className="w-4 h-4" />
-                )}
-                {t(
-                  'match_elements.pipeline.intro_cta',
-                  'Open the pipeline',
-                )}
-              </button>
-              {(sessionsQ.data?.length ?? 0) > 0 && (
-                <button
-                  onClick={() => {
-                    const last = sessionsQ.data?.[0];
-                    if (last) setSessionId(last.id);
-                  }}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-content-secondary hover:bg-surface-secondary"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  {t(
-                    'match_elements.pipeline.intro_resume',
-                    'Resume last session',
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* New wizard entry — visible only when no session is active.
-          The wizard guides the user through stage → catalogue → source →
-          run, then sets sessionId via onComplete to drop them into the
-          existing matching/results UI. Power users with a saved session
-          (or who pick one in the wizard's Resume strip) skip straight
-          past this and see the full toolset below. */}
+      {/* Single guided flow. The old "Open the visible match pipeline"
+          entry card was removed — it duplicated the wizard as a second
+          competing step path. There is now exactly one stepper on the
+          page: MatchWizard drives Source → Scope → Run, then the same
+          journey continues into the visible 7-stage pipeline + review
+          (no second wizard). End goal: an accurate, project-adaptive
+          priced BoQ. The wizard's Resume strip (Step 1) covers the
+          "resume last session" affordance the old card offered. */}
       {projectId && !sessionId && (
         <MatchWizard
           projectId={projectId}

@@ -9,10 +9,18 @@ but stored as strings in SQLite-compatible models.
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 # Probe-A scenario 11: hard cap on ``quantity * unit_rate``. A 1e10 × 1e10
 # input would compute to 1e20, which is far beyond any plausible
@@ -257,6 +265,32 @@ class PositionCreate(BaseModel):
             "validates that the referenced CostItem exists and is active."
         ),
     )
+    # ── Issue #127: BOQ code reuse / linked positions ────────────────────
+    reference_code: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Reusable user-facing code (Sección/Partida/Recurso, e.g. "
+            "'0040'). DISTINCT from ``ordinal``: typing an existing code "
+            "creates a LINKED INSTANCE that carries the master code's "
+            "definition + sub-structure (it does NOT 409). The instance "
+            "still gets its own unique auto-assigned ordinal and its own "
+            "per-instance quantity. When omitted the service stamps a "
+            "stable internal code so the position stays referenceable."
+        ),
+        examples=["0040"],
+    )
+    link_mode: Literal["link", "copy", "standalone"] | None = Field(
+        default=None,
+        description=(
+            "Behaviour when ``reference_code`` collides with an existing "
+            "code in the project. 'link' (DEFAULT on collision) = create a "
+            "linked instance; master-definition edits propagate to it. "
+            "'copy' = one-time clone, unlinked (no future propagation). "
+            "'standalone' = ignore the collision, plain create. No "
+            "collision: always a plain create."
+        ),
+    )
 
     # Sanitise + canonicalise; **don't** gate on a fixed catalogue.  Locale
     # spellings (Romanian "Bucat", Bulgarian "бр", Russian "шт", German
@@ -350,6 +384,25 @@ class PositionUpdate(BaseModel):
             "version does not match, the update is rejected with 409 Conflict."
         ),
     )
+    # ── Issue #127: code reuse / linked positions ────────────────────────
+    reference_code: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Change this position's reusable code. Note: editing a MASTER's "
+            "definition fields propagates to every linked instance in the "
+            "project; editing an INSTANCE's definition directly UNLINKS it "
+            "from the group and attaches a warning (quantity edits never "
+            "propagate or unlink)."
+        ),
+    )
+    link_mode: Literal["link", "copy", "standalone"] | None = Field(
+        default=None,
+        description=(
+            "Reserved for symmetry with PositionCreate; ignored on update "
+            "(linking decisions are made at create time)."
+        ),
+    )
 
     # Mirrors PositionCreate: sanitise + canonicalise on partial updates.
     @field_validator("unit", mode="after")
@@ -390,9 +443,15 @@ class PositionResponse(BaseModel):
     ordinal: str
     description: str
     unit: str
-    quantity: float
-    unit_rate: float
-    total: float
+    # BUG-B-011: stored as 4 dp Decimal strings in the model. Typing these
+    # as ``float`` truncated values past ~15 significant figures (a
+    # 999,999,999.99 × 999,999.99 line lost its tail in JSON). Keep them as
+    # ``Decimal`` and serialise as a plain decimal *string* so large totals
+    # round-trip exactly and stay locale-neutral (per CLAUDE.md). Accepts
+    # str / float / Decimal on input via Pydantic's Decimal coercion.
+    quantity: Decimal
+    unit_rate: Decimal
+    total: Decimal
     classification: dict[str, Any]
     source: str
     confidence: float | None
@@ -410,6 +469,13 @@ class PositionResponse(BaseModel):
     # BUG-CONCURRENCY01: monotonic per-row counter, surfaced so clients
     # can echo it back on the next PATCH for conflict detection.
     version: int = 0
+    # ── Issue #127: code reuse / linked positions (read-only) ────────────
+    reference_code: str | None = None
+    link_role: str | None = None
+    link_group_id: UUID | None = None
+    # Only populated for masters: how many OTHER positions reuse this code
+    # (linked instances) project-wide. None for instances / standalone.
+    linked_instance_count: int | None = None
 
     # BUG-MATH04: response-side HTML strip. Position descriptions are the
     # most-rendered free-text field in the product (BOQ grid, exports,
@@ -422,6 +488,24 @@ class PositionResponse(BaseModel):
         from app.core.sanitize import sanitise_text
 
         return sanitise_text(v) or ""
+
+    # BUG-B-011: emit money/quantity as a *plain* decimal string. ``str``
+    # on a Decimal can yield scientific notation (e.g. 1E+3); the explicit
+    # non-exponential format keeps the value exact, human- and
+    # machine-readable, and locale-neutral (per CLAUDE.md). Non-finite
+    # values (defensive — the write path quantises and rejects NaN/Inf)
+    # collapse to "0".
+    @field_serializer("quantity", "unit_rate", "total", when_used="json")
+    @classmethod
+    def _serialise_decimal(cls, v: Decimal) -> str:
+        if not isinstance(v, Decimal):
+            try:
+                v = Decimal(str(v))
+            except (InvalidOperation, ValueError):
+                return "0"
+        if not v.is_finite():
+            return "0"
+        return format(v, "f")
 
 
 # ── Markup schemas ────────────────────────────────────────────────────────────
@@ -611,6 +695,52 @@ class BOQFromTemplateRequest(BaseModel):
         max_length=255,
         description="Custom BOQ name. Defaults to template name if omitted.",
     )
+
+
+# ── Issue #127: linked-position schemas ──────────────────────────────────────
+
+
+class LinkedPositionInfo(BaseModel):
+    """One member of a reference-code link group."""
+
+    id: UUID
+    boq_id: UUID
+    ordinal: str
+    description: str
+    quantity: Decimal
+    total: Decimal
+    link_role: str | None = None
+    is_master: bool = False
+
+    @field_serializer("quantity", "total", when_used="json")
+    @classmethod
+    def _serialise_decimal(cls, v: Decimal) -> str:
+        if not isinstance(v, Decimal):
+            try:
+                v = Decimal(str(v))
+            except (InvalidOperation, ValueError):
+                return "0"
+        if not v.is_finite():
+            return "0"
+        return format(v, "f")
+
+
+class PositionLinksResponse(BaseModel):
+    """Result of ``GET /positions/{id}/links/`` — the code's reuse group.
+
+    Lists every position that shares the queried position's
+    ``reference_code`` across the whole project, identifies the master,
+    and reports counts. ``linked`` is False for a standalone position
+    (its code is used exactly once).
+    """
+
+    reference_code: str | None = None
+    link_group_id: UUID | None = None
+    linked: bool = False
+    master_id: UUID | None = None
+    total_count: int = 0
+    instance_count: int = 0
+    members: list[LinkedPositionInfo] = Field(default_factory=list)
 
 
 # ── Activity log schemas ─────────────────────────────────────────────────────

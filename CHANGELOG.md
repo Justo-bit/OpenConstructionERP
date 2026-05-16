@@ -5,6 +5,28 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] — 2026-05-16 · Reusable BOQ codes (linked positions) + deep correctness pass
+
+### Added
+
+- BOQ code reuse / linked positions (#127): type or pick an existing code → a linked instance is created with the master's full definition + child subtree, its own unique ordinal and its own independently-editable quantity (no more "code already exists" dead-end).
+- Master-definition edits propagate project-wide to every linked instance; quantity/ordinal never propagate.
+- Editing a linked instance's definition auto-unlinks it and warns the user instead of back-propagating.
+- Codeless positions/resources get an auto unique internal `reference_code` so they are always referenceable.
+- "Show Linked Positions" panel + value-preserving "Unlink"; grid badges (amber master with count / blue instance).
+- Alembic `v3036_linked_positions` (reference_code / link_group_id / link_role, idempotent).
+
+### Fixed
+
+- Unlink a master with linked instances returned HTTP 500 (`update_fields` `expire_all` expired the ORM instance → `MissingGreenlet`); now 200, value-preserving, survivor promoted.
+- Deep correctness pass (W1–W7) across assemblies/catalog, BOQ core, projects/documents, risk/schedule/variations, validation/costs/core, CAD/BIM unit honesty, takeoff labels & frontend perf.
+- Validation `RunValidationResponse.score` accepts `None` (SKIPPED reports no longer 500 the response model).
+- i18n validation bundle: humanised fallback for missing keys (raw dotted keys never surface to users).
+
+### Verification
+
+- #127 verified end-to-end live (reuse, propagation, unlink, independent quantities, child subtree) + new integration regression tests; frontend type-check clean.
+
 ## [3.2.0] — 2026-05-16 · Backlog triage, Planning/Field-Ops audit, clean-install fix, per-country demo data
 
 ### Clean install

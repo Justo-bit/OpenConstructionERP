@@ -25,6 +25,7 @@ import {
 } from '@/shared/ui';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
+import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { apiGet, getErrorMessage } from '@/shared/lib/api';
 import {
   listInventories,
@@ -95,6 +96,7 @@ function useEscapeToClose(onClose: () => void) {
 export function CarbonPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('inventory');
+  const activeProjectId = useProjectContextStore((s) => s.activeProjectId);
   const [projectId, setProjectId] = useState<string>('');
   const [inventoryDrawerId, setInventoryDrawerId] = useState<string | null>(null);
   const [createInvOpen, setCreateInvOpen] = useState(false);
@@ -107,7 +109,9 @@ export function CarbonPage() {
     staleTime: 5 * 60_000,
   });
   const projects = projectsQ.data ?? [];
-  const effectiveProjectId = projectId || projects[0]?.id || '';
+  // Prefer an explicit in-page selection; otherwise fall back to the globally
+  // selected active project, and only then to the first project in the list.
+  const effectiveProjectId = projectId || activeProjectId || projects[0]?.id || '';
 
   return (
     <div className="space-y-5">

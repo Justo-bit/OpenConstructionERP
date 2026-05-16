@@ -31,6 +31,7 @@ import {
 } from '@/shared/ui';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { useToastStore } from '@/stores/useToastStore';
+import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { getErrorMessage } from '@/shared/lib/api';
 import { projectsApi } from '@/features/projects/api';
 import {
@@ -123,6 +124,7 @@ function formatSha(sha: string): string {
 export function DailyDiaryPage() {
   const { t, i18n } = useTranslation();
   const [tab, setTab] = useState<Tab>('diaries');
+  const activeProjectId = useProjectContextStore((s) => s.activeProjectId);
   const [projectId, setProjectId] = useState<string>('');
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
@@ -137,11 +139,10 @@ export function DailyDiaryPage() {
   });
 
   useEffect(() => {
-    if (!projectId && projectsQ.data && projectsQ.data.length > 0) {
-      const first = projectsQ.data[0];
-      if (first) setProjectId(first.id);
-    }
-  }, [projectId, projectsQ.data]);
+    if (projectId) return;
+    const seed = activeProjectId || projectsQ.data?.[0]?.id;
+    if (seed) setProjectId(seed);
+  }, [activeProjectId, projectsQ.data, projectId]);
 
   const bounds = useMemo(() => monthBounds(year, month), [year, month]);
 

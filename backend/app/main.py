@@ -1625,6 +1625,16 @@ def create_app() -> FastAPI:
 
             from app import modules as _modules_pkg
             from app.core import audit as _audit_core  # noqa: F401
+
+            # ``audit_log`` defines the ``oe_activity_log`` table used by the
+            # FSM ``log_activity()`` helper (submittals/RFI/etc. status
+            # transitions). It lives in app.core (not app.modules.*) so the
+            # dynamic module-models loop below never reaches it. Without this
+            # explicit import the table is absent on a fresh SQLite dev DB,
+            # so every status-changing action raised OperationalError, which
+            # poisoned the request session and cascaded into a 500 on the
+            # subsequent re-fetch. Register it before create_all.
+            from app.core import audit_log as _audit_log_core  # noqa: F401
             from app.core.sqlite_migrator import sqlite_auto_migrate
             from app.database import Base, engine
 

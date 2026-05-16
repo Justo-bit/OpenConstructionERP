@@ -12,6 +12,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.catalog.models import CatalogResource
 
 
+def _escape_like(term: str) -> str:
+    r"""Escape LIKE/ILIKE wildcards in a user-supplied search term.
+
+    Without this, ``q='%'`` expands to the pattern ``'%%%'`` (matches
+    every row) and ``q='_'`` matches any single character — a literal
+    ``%`` / ``_`` in the query is treated as a wildcard, so the search
+    returns ALL resources instead of the ones containing that literal
+    (NEW-CAT-105). We escape the escape char first (so a literal
+    backslash stays literal), then ``%`` and ``_``; callers must pair
+    the resulting pattern with ``.ilike(pattern, escape="\\")``.
+    """
+    return (
+        term.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
 class CatalogResourceRepository:
     """‌⁠‍Data access for CatalogResource model."""
 
@@ -60,8 +78,14 @@ class CatalogResourceRepository:
         base = select(CatalogResource).where(CatalogResource.is_active.is_(True))
 
         if q:
-            pattern = f"%{q}%"
-            base = base.where(CatalogResource.resource_code.ilike(pattern) | CatalogResource.name.ilike(pattern))
+            # Escape LIKE wildcards so a literal '%' / '_' in the query
+            # matches a literal '%' / '_' instead of acting as a
+            # wildcard that returns the whole catalog (NEW-CAT-105).
+            pattern = f"%{_escape_like(q)}%"
+            base = base.where(
+                CatalogResource.resource_code.ilike(pattern, escape="\\")
+                | CatalogResource.name.ilike(pattern, escape="\\")
+            )
 
         if resource_type:
             base = base.where(CatalogResource.resource_type == resource_type)
