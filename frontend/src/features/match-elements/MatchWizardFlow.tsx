@@ -731,10 +731,9 @@ export function MatchWizardFlow() {
         <QdrantHealthCard />
       </div>
 
-      {/* Plain-language "how it works" — open by default so newcomers
-          immediately understand the end-to-end flow and what each of the
-          8 stages does; collapsible so power users can fold it away. */}
-      <details className="group mb-5 rounded-xl border border-border-light bg-surface-muted/60" open>
+      {/* Plain-language "how it works" — collapsed by default to keep the
+          first-screen wizard tidy; one click opens the full 8-stage tour. */}
+      <details className="group mb-5 rounded-xl border border-border-light bg-surface-primary">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-content-primary">
           <Info className="h-4 w-4 shrink-0 text-oe-blue" />
           {t('match.wizard.howItWorks', {

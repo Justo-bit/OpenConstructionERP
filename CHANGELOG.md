@@ -5,6 +5,12 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] — 2026-05-19 · Match-elements "how it works" collapsed by default
+
+### Changed
+
+- /match-elements: the "How matching works — read this first" explainer is now collapsed by default with a white background, keeping the wizard's first screen tidy. Click to expand the full 8-stage tour.
+
 ## [3.10.0] — 2026-05-19 · /files ACC-grade wave + Clash collab/metadata + match-elements polish
 
 ### Added
