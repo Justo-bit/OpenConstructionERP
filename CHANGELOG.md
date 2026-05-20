@@ -5,6 +5,43 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] — 2026-05-20 · Stable 4.0 — production-ready platform
+
+This is the first **stable 4.x** release. Same code base, same install procedure as the latest 3.12 patch; the version cut signals that the platform is now considered production-ready across the full estimation → takeoff → BIM → BOQ → tender → reporting workflow, with a stable public API surface, multi-tenant security pass complete, and 103 modules shipping in the box.
+
+### What "stable 4.0" means
+
+- **API surface is stable.** Every `/api/v1/*` endpoint shipped in 3.10.x → 3.12.x is now considered part of the public contract. Breaking changes will be marked `/v2`; 4.x patches will only add fields and endpoints, not rename or remove existing ones. OpenAPI spec at `/api/openapi.json` is the source of truth.
+- **Multi-tenant security pass complete.** Cross-category IDOR sweep (memory: `v2.9.15` + `v2.9.14`) closed ~73 endpoints across Planning / Communication / Procurement / Documents. Every project-scoped route enforces `verify_project_access`; every owner-scoped route (dashboards, reports, alerts, saved views, filters) enforces inline `owner_user_id` comparison with 404-not-403 on mismatch.
+- **103 modules ship in the box**, dynamically discovered by the module loader: BOQ + Cost Intelligence + Match Elements + Tendering + BIM Hub + Clash Detection + Takeoff + AI Estimate + ERP Chat + Project Intelligence + Schedule + Tasks + Risk + Daily Diary + Equipment + Service + Finance + Procurement + CRM + Contracts + Subcontractors + Bid Management + Supplier Catalogs + BI Dashboards + Validation + Inspections + Punchlist + Files CDE + Quality + HSE + Portal + Carbon + many more. All have backend + frontend + tests + i18n + permissions.
+- **CAD/BIM pipeline is canonical-format-first.** Every CAD source (DWG, DGN, IFC, RVT) goes through the DDC cad2data converter into a canonical JSON. No IfcOpenShell dependency. BCF allowed as I/O for issues + viewpoints + validation reports. Serve-time magic-byte validation guards the viewer against corrupt blobs.
+- **Cost database: 55,000 priced positions in CWICR, plus 30+ regional v3 catalogues.** Multi-currency BOQ with FX-correct exports. Vector search via Qdrant; multilingual semantic match across 24 languages.
+- **i18n: 24 languages.** EN/DE/RU/zh-Hans/pt-BR/Mongolian are deep native quality. The remaining 17 ship with English `defaultValue` fallbacks; native pass continues in 4.0.x.
+- **Self-host story: one command.** `pip install openconstructionerp && openconstructionerp` boots PostgreSQL-or-SQLite + 103 modules + Qdrant ping + showcase snapshot seed + alembic upgrade. AGPL-3.0 community; commercial licence for source-modification protection.
+
+### Notable since 3.0 milestone (rolled up)
+
+- BIM Hub pro-grade — Site Compass cube, Solo Mode, Trait Lens color-by-property, Element Bundles selection sets, viewpoint state with camera + filter + clip + thumbnail, screenshot export, DDC converter version badge, property search panel.
+- Clash Detection — schema + DBSCAN engine + FP-mining + 6 REST endpoints, KPI dashboard with severity / discipline-pair / top-clashing-pairs / MTTR, rule editor + suggestions banner.
+- Takeoff pro-grade — PDF + DWG measurements, PaddleOCR + YOLO symbol detection, jsPDF export with annotations, exceljs export with per-group subtotals.
+- BOQ pro-grade — bulk multiply rate / qty / classification, per-cell field-history restore, Ctrl+D fill-down + Ctrl+; today, multi-level hierarchy with 8-deep nesting, reusable/linked positions, FX-correct CSV/Excel exports with frozen FX appendix.
+- Match Elements — 7-stage visible pipeline (Convert → Load → Schema → Filter → Group → Match → Rollup), per-stage adjust, vector + lexical + resource matchers, currency-aware rollup, catalogue + display-currency picker.
+- Cost Intelligence — regional indices + cost-item usage telemetry, certainty bands (green/yellow/red), live regional-adjust panel.
+- Files CDE — saved views rail, tag-filter facet, version history with "Make current", 24h trash purge, per-recipient notification fan-out on new revision.
+- Validation@Import — DIN 276 + GAEB + NRM + MasterFormat + BOQ-quality + project-completeness rule packs wired into GAEB / Excel import path; GAEB X84 (Nebenangebot) export writer.
+- BI Dashboards — 5 role-based starter dashboards (CEO / CFO / PM / Site / Safety), 14 system KPIs with 12-week history, 3 reports, 2 schedules, 4 alert rules — installed via idempotent one-click endpoint.
+- AI services — embedding-pool with prewarmed workers, FSM-driven match pipeline, BIM placeholder geometry fallback, Mongolian + Devanagari OCR, lakh-crore numeric parsing, UTM CRS for 16 regions.
+- Ecosystem — license-request page with 90-day affiliate cookies, marketing site with 34-card module grid mirroring the in-app sidebar, openconstructionerp.com production deployment.
+
+### Hand-off
+
+Identical to 3.12.1: no migration steps required. Existing 3.12.x installs upgrade in place via `pip install --upgrade openconstructionerp && alembic upgrade head && systemctl restart openconstructionerp`. Alembic head: `v3096_regional_indices_certainty`.
+
+### Notes
+
+- Native i18n pass for the 17 placeholder locales continues in 4.0.x patch line — defaultValue fallbacks ship today.
+- Audited but not yet shipped: W5.5 Assembly Library, W6.5 BIM Federation, W8 Scheduling CPM, W13 AI Agents — planned for 4.1.
+
 ## [3.12.1] — 2026-05-20 · BIM serve-validation · BI starter pack · /match-elements catalogue picker · marketing module-cards · UI polish
 
 ### Added
