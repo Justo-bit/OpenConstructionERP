@@ -67,8 +67,15 @@ class SafetyIncident(Base):
     # ── OSHA Form 300 recordable-incident bookkeeping ────────────────────
     # Added by v3086_hse_osha_corrective_fsm. ``osha_recordable`` is the
     # gate that filters incidents into the OSHA 300 log export.
+    #
+    # ``server_default="0"`` is load-bearing: fresh installs run
+    # ``Base.metadata.create_all`` which honours model-level defaults at
+    # CREATE TABLE time. Without it, the committed showcase snapshot
+    # (built before this column existed and thus carrying no
+    # ``osha_recordable`` value) trips a NOT NULL violation on first boot,
+    # leaving the seed transaction open and SQLite write-locked. See #154.
     osha_recordable: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, index=True,
+        Boolean, nullable=False, default=False, server_default="0", index=True,
     )
     osha_case_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     days_away: Mapped[int | None] = mapped_column(Integer, nullable=True)
