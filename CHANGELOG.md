@@ -5,6 +5,31 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.2] - 2026-05-22
+
+Admin UX hotfix — audit log full rewrite + sidebar polish + developer guide refresh.
+
+### Added
+- `/admin/audit-log` filter bar (free-text search debounced, date-range presets Today/Last 7d/Last 30d/Custom, sortable timestamp column, JSON export alongside CSV, pager with total count via new `GET /api/v1/audit/count`, per-page selector 25/50/100/200, expand-row drill-down with before/after JSON diff, ESC closes drawer).
+- Sidebar admin grid (2-column button strip with horizontal icon+label layout at the bottom — Users/Audit/Roles/Modules/Settings/About — short labels in EN + RU with fallback for other 25 locales).
+
+### Changed
+- `/admin/audit-log` is full-width (was `max-w-6xl`).
+- `frontend/src/main.tsx` global mutation `onError` toast now respects `meta.suppressGlobalErrorToast` opt-out (closes double-toast issue on `/admin/permissions` PATCH).
+- Developer guide refreshed — fake `publish_event`/`@subscribe` examples replaced with real `event_bus.publish/subscribe` API, fake `PERMISSIONS = []` list replaced with real `permission_registry.register_module_permissions(name, {...: Role.X})` pattern, manifest example shows real `optional_depends` + `display_name_i18n` fields, copy-template step replaced with real `make module-new NAME=oe_my_module`, RBAC clarified (hierarchical: admin > manager > editor > viewer).
+- Developer guide translated to 9 locales (en/de/es/fr/it/nl/pl/pt/ru).
+
+### Fixed
+- `/admin/audit-log` backend was silently ignoring `date_from`/`date_to` query params the frontend was already sending.
+- UUID parse on `user_id_filter` no longer 500s on malformed input.
+- Developer guide code blocks no longer touch surrounding text (Code component `my-4 pt-5`, inline `mx-0.5 px-1.5`).
+- 12px gap between sidebar admin grid and update notification card.
+
+### Tests
+- `audit-log.test.tsx` extended 5→12.
+- `PermissionsMatrixPage.test.tsx` 8/8 still pass.
+- Backend `test_admin_permissions_matrix.py` 9/9 still pass.
+
 ## [4.3.1] - 2026-05-22
 
 Hotfix above v4.3.0 — the issue #153 root-cause fix and the contact-email
