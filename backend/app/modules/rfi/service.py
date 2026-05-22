@@ -37,6 +37,14 @@ async def _safe_publish(name: str, data: dict, source_module: str = "") -> None:
 
 _RFI_RESPONSE_DUE_DAYS = 14
 
+# BUG-RFI-STATS-UNBOUNDED: ``get_stats`` previously ran a
+# ``SELECT * FROM oe_rfi_rfi WHERE project_id=:p`` with no LIMIT, so a
+# tenant with a noisy 100k-row RFI history paid the full table read on
+# every dashboard tick. Cap the scan at a sane upper bound; the stats
+# panel is a high-level summary anyway and the API surface exposes
+# this constant so the truthfulness of the cap is testable.
+_RFI_STATS_SCAN_CAP = 10000
+
 # R5 / BUG-RFI-UNIQ: retry budget for ``create_rfi`` when two concurrent
 # transactions race on ``max(rfi_number)+1``. Mirrors the changeorders
 # code-collision retry loop.
@@ -597,8 +605,17 @@ class RFIService:
         now = datetime.now(UTC)
         today_str = now.strftime("%Y-%m-%d")
 
-        # Fetch all RFIs for the project (unfiltered, no pagination)
-        base = select(RFI).where(RFI.project_id == project_id)
+        # Fetch RFIs for the project, capped at ``_RFI_STATS_SCAN_CAP``
+        # so a runaway project history can't lock up the dashboard.
+        # When the cap is hit the numbers are still useful (open /
+        # overdue / impact counts on the most recent slice) and large
+        # tenants get sub-second p99 instead of a full table scan.
+        base = (
+            select(RFI)
+            .where(RFI.project_id == project_id)
+            .order_by(RFI.created_at.desc())
+            .limit(_RFI_STATS_SCAN_CAP)
+        )
         result = await self.session.execute(base)
         rfis = list(result.scalars().all())
 
