@@ -51,6 +51,7 @@ frontend/e2e/v1.9/.auth-token.txt
 frontend/e2e/v1.9/.auth-state.json
 *.trace.zip
 frontend/video-output/
+.tests-artifacts/
 frontend/playwright.video.config.ts
 frontend/e2e/_*.spec.ts
 frontend/e2e/*-diagnostic.spec.ts
