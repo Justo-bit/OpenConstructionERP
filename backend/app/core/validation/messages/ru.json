@@ -211,5 +211,39 @@
       "fail": "Узлы с побочными эффектами без шлюза: {nodes}",
       "suggestion": "Добавьте шлюз валидации или ручного подтверждения на каждом пути от триггера/ИИ-узла к каждому записывающему узлу перед публикацией."
     }
+  },
+  "property_dev": {
+    "escrow_account_required": {
+      "fail": "Для проекта требуется активный эскроу-счёт для регулятора '{regulator}'",
+      "suggestion": "Откройте эскроу-счёт в банке, имеющем лицензию регулятора (Compliance → Эскроу-счета)"
+    },
+    "escrow_iban_valid": {
+      "fail": "Эскроу-счёт {account}: IBAN '{iban}' не проходит структурную проверку ISO 13616",
+      "suggestion": "Исправьте IBAN: код страны + длина + контрольная сумма должны соответствовать ISO 13616"
+    },
+    "escrow_balance_reconciled": {
+      "fail": "Эскроу-счёт {account}: остаток {ledger} расходится на {drift} с суммой по {transactions} транзакциям",
+      "suggestion": "Сверьте эскроу-счёт — проверьте неучтённые поступления и пропущенные списания"
+    },
+    "sales_contract_party_ownership_sums_to_100": {
+      "fail": "Договор {contract}: суммарная доля участников {total}% (должна быть ровно 100%)",
+      "suggestion": "Скорректируйте доли участников так, чтобы сумма составляла 100,00%"
+    },
+    "payment_schedule_instalments_sum_to_contract_value": {
+      "fail": "Договор {contract}: сумма платежей {instalments} отличается от стоимости договора {contract_value} (расхождение {drift})",
+      "suggestion": "Пересоберите график платежей: сумма платежей должна совпадать со стоимостью договора"
+    },
+    "reservation_expiry_in_future": {
+      "fail": "Бронь {reservation}: expires_at {expires} не в будущем",
+      "suggestion": "Продлите бронь или переведите её в expired/cancelled"
+    },
+    "broker_commission_rate_within_bounds": {
+      "fail": "Договор о комиссии {agreement}: {issue}",
+      "suggestion": "Используйте процент между 0,1% и 15%, фиксированную сумму или непустой ladder со ступенями"
+    },
+    "price_matrix_no_negative_modifier": {
+      "fail": "Прайс-матрица {matrix}: правило '{factor}' множитель {multiplier} вне диапазона [-0,50; 2,00]",
+      "suggestion": "Ограничьте модификаторы диапазоном от -50% до +200%, чтобы избежать нереалистичных цен"
+    }
   }
 }

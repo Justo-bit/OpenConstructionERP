@@ -1559,3 +1559,93 @@ export function regulatorReport214FZ(
     `${BASE}/regulator-reports/214-FZ?${qs.toString()}`,
   );
 }
+
+/* ── Compliance dashboard + regulator reports (task #139) ──────────── */
+
+export type RuleSeverity = 'error' | 'warning' | 'info';
+
+export interface ComplianceRuleResult {
+  rule_id: string;
+  rule_name: string;
+  severity: RuleSeverity;
+  category: string;
+  passed: boolean;
+  message: string;
+  element_ref: string | null;
+  details: Record<string, unknown>;
+  suggestion: string | null;
+}
+
+export interface ComplianceDashboard {
+  development_id: string;
+  status: 'passed' | 'warnings' | 'errors' | 'skipped';
+  score: number | null;
+  counts: Record<string, number>;
+  rule_sets: string[];
+  duration_ms: number;
+  generated_at: string;
+  results: ComplianceRuleResult[];
+}
+
+export interface ComplianceRegulatorReport {
+  regulator: string;
+  development_id: string;
+  quarter: string;
+  generated_at: string;
+  pdf_base64: string;
+  payload_format: 'json' | 'xml';
+  payload_base64: string;
+  summary: Record<string, unknown>;
+}
+
+export type RegulatorCode = 'RERA' | 'MAHARERA' | '214FZ' | 'CMA';
+
+export function fetchComplianceDashboard(
+  devId: string,
+  locale?: string,
+): Promise<ComplianceDashboard> {
+  const qs = new URLSearchParams({ dev_id: devId });
+  if (locale) qs.set('locale', locale);
+  return apiGet<ComplianceDashboard>(`${BASE}/compliance/dashboard?${qs}`);
+}
+
+export function runComplianceChecks(
+  devId: string,
+  locale?: string,
+): Promise<ComplianceDashboard> {
+  const qs = new URLSearchParams({ dev_id: devId });
+  if (locale) qs.set('locale', locale);
+  return apiPost<ComplianceDashboard>(
+    `${BASE}/compliance/run-checks?${qs}`,
+    {},
+  );
+}
+
+export function fetchRegulatorReport(
+  devId: string,
+  regulator: RegulatorCode,
+  quarter: string,
+): Promise<ComplianceRegulatorReport> {
+  const qs = new URLSearchParams({
+    dev_id: devId,
+    regulator,
+    quarter,
+  });
+  return apiGet<ComplianceRegulatorReport>(
+    `${BASE}/compliance/regulator-reports?${qs}`,
+  );
+}
+
+export function complianceRegulatorReportPdfUrl(
+  devId: string,
+  regulator: RegulatorCode,
+  quarter: string,
+): string {
+  const qs = new URLSearchParams({
+    dev_id: devId,
+    regulator,
+    quarter,
+    as: 'pdf',
+  });
+  return `${BASE}/compliance/regulator-reports?${qs}`;
+}

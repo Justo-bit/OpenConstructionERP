@@ -12,9 +12,11 @@ async def on_startup() -> None:
     from app.modules.property_dev.events import (
         register_property_dev_event_subscribers,
         register_subscribers,
+        register_task_139_subscribers,
     )
     from app.modules.property_dev.permissions import register_property_dev_permissions
 
     register_property_dev_permissions()
     register_property_dev_event_subscribers()
     register_subscribers()
+    register_task_139_subscribers()

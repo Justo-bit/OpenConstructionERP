@@ -10,7 +10,7 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.dependencies import CurrentUserPayload, RequirePermission, SessionDep
 from app.modules.property_dev.schemas import (
@@ -119,6 +119,11 @@ from app.modules.property_dev.schemas import (
     WarrantyClaimCreate,
     WarrantyClaimResponse,
     WarrantyClaimUpdate,
+)
+from app.modules.property_dev.schemas import (
+    ComplianceDashboardResponse,
+    ComplianceRegulatorReportResponse,
+    ComplianceRuleResult,
 )
 from app.modules.property_dev.service import (
     PropertyDevService,
@@ -2906,3 +2911,201 @@ async def regulator_report_214fz(
 ) -> RegulatorReportResponse:
     payload = await service.generate_regulator_report_214FZ(dev_id, quarter)
     return RegulatorReportResponse(**payload)
+
+
+# ── Compliance dashboard + regulator reports (task #139) ───────────────
+
+
+async def _run_property_dev_validation(
+    session: SessionDep, dev_id: uuid.UUID, locale: str = "en",
+) -> Any:
+    """Execute the ``property_dev`` rule set against a development."""
+    from app.core.validation.engine import rule_registry, validation_engine
+
+    # Ensure the rule registry is populated. ``register_builtin_rules`` is
+    # idempotent — calling it twice does not duplicate rules.
+    if not rule_registry.list_rule_sets().get("property_dev"):
+        from app.core.validation.rules import register_builtin_rules
+
+        register_builtin_rules()
+
+    return await validation_engine.validate(
+        data={},
+        rule_sets=["property_dev"],
+        target_type="property_dev_development",
+        target_id=str(dev_id),
+        project_id=str(dev_id),
+        metadata={
+            "session": session,
+            "development_id": str(dev_id),
+            "locale": locale,
+        },
+    )
+
+
+def _report_to_response(
+    dev_id: uuid.UUID, report: Any,
+) -> ComplianceDashboardResponse:
+    """Materialise a ``ValidationReport`` into the dashboard response."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    summary = report.summary()
+    return ComplianceDashboardResponse(
+        development_id=dev_id,
+        status=summary["status"],
+        score=summary["score"],
+        counts=summary["counts"],
+        rule_sets=summary["rule_sets"],
+        duration_ms=summary["duration_ms"],
+        generated_at=_dt.now(_UTC).isoformat(timespec="seconds"),
+        results=[
+            ComplianceRuleResult(
+                rule_id=r.rule_id,
+                rule_name=r.rule_name,
+                severity=r.severity.value,
+                category=r.category.value,
+                passed=r.passed,
+                message=r.message,
+                element_ref=r.element_ref,
+                details=r.details or {},
+                suggestion=r.suggestion,
+            )
+            for r in report.results
+        ],
+    )
+
+
+@router.get(
+    "/compliance/dashboard",
+    response_model=ComplianceDashboardResponse,
+)
+async def compliance_dashboard(
+    session: SessionDep,
+    dev_id: uuid.UUID = Query(...),
+    locale: str = Query(default="en", min_length=2, max_length=10),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> ComplianceDashboardResponse:
+    """Aggregated traffic-light validation report for one development."""
+    # Confirm the development exists (404 instead of empty report).
+    svc = PropertyDevService(session)
+    dev = await svc.developments.get_by_id(dev_id)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="development_not_found")
+    report = await _run_property_dev_validation(session, dev_id, locale)
+    return _report_to_response(dev_id, report)
+
+
+@router.post(
+    "/compliance/run-checks",
+    response_model=ComplianceDashboardResponse,
+)
+async def compliance_run_checks(
+    session: SessionDep,
+    dev_id: uuid.UUID = Query(...),
+    locale: str = Query(default="en", min_length=2, max_length=10),
+    _perm: None = Depends(RequirePermission("property_dev.update")),
+) -> ComplianceDashboardResponse:
+    """Trigger a re-run of the property_dev rule set.
+
+    Mounted as POST because side-effecting downstream subscribers (audit
+    log, notifications) treat each invocation as a fresh validation pass.
+    Requires ``property_dev.update`` to gate it behind editor RBAC.
+    """
+    svc = PropertyDevService(session)
+    dev = await svc.developments.get_by_id(dev_id)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="development_not_found")
+    report = await _run_property_dev_validation(session, dev_id, locale)
+    return _report_to_response(dev_id, report)
+
+
+@router.get(
+    "/compliance/regulator-reports",
+    # response_model intentionally omitted — endpoint returns either a
+    # streaming Response (PDF/payload bytes) or the
+    # ComplianceRegulatorReportResponse JSON envelope depending on `as`.
+)
+async def compliance_regulator_report(
+    session: SessionDep,
+    dev_id: uuid.UUID = Query(...),
+    regulator: str = Query(...),
+    quarter: str = Query(..., pattern=r"^\d{4}-Q[1-4]$"),
+    as_: str = Query(
+        default="json", alias="as", pattern=r"^(json|pdf|payload)$"
+    ),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> Any:
+    """Generate a regulator report for a development.
+
+    Query::
+
+        regulator = RERA | MAHARERA | 214FZ | CMA
+        quarter   = YYYY-Qn
+        as        = json (default - base64'd PDF + payload inline) |
+                    pdf  (streaming application/pdf) |
+                    payload (streaming application/json or application/xml)
+    """
+    import base64
+
+    from app.modules.property_dev.regulatory import (
+        SUPPORTED_REGULATORS,
+        generate_regulator_report,
+    )
+
+    svc = PropertyDevService(session)
+    dev = await svc.developments.get_by_id(dev_id)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="development_not_found")
+    reg_code = (regulator or "").strip().upper()
+    if reg_code not in {"RERA", "MAHARERA", "214FZ", "214-FZ", "214", "CMA"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"unsupported_regulator:{regulator} "
+                f"(supported: {', '.join(SUPPORTED_REGULATORS)})"
+            ),
+        )
+    try:
+        report = await generate_regulator_report(
+            session, dev_id=dev_id, regulator=reg_code, quarter=quarter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if as_ == "pdf":
+        return Response(
+            content=report.pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{report.regulator}_{report.quarter}.pdf"'
+                ),
+            },
+        )
+    if as_ == "payload":
+        media = (
+            "application/xml"
+            if report.payload_format == "xml"
+            else "application/json"
+        )
+        ext = "xml" if report.payload_format == "xml" else "json"
+        return Response(
+            content=report.payload_bytes,
+            media_type=media,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{report.regulator}_{report.quarter}.{ext}"'
+                ),
+            },
+        )
+    return ComplianceRegulatorReportResponse(
+        regulator=report.regulator,
+        development_id=dev_id,
+        quarter=report.quarter,
+        generated_at=report.generated_at,
+        pdf_base64=base64.b64encode(report.pdf_bytes).decode("ascii"),
+        payload_format=report.payload_format,
+        payload_base64=base64.b64encode(report.payload_bytes).decode("ascii"),
+        summary=report.summary,
+    )

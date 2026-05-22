@@ -211,5 +211,39 @@
       "fail": "Schreibende Knoten ohne Gate: {nodes}",
       "suggestion": "Füge auf jedem Pfad von einem Trigger-/KI-Knoten zu jedem Schreibknoten ein Validierungs- oder Freigabe-Gate hinzu, bevor du veröffentlichst."
     }
+  },
+  "property_dev": {
+    "escrow_account_required": {
+      "fail": "Bauträgerprojekt benötigt ein aktives Treuhandkonto für Regulator '{regulator}'",
+      "suggestion": "Eröffne ein Treuhandkonto bei der regulator-lizenzierten Bank unter Compliance → Treuhandkonten"
+    },
+    "escrow_iban_valid": {
+      "fail": "Treuhandkonto {account}: IBAN '{iban}' besteht ISO 13616-Strukturprüfung nicht",
+      "suggestion": "IBAN korrigieren: Ländercode + Länge + Prüfsumme müssen ISO 13616 entsprechen"
+    },
+    "escrow_balance_reconciled": {
+      "fail": "Treuhandkonto {account}: Buchsaldo {ledger} weicht um {drift} von der Transaktionssumme ({transactions} Buchungen) ab",
+      "suggestion": "Treuhandkonto abstimmen — unverbuchte Eingänge oder fehlende Lastschriften prüfen"
+    },
+    "sales_contract_party_ownership_sums_to_100": {
+      "fail": "Vertrag {contract}: Eigentumsanteile summieren sich auf {total}% (Soll: exakt 100%)",
+      "suggestion": "Parteienanteile so anpassen, dass die Summe 100,00% ergibt"
+    },
+    "payment_schedule_instalments_sum_to_contract_value": {
+      "fail": "Vertrag {contract}: Ratensumme {instalments} weicht vom Vertragswert {contract_value} ab (Differenz {drift})",
+      "suggestion": "Zahlungsplan neu ausgleichen, damit Ratensumme dem Vertragstotal entspricht"
+    },
+    "reservation_expiry_in_future": {
+      "fail": "Reservierung {reservation}: expires_at {expires} liegt nicht in der Zukunft",
+      "suggestion": "Reservierung verlängern oder in expired/cancelled überführen"
+    },
+    "broker_commission_rate_within_bounds": {
+      "fail": "Provisionsvereinbarung {agreement}: {issue}",
+      "suggestion": "Prozentsatz zwischen 0,1% und 15%, Pauschalbetrag oder nicht-leere Staffelliste verwenden"
+    },
+    "price_matrix_no_negative_modifier": {
+      "fail": "Preismatrix {matrix}: Regel '{factor}' Multiplikator {multiplier} außerhalb [-0,50; 2,00]",
+      "suggestion": "Modifikatoren auf -50% bis +200% begrenzen, um unrealistische Preise zu vermeiden"
+    }
   }
 }

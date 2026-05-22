@@ -2894,6 +2894,1023 @@ class PipelineSideEffectGated(ValidationRule):
         ]
 
 
+# ── Property Development rules (task #139) ─────────────────────────────────
+#
+# Eight DB-backed rules covering escrow / contract / payment-schedule /
+# reservation / broker / price-matrix concerns for the ``property_dev``
+# module. Unlike the BOQ-shaped rules above these rules pull live rows from
+# the ORM via a SQLAlchemy session passed through
+# ``ValidationContext.metadata["session"]`` and a ``development_id``
+# (UUID or string) passed through ``metadata["development_id"]``.
+#
+# Pattern (shared by all 8):
+#     async def validate(self, context):
+#         ctx = _propdev_context(context)
+#         if ctx is None:
+#             return []        # not enough context — skip cleanly
+#         session, dev_id = ctx
+#         ...                  # query, compute, build results
+#
+# Each rule emits one PASS row when nothing is wrong (so the dashboard
+# shows a green tile) or one FAIL row per affected entity (so drill-down
+# carries a real element_ref). Severity / category are class attributes
+# so the registry, UI and tests can introspect without instantiating.
+
+
+def _propdev_context(context: ValidationContext) -> tuple[Any, Any] | None:
+    """Pull session + development_id from a property-dev rule context.
+
+    Returns ``None`` when either is missing so the caller can short-circuit
+    with an empty result list (rules MUST NOT raise on missing context —
+    that would surface as a phantom DIAGNOSTIC engine-error row).
+    """
+    meta = getattr(context, "metadata", None) or {}
+    if not isinstance(meta, dict):
+        return None
+    session = meta.get("session")
+    dev_id_raw = meta.get("development_id") or context.project_id
+    if session is None or dev_id_raw is None:
+        return None
+    try:
+        import uuid as _uuid
+
+        dev_id = (
+            dev_id_raw
+            if isinstance(dev_id_raw, _uuid.UUID)
+            else _uuid.UUID(str(dev_id_raw))
+        )
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return session, dev_id
+
+
+# Regulators that mandate a dedicated escrow account before sales can
+# open. Used by ``PropDevEscrowAccountRequired`` and surfaced to the UI
+# via the dashboard's ``rule_sets`` field.
+_PROPDEV_REGULATORS_REQUIRING_ESCROW = {"RERA", "MAHARERA", "214FZ", "CMA"}
+
+
+# ISO 13616 IBAN length table (country code → expected total length).
+# Truncated to the regulators we care about for property_dev. Unknown
+# country codes get a length-only sanity check (15-34 chars).
+_IBAN_LENGTHS: dict[str, int] = {
+    "AE": 23,  # UAE (RERA)
+    "AT": 20,
+    "BE": 16,
+    "CH": 21,
+    "DE": 22,
+    "ES": 24,
+    "FR": 27,
+    "GB": 22,
+    "IN": 0,    # India does not use IBAN (length=0 → skip length check)
+    "IT": 27,
+    "NL": 18,
+    "PL": 28,
+    "PT": 25,
+    "RU": 33,
+    "SA": 24,  # Saudi Arabia (CMA)
+    "TR": 26,
+    "UA": 29,
+    "US": 0,    # US does not use IBAN
+}
+
+
+def _iban_is_valid(iban: str) -> bool:
+    """ISO 13616 structural check: country + length + mod-97 checksum.
+
+    Returns ``False`` for empty strings, too-short strings, non-IBAN
+    countries, and any IBAN whose mod-97 remainder is not 1.
+    """
+    if not isinstance(iban, str):
+        return False
+    raw = iban.replace(" ", "").upper()
+    if len(raw) < 15 or len(raw) > 34:
+        return False
+    if not raw[:2].isalpha() or not raw[2:4].isdigit():
+        return False
+    country = raw[:2]
+    expected_len = _IBAN_LENGTHS.get(country)
+    if expected_len is None:
+        # Unknown country — accept range only.
+        if not (15 <= len(raw) <= 34):
+            return False
+    elif expected_len > 0 and len(raw) != expected_len:
+        return False
+    # Mod-97 checksum (move first 4 chars to end, convert letters to digits).
+    rotated = raw[4:] + raw[:4]
+    digits = []
+    for ch in rotated:
+        if ch.isdigit():
+            digits.append(ch)
+        elif ch.isalpha():
+            digits.append(str(ord(ch) - 55))
+        else:
+            return False
+    try:
+        return int("".join(digits)) % 97 == 1
+    except ValueError:
+        return False
+
+
+class PropDevEscrowAccountRequired(ValidationRule):
+    """ERROR: regulator requires an active escrow account but none exists.
+
+    For each Development whose ``metadata.regulator`` (or the legacy
+    ``metadata.jurisdiction``-derived inference) is one of
+    ``RERA``/``MAHARERA``/``214FZ``/``CMA`` we expect at least one
+    :class:`EscrowAccount` row with ``is_active=True``. Replaces the
+    pre-R6 ``Development.metadata["escrow_accounts"]`` workaround.
+    """
+
+    rule_id = "property_dev.escrow_account_required"
+    name = "Escrow account required"
+    standard = "property_dev"
+    severity = Severity.ERROR
+    category = RuleCategory.COMPLIANCE
+    description = (
+        "Developments whose jurisdiction mandates regulator-supervised "
+        "escrow (RERA/MAHARERA/214FZ/CMA) must have at least one active "
+        "EscrowAccount row."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import Development, EscrowAccount
+
+        dev = await session.get(Development, dev_id)
+        if dev is None:
+            return []
+        meta = dev.metadata_ or {}
+        regulator = (meta.get("regulator") or "").upper() if isinstance(meta, dict) else ""
+        if not regulator:
+            # Best-effort inference from jurisdiction.
+            jurisdiction = (meta.get("jurisdiction") if isinstance(meta, dict) else "") or ""
+            jurisdiction = jurisdiction.upper()
+            if jurisdiction.startswith("AE"):
+                regulator = "RERA"
+            elif jurisdiction.startswith("IN"):
+                regulator = "MAHARERA"
+            elif jurisdiction.startswith("RU"):
+                regulator = "214FZ"
+            elif jurisdiction.startswith("SA"):
+                regulator = "CMA"
+        if regulator not in _PROPDEV_REGULATORS_REQUIRING_ESCROW:
+            # Not subject to escrow rules — pass.
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        stmt = (
+            _sql_select(EscrowAccount.id)
+            .where(EscrowAccount.development_id == dev_id)
+            .where(EscrowAccount.is_active.is_(True))
+        )
+        active_count = len(list((await session.execute(stmt)).scalars().all()))
+        if active_count >= 1:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                    details={"regulator": regulator, "active_accounts": active_count},
+                )
+            ]
+        return [
+            RuleResult(
+                rule_id=self.rule_id,
+                rule_name=self.name,
+                severity=self.severity,
+                category=self.category,
+                passed=False,
+                message=translate(
+                    "property_dev.escrow_account_required.fail",
+                    locale=locale,
+                    regulator=regulator,
+                ),
+                element_ref=f"property_dev:development:{dev_id}",
+                details={"regulator": regulator, "active_accounts": 0},
+                suggestion=translate(
+                    "property_dev.escrow_account_required.suggestion",
+                    locale=locale,
+                ),
+            )
+        ]
+
+
+class PropDevEscrowIBANValid(ValidationRule):
+    """ERROR: every active EscrowAccount.iban must pass ISO 13616 check."""
+
+    rule_id = "property_dev.escrow_iban_valid"
+    name = "Escrow IBAN structurally valid"
+    standard = "property_dev"
+    severity = Severity.ERROR
+    category = RuleCategory.STRUCTURE
+    description = (
+        "All active escrow accounts must declare an IBAN that passes "
+        "ISO 13616 structural validation (country code, length, mod-97 "
+        "checksum). Non-IBAN countries (IN, US) are exempt."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import EscrowAccount
+
+        stmt = (
+            _sql_select(EscrowAccount)
+            .where(EscrowAccount.development_id == dev_id)
+            .where(EscrowAccount.is_active.is_(True))
+        )
+        accounts = list((await session.execute(stmt)).scalars().all())
+        if not accounts:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        all_pass = True
+        for acc in accounts:
+            iban = (acc.iban or "").strip()
+            country = iban[:2].upper() if iban else ""
+            # Empty IBAN OR India/US (no IBAN regime) → skip silently.
+            if not iban or _IBAN_LENGTHS.get(country, -1) == 0:
+                continue
+            if not _iban_is_valid(iban):
+                all_pass = False
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.escrow_iban_valid.fail",
+                            locale=locale,
+                            account=str(acc.id),
+                            iban=iban,
+                        ),
+                        element_ref=f"property_dev:escrow_account:{acc.id}",
+                        details={"escrow_account_id": str(acc.id), "iban": iban},
+                        suggestion=translate(
+                            "property_dev.escrow_iban_valid.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if all_pass:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevEscrowBalanceReconciled(ValidationRule):
+    """WARNING: per-account ledger total drifts from transactions sum.
+
+    Computes ``credit_total - debit_total`` from
+    :class:`EscrowTransaction` rows and compares against the implicit
+    ``EscrowAccount`` ledger (we treat the txn sum as ground truth and
+    flag accounts whose ``metadata.ledger_balance`` declares something
+    different). Drift > 0.01 currency unit triggers WARNING (it is a
+    soft signal — actual reconciliation lives in the dedicated workflow).
+    """
+
+    rule_id = "property_dev.escrow_balance_reconciled"
+    name = "Escrow balance reconciled"
+    standard = "property_dev"
+    severity = Severity.WARNING
+    category = RuleCategory.CONSISTENCY
+    description = (
+        "Sum of EscrowTransaction credit minus debit must equal the "
+        "account's declared ledger balance (metadata.ledger_balance), "
+        "within ±0.01 currency unit."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import func as _sql_func
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import (
+            EscrowAccount,
+            EscrowTransaction,
+        )
+
+        acc_stmt = (
+            _sql_select(EscrowAccount)
+            .where(EscrowAccount.development_id == dev_id)
+            .where(EscrowAccount.is_active.is_(True))
+        )
+        accounts = list((await session.execute(acc_stmt)).scalars().all())
+        if not accounts:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        any_drift = False
+        for acc in accounts:
+            meta = acc.metadata_ or {}
+            declared_raw = meta.get("ledger_balance") if isinstance(meta, dict) else None
+            if declared_raw is None:
+                # No declared ledger — nothing to compare against. Skip.
+                continue
+            try:
+                declared = Decimal(str(declared_raw))
+            except (InvalidOperation, ValueError, TypeError):
+                continue
+            tx_stmt = (
+                _sql_select(
+                    EscrowTransaction.direction,
+                    _sql_func.coalesce(_sql_func.sum(EscrowTransaction.amount), 0),
+                    _sql_func.count(),
+                )
+                .where(EscrowTransaction.escrow_account_id == acc.id)
+                .group_by(EscrowTransaction.direction)
+            )
+            credit = Decimal("0")
+            debit = Decimal("0")
+            tx_count = 0
+            for direction, total, cnt in (await session.execute(tx_stmt)).all():
+                if direction == "credit":
+                    credit = Decimal(str(total or 0))
+                elif direction == "debit":
+                    debit = Decimal(str(total or 0))
+                tx_count += int(cnt or 0)
+            computed = credit - debit
+            drift = (computed - declared).copy_abs()
+            if drift > Decimal("0.01"):
+                any_drift = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.escrow_balance_reconciled.fail",
+                            locale=locale,
+                            account=str(acc.id),
+                            ledger=str(declared.quantize(Decimal("0.01"))),
+                            drift=str(drift.quantize(Decimal("0.01"))),
+                            transactions=tx_count,
+                        ),
+                        element_ref=f"property_dev:escrow_account:{acc.id}",
+                        details={
+                            "escrow_account_id": str(acc.id),
+                            "declared_ledger": str(declared),
+                            "computed_from_txns": str(computed),
+                            "drift": str(drift),
+                            "transaction_count": tx_count,
+                        },
+                        suggestion=translate(
+                            "property_dev.escrow_balance_reconciled.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if not any_drift:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevSalesContractPartyOwnershipSumsTo100(ValidationRule):
+    """ERROR: sum of ContractParty.ownership_pct must equal 100.00 exactly."""
+
+    rule_id = "property_dev.sales_contract_party_ownership_sums_to_100"
+    name = "Contract party ownership sums to 100%"
+    standard = "property_dev"
+    severity = Severity.ERROR
+    category = RuleCategory.CONSISTENCY
+    description = (
+        "Every SalesContract's parties must collectively own 100.00% — "
+        "neither over-subscribed nor under-allocated."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import (
+            ContractParty,
+            Plot,
+            SalesContract,
+        )
+
+        # SalesContracts indirectly belong to a Development through Plot.
+        contract_stmt = (
+            _sql_select(SalesContract)
+            .join(Plot, Plot.id == SalesContract.plot_id)
+            .where(Plot.development_id == dev_id)
+        )
+        contracts = list(
+            (await session.execute(contract_stmt)).scalars().all()
+        )
+        if not contracts:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        any_bad = False
+        for c in contracts:
+            party_stmt = _sql_select(ContractParty).where(
+                ContractParty.sales_contract_id == c.id
+            )
+            parties = list((await session.execute(party_stmt)).scalars().all())
+            if not parties:
+                # Draft contracts with zero parties → out of scope; skip.
+                continue
+            total = sum(
+                (Decimal(str(p.ownership_pct or 0)) for p in parties),
+                Decimal("0"),
+            )
+            if total != Decimal("100.00") and total != Decimal("100"):
+                any_bad = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.sales_contract_party_ownership_sums_to_100.fail",
+                            locale=locale,
+                            contract=str(c.id),
+                            total=str(total.quantize(Decimal("0.01"))),
+                        ),
+                        element_ref=f"property_dev:sales_contract:{c.id}",
+                        details={
+                            "sales_contract_id": str(c.id),
+                            "contract_number": c.contract_number,
+                            "ownership_total": str(total),
+                            "party_count": len(parties),
+                        },
+                        suggestion=translate(
+                            "property_dev.sales_contract_party_ownership_sums_to_100.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if not any_bad:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevPaymentScheduleInstalmentsSumToContractValue(ValidationRule):
+    """ERROR: instalment amounts must add up to SalesContract.total_value."""
+
+    rule_id = "property_dev.payment_schedule_instalments_sum_to_contract_value"
+    name = "Payment schedule sums to contract value"
+    standard = "property_dev"
+    severity = Severity.ERROR
+    category = RuleCategory.CONSISTENCY
+    description = (
+        "Every PaymentSchedule attached to a SalesContract must have its "
+        "Instalment amounts sum to the contract's total_value (within "
+        "±0.01 currency unit)."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import (
+            Instalment,
+            PaymentSchedule,
+            Plot,
+            SalesContract,
+        )
+
+        contract_stmt = (
+            _sql_select(SalesContract)
+            .join(Plot, Plot.id == SalesContract.plot_id)
+            .where(Plot.development_id == dev_id)
+        )
+        contracts = list(
+            (await session.execute(contract_stmt)).scalars().all()
+        )
+        if not contracts:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        any_bad = False
+        for c in contracts:
+            sched_stmt = _sql_select(PaymentSchedule).where(
+                PaymentSchedule.sales_contract_id == c.id
+            )
+            sched = (
+                await session.execute(sched_stmt)
+            ).scalar_one_or_none()
+            if sched is None:
+                # No schedule yet — not the consistency rule's concern.
+                continue
+            inst_stmt = _sql_select(Instalment).where(
+                Instalment.schedule_id == sched.id
+            )
+            instalments = list(
+                (await session.execute(inst_stmt)).scalars().all()
+            )
+            instalment_total = sum(
+                (Decimal(str(i.amount or 0)) for i in instalments),
+                Decimal("0"),
+            )
+            contract_value = Decimal(str(c.total_value or 0))
+            drift = (instalment_total - contract_value).copy_abs()
+            if drift > Decimal("0.01"):
+                any_bad = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.payment_schedule_instalments_sum_to_contract_value.fail",
+                            locale=locale,
+                            contract=str(c.id),
+                            instalments=str(instalment_total.quantize(Decimal("0.01"))),
+                            contract_value=str(contract_value.quantize(Decimal("0.01"))),
+                            drift=str(drift.quantize(Decimal("0.01"))),
+                        ),
+                        element_ref=f"property_dev:sales_contract:{c.id}",
+                        details={
+                            "sales_contract_id": str(c.id),
+                            "schedule_id": str(sched.id),
+                            "contract_value": str(contract_value),
+                            "instalment_total": str(instalment_total),
+                            "drift": str(drift),
+                        },
+                        suggestion=translate(
+                            "property_dev.payment_schedule_instalments_sum_to_contract_value.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if not any_bad:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevReservationExpiryInFuture(ValidationRule):
+    """WARNING: active Reservation must have expires_at in the future."""
+
+    rule_id = "property_dev.reservation_expiry_in_future"
+    name = "Active reservation expiry in future"
+    standard = "property_dev"
+    severity = Severity.WARNING
+    category = RuleCategory.CONSISTENCY
+    description = (
+        "Every Reservation in status='active' must have expires_at strictly "
+        "in the future. Expired active rows must be transitioned to "
+        "'expired'/'cancelled'."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import Plot, Reservation
+
+        stmt = (
+            _sql_select(Reservation)
+            .join(Plot, Plot.id == Reservation.plot_id)
+            .where(Plot.development_id == dev_id)
+            .where(Reservation.status == "active")
+        )
+        reservations = list(
+            (await session.execute(stmt)).scalars().all()
+        )
+        if not reservations:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        now_iso = _dt.now(_UTC).date().isoformat()
+        results: list[RuleResult] = []
+        any_bad = False
+        for r in reservations:
+            exp = (r.expires_at or "").strip()
+            if not exp:
+                # Active reservation with no expiry → bad.
+                any_bad = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.reservation_expiry_in_future.fail",
+                            locale=locale,
+                            reservation=str(r.id),
+                            expires="",
+                        ),
+                        element_ref=f"property_dev:reservation:{r.id}",
+                        details={
+                            "reservation_id": str(r.id),
+                            "reservation_number": r.reservation_number,
+                            "expires_at": "",
+                        },
+                        suggestion=translate(
+                            "property_dev.reservation_expiry_in_future.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+                continue
+            # ISO YYYY-MM-DD string comparison works lexicographically.
+            if exp <= now_iso:
+                any_bad = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.reservation_expiry_in_future.fail",
+                            locale=locale,
+                            reservation=str(r.id),
+                            expires=exp,
+                        ),
+                        element_ref=f"property_dev:reservation:{r.id}",
+                        details={
+                            "reservation_id": str(r.id),
+                            "reservation_number": r.reservation_number,
+                            "expires_at": exp,
+                            "now": now_iso,
+                        },
+                        suggestion=translate(
+                            "property_dev.reservation_expiry_in_future.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if not any_bad:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevBrokerCommissionRateWithinBounds(ValidationRule):
+    """ERROR: discriminated-union shape + bounds check on each agreement.
+
+    - structure_type='percent' → ``structure["pct"]`` between 0.1% and 15%.
+    - structure_type='flat'    → ``structure["amount"]`` > 0.
+    - structure_type='ladder'  → ``structure["tiers"]`` non-empty list.
+    """
+
+    rule_id = "property_dev.broker_commission_rate_within_bounds"
+    name = "Broker commission within bounds"
+    standard = "property_dev"
+    severity = Severity.ERROR
+    category = RuleCategory.STRUCTURE
+    description = (
+        "Each CommissionAgreement must declare a valid structure: percent "
+        "agreements need a rate between 0.1% and 15%, flat agreements need "
+        "an amount, ladder agreements need at least one tier."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import or_ as _sql_or
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import CommissionAgreement
+
+        stmt = _sql_select(CommissionAgreement).where(
+            _sql_or(
+                CommissionAgreement.development_id == dev_id,
+                CommissionAgreement.development_id.is_(None),
+            )
+        )
+        agreements = list(
+            (await session.execute(stmt)).scalars().all()
+        )
+        if not agreements:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        any_bad = False
+        for a in agreements:
+            structure = a.structure or {}
+            stype = (a.structure_type or "percent").lower()
+            issue: str | None = None
+            if stype == "percent":
+                pct_raw = structure.get("pct") if isinstance(structure, dict) else None
+                try:
+                    pct = Decimal(str(pct_raw)) if pct_raw is not None else None
+                except (InvalidOperation, ValueError, TypeError):
+                    pct = None
+                if pct is None:
+                    issue = "percent agreement missing 'pct'"
+                else:
+                    # Heuristic: rate may be expressed as 0.025 (=2.5%) or 2.5.
+                    rate = pct / Decimal("100") if pct > Decimal("1") else pct
+                    if rate < Decimal("0.001") or rate > Decimal("0.15"):
+                        issue = (
+                            f"percent rate {pct} outside permitted range 0.1%-15%"
+                        )
+            elif stype == "flat":
+                amt_raw = structure.get("amount") if isinstance(structure, dict) else None
+                try:
+                    amt = Decimal(str(amt_raw)) if amt_raw is not None else None
+                except (InvalidOperation, ValueError, TypeError):
+                    amt = None
+                if amt is None or amt <= Decimal("0"):
+                    issue = "flat agreement requires positive 'amount'"
+            elif stype == "ladder":
+                tiers = structure.get("tiers") if isinstance(structure, dict) else None
+                if not isinstance(tiers, list) or not tiers:
+                    issue = "ladder agreement requires non-empty 'tiers'"
+            else:
+                issue = f"unknown structure_type '{stype}'"
+            if issue is not None:
+                any_bad = True
+                results.append(
+                    RuleResult(
+                        rule_id=self.rule_id,
+                        rule_name=self.name,
+                        severity=self.severity,
+                        category=self.category,
+                        passed=False,
+                        message=translate(
+                            "property_dev.broker_commission_rate_within_bounds.fail",
+                            locale=locale,
+                            agreement=str(a.id),
+                            issue=issue,
+                        ),
+                        element_ref=f"property_dev:commission_agreement:{a.id}",
+                        details={
+                            "agreement_id": str(a.id),
+                            "broker_id": str(a.broker_id),
+                            "structure_type": stype,
+                            "issue": issue,
+                        },
+                        suggestion=translate(
+                            "property_dev.broker_commission_rate_within_bounds.suggestion",
+                            locale=locale,
+                        ),
+                    )
+                )
+        if not any_bad:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
+class PropDevPriceMatrixNoNegativeModifier(ValidationRule):
+    """WARNING: every PriceMatrix.rules multiplier must be in [-0.50, 2.00].
+
+    Bounds are chosen to keep the final plot price in a sane envelope
+    (-50% discount to +200% premium per factor). Modifiers outside this
+    range almost always indicate a data-entry mistake.
+    """
+
+    rule_id = "property_dev.price_matrix_no_negative_modifier"
+    name = "Price matrix modifier in range"
+    standard = "property_dev"
+    severity = Severity.WARNING
+    category = RuleCategory.QUALITY
+    description = (
+        "Each PriceMatrix rule's multiplier must lie within [-0.50, 2.00] "
+        "(a -50% discount through +200% premium per factor)."
+    )
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        ctx = _propdev_context(context)
+        if ctx is None:
+            return []
+        session, dev_id = ctx
+        locale = _get_locale(context)
+
+        from sqlalchemy import select as _sql_select
+
+        from app.modules.property_dev.models import PriceMatrix
+
+        stmt = _sql_select(PriceMatrix).where(
+            PriceMatrix.development_id == dev_id
+        )
+        matrices = list((await session.execute(stmt)).scalars().all())
+        if not matrices:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        results: list[RuleResult] = []
+        any_bad = False
+        for m in matrices:
+            rules_blob = m.rules or []
+            if not isinstance(rules_blob, list):
+                continue
+            for r in rules_blob:
+                if not isinstance(r, dict):
+                    continue
+                factor = r.get("factor_type") or r.get("factor") or "?"
+                mult_raw = r.get("multiplier")
+                if mult_raw is None:
+                    mult_raw = r.get("price_modifier")
+                if mult_raw is None:
+                    continue
+                try:
+                    mult = Decimal(str(mult_raw))
+                except (InvalidOperation, ValueError, TypeError):
+                    continue
+                if mult < Decimal("-0.50") or mult > Decimal("2.00"):
+                    any_bad = True
+                    results.append(
+                        RuleResult(
+                            rule_id=self.rule_id,
+                            rule_name=self.name,
+                            severity=self.severity,
+                            category=self.category,
+                            passed=False,
+                            message=translate(
+                                "property_dev.price_matrix_no_negative_modifier.fail",
+                                locale=locale,
+                                matrix=str(m.id),
+                                factor=str(factor),
+                                multiplier=str(mult),
+                            ),
+                            element_ref=f"property_dev:price_matrix:{m.id}",
+                            details={
+                                "price_matrix_id": str(m.id),
+                                "factor_type": str(factor),
+                                "multiplier": str(mult),
+                            },
+                            suggestion=translate(
+                                "property_dev.price_matrix_no_negative_modifier.suggestion",
+                                locale=locale,
+                            ),
+                        )
+                    )
+        if not any_bad:
+            return [
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=True,
+                    message=_ok(locale),
+                )
+            ]
+        return results
+
+
 # ── Registration ────────────────────────────────────────────────────────────
 
 
@@ -2961,6 +3978,15 @@ def register_builtin_rules() -> None:
         (SekisanMetricUnits(), None),
         # Pipeline Builder — structural graph-validity gate
         (PipelineSideEffectGated(), None),
+        # Property Development (task #139)
+        (PropDevEscrowAccountRequired(), None),
+        (PropDevEscrowIBANValid(), None),
+        (PropDevEscrowBalanceReconciled(), None),
+        (PropDevSalesContractPartyOwnershipSumsTo100(), None),
+        (PropDevPaymentScheduleInstalmentsSumToContractValue(), None),
+        (PropDevReservationExpiryInFuture(), None),
+        (PropDevBrokerCommissionRateWithinBounds(), None),
+        (PropDevPriceMatrixNoNegativeModifier(), None),
     ]
 
     for rule, sets in rules:

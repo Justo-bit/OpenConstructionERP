@@ -435,7 +435,263 @@ def register_subscribers() -> None:
     logger.info("property_dev cross-module subscribers registered")
 
 
+# ── Cross-module inbound subscribers (task #139) ───────────────────────
+#
+# These wire property_dev to OTHER modules' events. Each handler opens a
+# fresh ``async_session_factory`` so it runs outside the publishing
+# request's transaction (matches the bim_hub events.py pattern). Failures
+# are logged at DEBUG and never raise into the bus.
+
+
+async def _on_crm_lead_qualified(event: Event) -> dict[str, Any] | None:
+    """Auto-create a ``Buyer(status="lead")`` for dev-focused CRM leads.
+
+    Payload contract::
+
+        {
+            "lead_id": "<uuid>",
+            "account_id": "<uuid?>",
+            "qualified_by": "<user?>",
+            "metadata": {
+                "dev_focused": true,
+                "development_code": "OAK-PARK-01",
+                "email": "buyer@example.com",
+                "full_name": "Jane Buyer",
+                "phone": "+44..."
+            }
+        }
+
+    The first three keys come from the CRM publisher; the ``metadata``
+    block is an OPTIONAL extension a CRM customisation can add without
+    breaking other subscribers. Missing fields → skip cleanly.
+    """
+    from sqlalchemy import func as _sql_func
+    from sqlalchemy import select as _sql_select
+
+    from app.modules.property_dev.models import Buyer, Development
+
+    data = event.data or {}
+    meta = data.get("metadata") or {}
+    if not isinstance(meta, dict) or not meta.get("dev_focused"):
+        return None
+    dev_code = (meta.get("development_code") or "").strip()
+    email = (meta.get("email") or "").strip()
+    if not dev_code or not email:
+        return None
+    full_name = (meta.get("full_name") or "").strip()
+    phone = (meta.get("phone") or "").strip() or None
+    try:
+        async with async_session_factory() as session:
+            dev = (
+                await session.execute(
+                    _sql_select(Development).where(Development.code == dev_code)
+                )
+            ).scalar_one_or_none()
+            if dev is None:
+                logger.debug(
+                    "property_dev.on_crm_lead_qualified: no Development "
+                    "with code=%r (lead=%s)",
+                    dev_code,
+                    data.get("lead_id"),
+                )
+                return None
+            existing = (
+                await session.execute(
+                    _sql_select(Buyer)
+                    .where(Buyer.development_id == dev.id)
+                    .where(_sql_func.lower(Buyer.email) == email.lower())
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                buyer_meta = dict(existing.metadata_ or {})
+                buyer_meta.setdefault("crm_lead_id", data.get("lead_id"))
+                await session.execute(
+                    Buyer.__table__.update()
+                    .where(Buyer.id == existing.id)
+                    .values(metadata=buyer_meta)
+                )
+                await session.commit()
+                logger.info(
+                    "property_dev: linked existing buyer %s to CRM lead %s",
+                    existing.id,
+                    data.get("lead_id"),
+                )
+                return {"status": "ok", "buyer_id": str(existing.id), "action": "linked"}
+            buyer = Buyer(
+                development_id=dev.id,
+                plot_id=None,
+                full_name=full_name,
+                email=email,
+                phone=phone,
+                language=(meta.get("language") or "en"),
+                status="lead",
+                currency=(meta.get("currency") or ""),
+                jurisdiction=(meta.get("jurisdiction") or "").upper(),
+                metadata_={"crm_lead_id": data.get("lead_id")},
+            )
+            session.add(buyer)
+            await session.commit()
+            logger.info(
+                "property_dev: auto-created buyer %s from CRM lead %s",
+                buyer.id,
+                data.get("lead_id"),
+            )
+            return {"status": "ok", "buyer_id": str(buyer.id), "action": "created"}
+    except Exception:
+        logger.debug(
+            "property_dev.on_crm_lead_qualified: handler failed",
+            exc_info=True,
+        )
+        return None
+
+
+async def _on_portal_buyer_signup(event: Event) -> dict[str, Any] | None:
+    """Stamp ``Buyer.portal_user_id`` when a portal account is created.
+
+    Payload contract::
+
+        {
+            "portal_user_id": "<uuid>",
+            "email": "buyer@example.com",
+            "development_id": "<uuid?>",   # OPTIONAL — narrows the lookup
+        }
+
+    Only a single buyer match counts — multiple matches are logged and
+    skipped (the consistency rule
+    ``property_dev.buyer_email_unique_in_dev`` will catch the duplicate).
+    """
+    from sqlalchemy import func as _sql_func
+    from sqlalchemy import select as _sql_select
+
+    from app.modules.property_dev.models import Buyer
+
+    data = event.data or {}
+    portal_user_id = _coerce_uuid(data.get("portal_user_id"))
+    email = (data.get("email") or "").strip()
+    if portal_user_id is None or not email:
+        return None
+    dev_id = _coerce_uuid(data.get("development_id"))
+    try:
+        async with async_session_factory() as session:
+            stmt = (
+                _sql_select(Buyer)
+                .where(_sql_func.lower(Buyer.email) == email.lower())
+                .where(Buyer.status != "cancelled")
+            )
+            if dev_id is not None:
+                stmt = stmt.where(Buyer.development_id == dev_id)
+            rows = list((await session.execute(stmt)).scalars().all())
+            if len(rows) != 1:
+                logger.debug(
+                    "property_dev.on_portal_buyer_signup: ambiguous match "
+                    "(found=%d) for email=%s",
+                    len(rows),
+                    email,
+                )
+                return None
+            buyer = rows[0]
+            await session.execute(
+                Buyer.__table__.update()
+                .where(Buyer.id == buyer.id)
+                .values(portal_user_id=portal_user_id)
+            )
+            await session.commit()
+            logger.info(
+                "property_dev: wired portal_user_id=%s onto buyer %s",
+                portal_user_id,
+                buyer.id,
+            )
+            return {"status": "ok", "buyer_id": str(buyer.id)}
+    except Exception:
+        logger.debug(
+            "property_dev.on_portal_buyer_signup: handler failed",
+            exc_info=True,
+        )
+        return None
+
+
+async def _on_finance_invoice_created(event: Event) -> dict[str, Any] | None:
+    """Append the invoice reference onto the linked buyer's metadata.
+
+    Payload contract::
+
+        {
+            "invoice_id": "<uuid>",
+            "invoice_number": "INV-2026-00042",
+            "metadata": {
+                "instalment_buyer_id": "<uuid>",
+                "instalment_kind": "deposit|stage_1|...",
+            }
+        }
+    """
+    from app.modules.property_dev.models import Buyer
+
+    data = event.data or {}
+    meta = data.get("metadata") or {}
+    if not isinstance(meta, dict):
+        return None
+    buyer_id = _coerce_uuid(meta.get("instalment_buyer_id"))
+    if buyer_id is None:
+        return None
+    invoice_id = data.get("invoice_id")
+    invoice_number = data.get("invoice_number") or invoice_id
+    if not invoice_number:
+        return None
+    try:
+        async with async_session_factory() as session:
+            buyer = await session.get(Buyer, buyer_id)
+            if buyer is None:
+                logger.debug(
+                    "property_dev.on_finance_invoice_created: buyer %s missing",
+                    buyer_id,
+                )
+                return None
+            buyer_meta = dict(buyer.metadata_ or {})
+            invoices = list(buyer_meta.get("invoice_refs") or [])
+            entry = {
+                "invoice_id": str(invoice_id) if invoice_id else None,
+                "invoice_number": str(invoice_number),
+                "kind": meta.get("instalment_kind") or "instalment",
+            }
+            invoices.append(entry)
+            buyer_meta["invoice_refs"] = invoices
+            buyer_meta["invoice_ref"] = entry["invoice_number"]  # latest
+            await session.execute(
+                Buyer.__table__.update()
+                .where(Buyer.id == buyer.id)
+                .values(metadata=buyer_meta)
+            )
+            await session.commit()
+            logger.info(
+                "property_dev: recorded invoice %s on buyer %s",
+                entry["invoice_number"],
+                buyer.id,
+            )
+            return {"status": "ok", "buyer_id": str(buyer.id), "invoice_number": entry["invoice_number"]}
+    except Exception:
+        logger.debug(
+            "property_dev.on_finance_invoice_created: handler failed",
+            exc_info=True,
+        )
+        return None
+
+
+_TASK_139_SUBSCRIBED_FLAG = "_property_dev_task_139_subscribers_registered"
+
+
+def register_task_139_subscribers() -> None:
+    """Wire cross-module inbound subscribers (task #139). Idempotent."""
+    if getattr(event_bus, _TASK_139_SUBSCRIBED_FLAG, False):
+        return
+    event_bus.subscribe("crm.lead.qualified", _on_crm_lead_qualified)
+    event_bus.subscribe("portal.buyer_signup.completed", _on_portal_buyer_signup)
+    event_bus.subscribe("finance.invoice.created", _on_finance_invoice_created)
+    setattr(event_bus, _TASK_139_SUBSCRIBED_FLAG, True)
+    logger.info("property_dev task #139 cross-module subscribers registered")
+
+
 __all__ = [
     "register_property_dev_event_subscribers",
     "register_subscribers",
+    "register_task_139_subscribers",
 ]

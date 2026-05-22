@@ -2329,6 +2329,59 @@ class ContractTaxQuote(BaseModel):
     breakdown: list[TaxQuoteLineItem] = Field(default_factory=list)
 
 
+# ── Compliance dashboard (task #139) ────────────────────────────────────
+
+
+class ComplianceRuleResult(BaseModel):
+    """A single :class:`ValidationRule` result in the compliance dashboard."""
+
+    rule_id: str
+    rule_name: str
+    severity: str
+    category: str
+    passed: bool
+    message: str
+    element_ref: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    suggestion: str | None = None
+
+
+class ComplianceDashboardResponse(BaseModel):
+    """Traffic-light + drill-down aggregated for a development.
+
+    ``score`` is the engine-computed severity-weighted ratio (``None`` when
+    the report contained no compliance results — i.e. nothing was checked).
+    """
+
+    development_id: UUID
+    status: str
+    score: float | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    rule_sets: list[str] = Field(default_factory=list)
+    duration_ms: float = 0.0
+    generated_at: str
+    results: list[ComplianceRuleResult] = Field(default_factory=list)
+
+
+class ComplianceRegulatorReportResponse(BaseModel):
+    """Full JSON envelope for ``GET /compliance/regulator-reports``.
+
+    Distinct from :class:`RegulatorReportResponse` because the compliance
+    endpoint returns both PDF + payload base64'd inline so the client can
+    decode without a second request. Named ``Compliance*`` to avoid
+    collision with the pre-existing single-file regulator report schema.
+    """
+
+    regulator: str
+    development_id: UUID
+    quarter: str
+    generated_at: str
+    pdf_base64: str
+    payload_format: str
+    payload_base64: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 __all_task_138__ = (
     "BlockCreate",
     "BlockResponse",
