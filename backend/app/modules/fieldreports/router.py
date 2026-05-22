@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from app.core.file_signature import detect as detect_signature
 from app.core.upload_guards import reject_if_xlsx_bomb
 from app.dependencies import CurrentUserId, RequirePermission, SessionDep, verify_project_access
 from app.modules.fieldreports.schemas import (
@@ -506,11 +507,42 @@ async def import_field_reports_file(
             detail="Uploaded file is empty.",
         )
 
+    # Hard cap on body size — the entire upload is read into memory and
+    # then again by openpyxl. 25 MB is well above any legitimate field-
+    # report import (a 10K-row sheet is ~2 MB) and keeps a malicious
+    # caller from forcing arbitrarily large allocations.
+    _IMPORT_MAX_BYTES = 25 * 1024 * 1024
+    if len(content) > _IMPORT_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File exceeds maximum size ({_IMPORT_MAX_BYTES} bytes).",
+        )
+
+    # Magic-byte verification: the filename extension is fully attacker-
+    # controlled (any client can rename a ``.exe`` to ``.xlsx``).
+    # ``.xlsx`` / ``.xls`` are matched against their respective container
+    # signatures so an executable / archive / nested zip-bomb is rejected
+    # before it ever reaches openpyxl. CSV stays best-effort — it has no
+    # magic bytes — but the size cap above still applies.
+    is_excel = filename.endswith((".xlsx", ".xls"))
+    if is_excel:
+        detected = detect_signature(content[:16])
+        # .xlsx is a ZIP container; legacy .xls is an OLE compound doc.
+        allowed = {"zip"} if filename.endswith(".xlsx") else {"ole", "zip"}
+        if detected not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"File content does not match the {filename.rsplit('.', 1)[-1]} "
+                    f"format (detected signature: {detected or 'unknown'})."
+                ),
+            )
+
     # Zip-bomb guard: reject .xlsx whose uncompressed sheets exceed 50 MB.
     reject_if_xlsx_bomb(content)
 
     try:
-        if filename.endswith((".xlsx", ".xls")):
+        if is_excel:
             rows = _parse_report_rows_from_excel(content)
         else:
             rows = _parse_report_rows_from_csv(content)
