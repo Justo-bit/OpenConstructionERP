@@ -690,8 +690,130 @@ def register_task_139_subscribers() -> None:
     logger.info("property_dev task #139 cross-module subscribers registered")
 
 
+# ── Snag → Warranty auto-bridge (v3113) ────────────────────────────────
+
+
+async def _on_snag_created_warranty_bridge(event: Event) -> dict[str, Any] | None:
+    """Promote post-handover snags into a draft warranty claim.
+
+    Triggered by ``property_dev.snag.created``. Fires only when:
+      * the snag is on a handover that has been completed
+      * the snag was raised by a buyer (buyer_id present), or the
+        handover plot has a unique buyer attached
+      * no warranty claim already exists with the same source_snag_id
+
+    The bridge writes a ``raised`` claim with ``severity`` mirroring the
+    snag. The UI surfaces it for triage; the bridge never auto-accepts
+    or auto-closes — that stays a human decision (CLAUDE.md principle
+    7: AI-augmented, human-confirmed).
+
+    Best-effort: errors are logged at DEBUG and never raised back into
+    the event bus.
+    """
+    payload = event.data or {}
+    snag_id = _coerce_uuid(payload.get("snag_id"))
+    handover_id = _coerce_uuid(payload.get("handover_id"))
+    if snag_id is None or handover_id is None:
+        return None
+
+    try:
+        from sqlalchemy import select as _select
+
+        from app.modules.property_dev.models import (
+            Buyer as _Buyer,
+        )
+        from app.modules.property_dev.models import (
+            Handover as _Handover,
+        )
+        from app.modules.property_dev.repository import (
+            WarrantyClaimRepository as _WarrantyRepo,
+        )
+
+        async with async_session_factory() as session:
+            # Idempotency: skip if a claim is already linked to this snag.
+            existing = await _WarrantyRepo(session).find_by_source_snag(snag_id)
+            if existing is not None:
+                return {"status": "ignored", "reason": "already linked"}
+
+            handover = await session.get(_Handover, handover_id)
+            if handover is None or not handover.completed_at:
+                # Pre-handover snags don't become warranty claims —
+                # they belong on the snag list, not in warranty.
+                return {"status": "ignored", "reason": "pre-handover"}
+
+            buyer_id = _coerce_uuid(payload.get("buyer_id"))
+            if buyer_id is None:
+                # Best-effort: any buyer on the plot.
+                row = (
+                    await session.execute(
+                        _select(_Buyer)
+                        .where(_Buyer.plot_id == handover.plot_id)
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    return {"status": "ignored", "reason": "no buyer link"}
+                buyer_id = row.id
+
+            from app.modules.property_dev.schemas import (
+                WarrantyClaimCreate as _WCreate,
+            )
+            from app.modules.property_dev.service import (
+                PropertyDevService as _Svc,
+            )
+
+            sev_in = payload.get("severity") or "minor"
+            sev = (
+                sev_in
+                if sev_in in ("minor", "major", "critical")
+                else "minor"
+            )
+            create = _WCreate(
+                plot_id=handover.plot_id,
+                buyer_id=buyer_id,
+                handover_id=handover_id,
+                source_snag_id=snag_id,
+                category="defect",
+                severity=sev,
+                description=(payload.get("description") or "")[:2000]
+                or "(promoted from snag)",
+            )
+            svc = _Svc(session)
+            claim = await svc.raise_warranty_claim(
+                handover.plot_id, buyer_id, create,
+            )
+            await session.commit()
+            logger.info(
+                "property_dev: bridged snag %s into warranty claim %s",
+                snag_id,
+                claim.id,
+            )
+            return {"status": "ok", "claim_id": str(claim.id)}
+    except Exception:
+        logger.debug(
+            "property_dev._on_snag_created_warranty_bridge: handler failed",
+            exc_info=True,
+        )
+        return None
+
+
+_WARRANTY_BRIDGE_FLAG = "_property_dev_warranty_bridge_subscribed"
+
+
+def register_warranty_bridge_subscribers() -> None:
+    """Wire the snag→warranty auto-bridge subscriber. Idempotent."""
+    if getattr(event_bus, _WARRANTY_BRIDGE_FLAG, False):
+        return
+    event_bus.subscribe(
+        "property_dev.snag.created", _on_snag_created_warranty_bridge
+    )
+    setattr(event_bus, _WARRANTY_BRIDGE_FLAG, True)
+    logger.info("property_dev snag→warranty bridge subscriber registered")
+
+
 __all__ = [
     "register_property_dev_event_subscribers",
     "register_subscribers",
     "register_task_139_subscribers",
+    "register_warranty_bridge_subscribers",
 ]

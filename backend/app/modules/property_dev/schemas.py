@@ -226,12 +226,20 @@ class PlotCreate(BaseModel):
     plot_number: str = Field(..., min_length=1, max_length=50)
     house_type_id: UUID | None = None
     house_type_variant_id: UUID | None = None
+    house_type_label: str | None = Field(default=None, max_length=120)
     block_id: UUID | None = None
     level_in_block: int | None = Field(default=None, ge=-10, le=200)
     position_on_floor: str | None = Field(default=None, max_length=40)
     orientation: str | None = Field(default=None, max_length=16)
+    view_type: str | None = Field(default=None, max_length=40)
     area_m2: Decimal = Field(default=Decimal("0"), ge=0)
     garden_area_m2: Decimal | None = Field(default=None, ge=0)
+    balcony_area_m2: Decimal | None = Field(default=None, ge=0)
+    storage_area_m2: Decimal | None = Field(default=None, ge=0)
+    bedrooms: int = Field(default=0, ge=0, le=20)
+    bathrooms: int = Field(default=0, ge=0, le=20)
+    parking_spaces: int = Field(default=0, ge=0, le=20)
+    sun_exposure_hours: Decimal | None = Field(default=None, ge=0, le=24)
     price_base: Decimal = Field(default=Decimal("0"), ge=0)
     currency: str = Field(default="", max_length=8)
     status: str = Field(
@@ -254,12 +262,20 @@ class PlotUpdate(BaseModel):
 
     house_type_id: UUID | None = None
     house_type_variant_id: UUID | None = None
+    house_type_label: str | None = Field(default=None, max_length=120)
     block_id: UUID | None = None
     level_in_block: int | None = Field(default=None, ge=-10, le=200)
     position_on_floor: str | None = Field(default=None, max_length=40)
     orientation: str | None = Field(default=None, max_length=16)
+    view_type: str | None = Field(default=None, max_length=40)
     area_m2: Decimal | None = Field(default=None, ge=0)
     garden_area_m2: Decimal | None = Field(default=None, ge=0)
+    balcony_area_m2: Decimal | None = Field(default=None, ge=0)
+    storage_area_m2: Decimal | None = Field(default=None, ge=0)
+    bedrooms: int | None = Field(default=None, ge=0, le=20)
+    bathrooms: int | None = Field(default=None, ge=0, le=20)
+    parking_spaces: int | None = Field(default=None, ge=0, le=20)
+    sun_exposure_hours: Decimal | None = Field(default=None, ge=0, le=24)
     price_base: Decimal | None = Field(default=None, ge=0)
     computed_price: Decimal | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, max_length=8)
@@ -284,12 +300,20 @@ class PlotResponse(BaseModel):
     plot_number: str
     house_type_id: UUID | None = None
     house_type_variant_id: UUID | None = None
+    house_type_label: str | None = None
     block_id: UUID | None = None
     level_in_block: int | None = None
     position_on_floor: str | None = None
     orientation: str | None = None
+    view_type: str | None = None
     area_m2: Decimal = Decimal("0")
     garden_area_m2: Decimal | None = None
+    balcony_area_m2: Decimal | None = None
+    storage_area_m2: Decimal | None = None
+    bedrooms: int = 0
+    bathrooms: int = 0
+    parking_spaces: int = 0
+    sun_exposure_hours: Decimal | None = None
     price_base: Decimal = Decimal("0")
     computed_price: Decimal | None = None
     currency: str = ""
@@ -780,15 +804,24 @@ class WarrantyClaimCreate(BaseModel):
 
     plot_id: UUID
     buyer_id: UUID
+    handover_id: UUID | None = None
+    source_snag_id: UUID | None = None
+    assigned_to_user_id: UUID | None = None
     raised_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     category: str = Field(
-        default="defect", pattern=r"^(defect|snag|service)$"
+        default="defect",
+        pattern=r"^(defect|snag|service|structural|cosmetic|mep)$",
+    )
+    severity: str = Field(
+        default="minor", pattern=r"^(minor|major|critical)$"
     )
     description: str = Field(..., min_length=1)
+    photos: list[str] = Field(default_factory=list)
     status: str = Field(
         default="raised",
         pattern=r"^(raised|under_review|accepted|rejected|closed)$",
     )
+    sla_deadline: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     linked_service_ticket_id: UUID | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -799,17 +832,34 @@ class WarrantyClaimUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     category: str | None = Field(
-        default=None, pattern=r"^(defect|snag|service)$"
+        default=None,
+        pattern=r"^(defect|snag|service|structural|cosmetic|mep)$",
+    )
+    severity: str | None = Field(
+        default=None, pattern=r"^(minor|major|critical)$"
     )
     description: str | None = Field(default=None, min_length=1)
+    photos: list[str] | None = None
     status: str | None = Field(
         default=None,
         pattern=r"^(raised|under_review|accepted|rejected|closed)$",
     )
+    assigned_to_user_id: UUID | None = None
+    sla_deadline: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    handover_id: UUID | None = None
+    resolution_notes: str | None = None
     accepted_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     closed_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     linked_service_ticket_id: UUID | None = None
     metadata: dict[str, Any] | None = None
+
+
+class WarrantyClaimAssignRequest(BaseModel):
+    """Assign or unassign a warranty claim."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    assigned_to_user_id: UUID | None = None
 
 
 class WarrantyClaimResponse(BaseModel):
@@ -820,14 +870,25 @@ class WarrantyClaimResponse(BaseModel):
     id: UUID
     plot_id: UUID
     buyer_id: UUID
+    handover_id: UUID | None = None
+    source_snag_id: UUID | None = None
+    assigned_to_user_id: UUID | None = None
     raised_at: str | None = None
     category: str = "defect"
+    severity: str = "minor"
     description: str = ""
+    photos: list[str] = Field(default_factory=list)
     status: str = "raised"
+    sla_deadline: str | None = None
     accepted_at: str | None = None
     closed_at: str | None = None
+    resolution_notes: str | None = None
     linked_service_ticket_id: UUID | None = None
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
+    # Computed at read-time by the service layer (see
+    # ``PropertyDevService._is_in_warranty``). True when raised_at falls
+    # within the structural-warranty window from Handover.completed_at.
+    is_in_warranty: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -2644,7 +2705,77 @@ __all_task_140__ = (
     "InventoryAgeingPlot",
     "InventoryAgeingResponse",
     "InventoryHeatmapResponse",
+    "PropertyDevHouseTypeCreate",
+    "PropertyDevHouseTypeResponse",
+    "PropertyDevHouseTypeUpdate",
     "SalesVelocityBucket",
     "SalesVelocityResponse",
     "SalesVelocityTotals",
 )
+
+
+# ── House Type Catalogue (preset + user-created) ────────────────────────
+
+
+class PropertyDevHouseTypeCreate(BaseModel):
+    """Create a custom house-type catalogue entry.
+
+    ``project_id`` is required for user-created entries — global presets
+    are only inserted via the migration seed, never through the API.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    project_id: UUID
+    country_code: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=2,
+        pattern=r"^[A-Z]{2}$",
+    )
+    code: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Z0-9_]+$")
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = None
+    area_typical_m2: Decimal | None = Field(default=None, ge=0)
+    floors_typical: int | None = Field(default=None, ge=0, le=200)
+
+
+class PropertyDevHouseTypeUpdate(BaseModel):
+    """Partial update for a user-created house-type catalogue entry.
+
+    The service layer rejects updates on preset rows (``is_preset=True``)
+    so this never has to be a no-op on the model side.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    area_typical_m2: Decimal | None = Field(default=None, ge=0)
+    floors_typical: int | None = Field(default=None, ge=0, le=200)
+    country_code: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=2,
+        pattern=r"^[A-Z]{2}$",
+    )
+
+
+class PropertyDevHouseTypeResponse(BaseModel):
+    """Catalogue entry as returned to the UI."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    project_id: UUID | None = None
+    country_code: str | None = None
+    code: str
+    name: str
+    description: str | None = None
+    area_typical_m2: Decimal | None = None
+    floors_typical: int | None = None
+    is_preset: bool = False
+    created_by: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+

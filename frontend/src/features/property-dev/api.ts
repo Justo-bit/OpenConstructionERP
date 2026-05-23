@@ -32,7 +32,14 @@ export type WarrantyStatus =
   | 'accepted'
   | 'rejected'
   | 'closed';
-export type WarrantyCategory = 'defect' | 'snag' | 'service';
+export type WarrantyCategory =
+  | 'defect'
+  | 'snag'
+  | 'service'
+  | 'structural'
+  | 'cosmetic'
+  | 'mep';
+export type WarrantySeverity = 'minor' | 'major' | 'critical';
 
 export interface Development {
   id: string;
@@ -58,12 +65,20 @@ export interface Plot {
   plot_number: string;
   house_type_id: string | null;
   house_type_variant_id: string | null;
+  house_type_label?: string | null;
   block_id?: string | null;
   level_in_block?: number | null;
   position_on_floor?: string | null;
   orientation: string | null;
+  view_type?: string | null;
   area_m2: number | string;
   garden_area_m2: number | string | null;
+  balcony_area_m2?: number | string | null;
+  storage_area_m2?: number | string | null;
+  bedrooms?: number;
+  bathrooms?: number;
+  parking_spaces?: number;
+  sun_exposure_hours?: number | string | null;
   price_base: number | string;
   computed_price?: number | string | null;
   currency: string;
@@ -187,14 +202,22 @@ export interface WarrantyClaim {
   id: string;
   plot_id: string;
   buyer_id: string;
+  handover_id: string | null;
+  source_snag_id: string | null;
+  assigned_to_user_id: string | null;
   raised_at: string | null;
   category: WarrantyCategory;
+  severity: WarrantySeverity;
   description: string;
+  photos: string[];
   status: WarrantyStatus;
+  sla_deadline: string | null;
   accepted_at: string | null;
   closed_at: string | null;
+  resolution_notes: string | null;
   linked_service_ticket_id: string | null;
   metadata: Record<string, unknown>;
+  is_in_warranty: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -225,7 +248,20 @@ export interface CreatePlotPayload {
   development_id: string;
   plot_number: string;
   house_type_id?: string;
+  house_type_label?: string;
+  block_id?: string;
+  level_in_block?: number;
+  position_on_floor?: string;
+  orientation?: string;
+  view_type?: string;
   area_m2?: number;
+  garden_area_m2?: number;
+  balcony_area_m2?: number;
+  storage_area_m2?: number;
+  bedrooms?: number;
+  bathrooms?: number;
+  parking_spaces?: number;
+  sun_exposure_hours?: number;
   price_base?: number;
   currency?: string;
   status?: PlotStatus;
@@ -378,6 +414,69 @@ export function listVariants(house_type_id: string): Promise<HouseTypeVariant[]>
   return apiGet<HouseTypeVariant[]>(`${BASE}/house-type-variants/?${qs.toString()}`);
 }
 
+/* ── House Type Catalogue (preset + user-created) ─────────────────────── */
+
+export interface HouseTypeCatalogueEntry {
+  id: string;
+  project_id: string | null;
+  country_code: string | null;
+  code: string;
+  name: string;
+  description: string | null;
+  area_typical_m2: string | null;
+  floors_typical: number | null;
+  is_preset: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateHouseTypeCataloguePayload {
+  project_id: string;
+  country_code?: string | null;
+  code: string;
+  name: string;
+  description?: string | null;
+  area_typical_m2?: number | string | null;
+  floors_typical?: number | null;
+}
+
+export interface UpdateHouseTypeCataloguePayload {
+  name?: string;
+  description?: string | null;
+  area_typical_m2?: number | string | null;
+  floors_typical?: number | null;
+  country_code?: string | null;
+}
+
+export function fetchHouseTypes(
+  countryCode?: string,
+  projectId?: string,
+): Promise<HouseTypeCatalogueEntry[]> {
+  const qs = new URLSearchParams();
+  if (countryCode) qs.set('country_code', countryCode);
+  if (projectId) qs.set('project_id', projectId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return apiGet<HouseTypeCatalogueEntry[]>(`${BASE}/house-type-catalogue/${suffix}`);
+}
+
+export function createHouseTypeCatalogue(
+  data: CreateHouseTypeCataloguePayload,
+): Promise<HouseTypeCatalogueEntry> {
+  return apiPost<HouseTypeCatalogueEntry>(`${BASE}/house-type-catalogue/`, data);
+}
+
+export function updateHouseTypeCatalogue(
+  id: string,
+  data: UpdateHouseTypeCataloguePayload,
+): Promise<HouseTypeCatalogueEntry> {
+  return apiPatch<HouseTypeCatalogueEntry>(`${BASE}/house-type-catalogue/${id}`, data);
+}
+
+export function deleteHouseTypeCatalogue(id: string): Promise<void> {
+  return apiDelete<void>(`${BASE}/house-type-catalogue/${id}`);
+}
+
 /* ── Buyers ───────────────────────────────────────────────────────────── */
 
 export function listBuyers(params: {
@@ -445,6 +544,43 @@ export function listHandovers(plot_id: string): Promise<Handover[]> {
   return apiGet<Handover[]>(`${BASE}/handovers/?${qs.toString()}`);
 }
 
+export interface CreateHandoverPayload {
+  plot_id: string;
+  scheduled_at?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export function createHandover(data: CreateHandoverPayload): Promise<Handover> {
+  return apiPost<Handover>(`${BASE}/handovers/`, data);
+}
+
+export interface UpdateHandoverPayload {
+  scheduled_at?: string | null;
+  completed_at?: string | null;
+  snag_count_at_handover?: number;
+  final_check_passed?: boolean;
+  keys_handed_over_at?: string | null;
+  customer_signature_ref?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export function updateHandover(
+  id: string,
+  data: UpdateHandoverPayload,
+): Promise<Handover> {
+  return apiPatch<Handover>(`${BASE}/handovers/${id}`, data);
+}
+
+export function deleteHandover(id: string): Promise<void> {
+  return apiDelete(`${BASE}/handovers/${id}`);
+}
+
+export function getHandover(id: string): Promise<Handover> {
+  return apiGet<Handover>(`${BASE}/handovers/${id}`);
+}
+
 export function completeHandover(
   id: string,
   data: {
@@ -475,12 +611,20 @@ export function listSnags(params: {
 export function listWarrantyClaims(params: {
   buyer_id?: string;
   plot_id?: string;
+  development_id?: string;
+  project_id?: string;
   status?: string;
+  category?: string;
+  severity?: string;
 }): Promise<WarrantyClaim[]> {
   const qs = new URLSearchParams();
   if (params.buyer_id) qs.set('buyer_id', params.buyer_id);
   if (params.plot_id) qs.set('plot_id', params.plot_id);
+  if (params.development_id) qs.set('development_id', params.development_id);
+  if (params.project_id) qs.set('project_id', params.project_id);
   if (params.status) qs.set('status', params.status);
+  if (params.category) qs.set('category', params.category);
+  if (params.severity) qs.set('severity', params.severity);
   return apiGet<WarrantyClaim[]>(`${BASE}/warranty-claims/?${qs.toString()}`);
 }
 
@@ -489,8 +633,39 @@ export function createWarrantyClaim(data: {
   buyer_id: string;
   description: string;
   category?: WarrantyCategory;
+  severity?: WarrantySeverity;
+  handover_id?: string | null;
+  source_snag_id?: string | null;
+  assigned_to_user_id?: string | null;
+  sla_deadline?: string | null;
+  photos?: string[];
 }): Promise<WarrantyClaim> {
   return apiPost<WarrantyClaim>(`${BASE}/warranty-claims/`, data);
+}
+
+export function updateWarrantyClaim(
+  id: string,
+  data: Partial<{
+    description: string;
+    category: WarrantyCategory;
+    severity: WarrantySeverity;
+    status: WarrantyStatus;
+    assigned_to_user_id: string | null;
+    sla_deadline: string | null;
+    resolution_notes: string | null;
+    handover_id: string | null;
+  }>,
+): Promise<WarrantyClaim> {
+  return apiPatch<WarrantyClaim>(`${BASE}/warranty-claims/${id}`, data);
+}
+
+export function assignWarrantyClaim(
+  id: string,
+  assignedToUserId: string | null,
+): Promise<WarrantyClaim> {
+  return apiPost<WarrantyClaim>(`${BASE}/warranty-claims/${id}/assign`, {
+    assigned_to_user_id: assignedToUserId,
+  });
 }
 
 export function acceptWarrantyClaim(id: string): Promise<WarrantyClaim> {
@@ -503,6 +678,19 @@ export function rejectWarrantyClaim(id: string): Promise<WarrantyClaim> {
 
 export function closeWarrantyClaim(id: string): Promise<WarrantyClaim> {
   return apiPost<WarrantyClaim>(`${BASE}/warranty/${id}/close`, {});
+}
+
+export function warrantyClaimPdfUrl(id: string): string {
+  return `/api${BASE}/warranty-claims/${id}/pdf`;
+}
+
+export function createWarrantyClaimFromSnag(
+  snagId: string,
+): Promise<WarrantyClaim> {
+  return apiPost<WarrantyClaim>(
+    `${BASE}/warranty-claims/from-snag/${snagId}`,
+    {},
+  );
 }
 
 

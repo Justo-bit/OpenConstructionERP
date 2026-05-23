@@ -5,11 +5,12 @@
  * /property-dev/dashboards/inventory-heatmap) and a development selector.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
+import { Breadcrumb } from '@/shared/ui';
 import { listDevelopments, type Development } from '../api';
 import { InventoryHeatmap } from './InventoryHeatmap';
 import { SalesVelocity } from './SalesVelocity';
@@ -37,10 +38,14 @@ export function FullViewPage() {
     queryFn: () => listDevelopments({ limit: 100 }),
   });
 
-  const first = developments?.[0];
-  if (first && !developmentId) {
-    setDevelopmentId(first.id);
-  }
+  // Seed local state from async query data via useEffect — assigning
+  // during render trips StrictMode's "setState during render" warning.
+  useEffect(() => {
+    if (!developmentId && developments && developments.length > 0) {
+      const first = developments[0];
+      if (first) setDevelopmentId(first.id);
+    }
+  }, [developments, developmentId]);
 
   if (!VALID_KEYS.has(key)) {
     return (
@@ -84,23 +89,41 @@ export function FullViewPage() {
     }
   };
 
+  const dashboardTitle = t(
+    `propdev.dashboards.full.${key.replace(/-/g, '_')}`,
+    { defaultValue: key.replace(/-/g, ' ') },
+  );
+
   return (
     <div className="space-y-4 p-4">
+      <Breadcrumb
+        items={[
+          {
+            label: t('propdev.title', { defaultValue: 'Property Development' }),
+            to: '/property-dev',
+          },
+          {
+            label: t('propdev.dashboards.hub.title', {
+              defaultValue: 'Property Development Dashboards',
+            }),
+            to: '/property-dev/dashboards',
+          },
+          { label: dashboardTitle },
+        ]}
+      />
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <Link
             to="/property-dev/dashboards"
-            className="flex items-center gap-1 text-2xs text-content-tertiary hover:text-content-primary"
+            className="flex items-center gap-1 text-2xs text-content-tertiary hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue/40 rounded"
           >
             <ArrowLeft size={12} />
             {t('propdev.dashboards.full.back_to_hub', {
               defaultValue: 'Back to hub',
             })}
           </Link>
-          <h1 className="text-lg font-semibold text-content-primary">
-            {t(`propdev.dashboards.full.${key.replace(/-/g, '_')}`, {
-              defaultValue: key.replace(/-/g, ' '),
-            })}
+          <h1 className="text-lg font-semibold text-content-primary capitalize">
+            {dashboardTitle}
           </h1>
         </div>
         <label className="flex items-center gap-2 text-xs">

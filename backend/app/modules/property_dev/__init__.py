@@ -13,6 +13,7 @@ async def on_startup() -> None:
         register_property_dev_event_subscribers,
         register_subscribers,
         register_task_139_subscribers,
+        register_warranty_bridge_subscribers,
     )
     from app.modules.property_dev.permissions import register_property_dev_permissions
 
@@ -20,3 +21,4 @@ async def on_startup() -> None:
     register_property_dev_event_subscribers()
     register_subscribers()
     register_task_139_subscribers()
+    register_warranty_bridge_subscribers()

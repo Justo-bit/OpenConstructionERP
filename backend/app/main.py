@@ -2031,6 +2031,33 @@ def create_app() -> FastAPI:
                 "passthrough until an operator imports a feed"
             )
 
+        # Property-dev house-type catalogue presets. Mirrors migration
+        # v3114_propdev_house_type_catalogue's bulk_insert so fresh-blank-DB
+        # installs (which take the env.py create_all+stamp shortcut and
+        # never run the migration's upgrade()) still end up with the ~60
+        # country presets populated. Idempotent — skips when any preset
+        # row exists.
+        try:
+            from app.database import async_session_factory as _ht_session_factory
+            from app.modules.property_dev.seed_house_type_catalogue import (
+                seed_house_type_catalogue_presets,
+            )
+
+            async with _ht_session_factory() as _ht_session:
+                inserted = await seed_house_type_catalogue_presets(_ht_session)
+                await _ht_session.commit()
+                if inserted:
+                    logger.info(
+                        "Property-dev house-type catalogue seed: %d preset rows",
+                        inserted,
+                    )
+        except Exception:
+            logger.exception(
+                "Property-dev house-type catalogue preset seed failed — "
+                "/property-dev/house-type-catalogue will return an empty list "
+                "until an operator re-runs alembic or restarts the app"
+            )
+
         # Initialize vector database (LanceDB embedded, no Docker)
         _section("Vector DB")
         _init_vector_db()

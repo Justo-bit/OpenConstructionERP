@@ -94,6 +94,9 @@ from app.modules.property_dev.schemas import (
     HouseTypeVariantCreate,
     HouseTypeVariantResponse,
     HouseTypeVariantUpdate,
+    PropertyDevHouseTypeCreate,
+    PropertyDevHouseTypeResponse,
+    PropertyDevHouseTypeUpdate,
     InstalmentCreate,
     InstalmentMarkPaidRequest,
     InstalmentResponse,
@@ -136,6 +139,7 @@ from app.modules.property_dev.schemas import (
     SnagResponse,
     SnagUpdate,
     TaxQuotePayload,
+    WarrantyClaimAssignRequest,
     WarrantyClaimCreate,
     WarrantyClaimResponse,
     WarrantyClaimUpdate,
@@ -496,6 +500,90 @@ async def delete_house_type(
     _perm: None = Depends(RequirePermission("property_dev.delete")),
 ) -> None:
     await service.delete_house_type(ht_id)
+
+
+# ── House Type Catalogue (preset + user-created) ────────────────────────
+
+
+@router.get(
+    "/house-type-catalogue/",
+    response_model=list[PropertyDevHouseTypeResponse],
+)
+async def list_house_type_catalogue(
+    payload: CurrentUserPayload,
+    country_code: str | None = Query(default=None, max_length=2),
+    project_id: uuid.UUID | None = Query(default=None),
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> list[PropertyDevHouseTypeResponse]:
+    """List preset + (when project_id supplied) tenant-created house types.
+
+    Presets (project_id IS NULL, is_preset=True) are always visible.
+    Tenant-created entries are only included when the caller owns the
+    project — admins see everything.
+    """
+    rows = await service.list_house_type_catalogue(
+        country_code=country_code,
+        project_id=project_id,
+        user_payload=payload,
+    )
+    return [PropertyDevHouseTypeResponse.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/house-type-catalogue/",
+    response_model=PropertyDevHouseTypeResponse,
+    status_code=201,
+)
+async def create_house_type_catalogue_entry(
+    data: PropertyDevHouseTypeCreate,
+    payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.create")),
+) -> PropertyDevHouseTypeResponse:
+    obj = await service.create_house_type_catalogue_entry(data, user_payload=payload)
+    return PropertyDevHouseTypeResponse.model_validate(obj)
+
+
+@router.get(
+    "/house-type-catalogue/{entry_id}",
+    response_model=PropertyDevHouseTypeResponse,
+)
+async def get_house_type_catalogue_entry(
+    entry_id: uuid.UUID,
+    payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> PropertyDevHouseTypeResponse:
+    obj = await service.get_house_type_catalogue_entry(entry_id, user_payload=payload)
+    return PropertyDevHouseTypeResponse.model_validate(obj)
+
+
+@router.patch(
+    "/house-type-catalogue/{entry_id}",
+    response_model=PropertyDevHouseTypeResponse,
+)
+async def update_house_type_catalogue_entry(
+    entry_id: uuid.UUID,
+    data: PropertyDevHouseTypeUpdate,
+    payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.update")),
+) -> PropertyDevHouseTypeResponse:
+    obj = await service.update_house_type_catalogue_entry(
+        entry_id, data, user_payload=payload
+    )
+    return PropertyDevHouseTypeResponse.model_validate(obj)
+
+
+@router.delete("/house-type-catalogue/{entry_id}", status_code=204)
+async def delete_house_type_catalogue_entry(
+    entry_id: uuid.UUID,
+    payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.delete")),
+) -> None:
+    await service.delete_house_type_catalogue_entry(entry_id, user_payload=payload)
 
 
 @router.get(
@@ -875,10 +963,14 @@ async def selection_submit_for_production(
 
 @router.get("/handovers/", response_model=list[HandoverResponse])
 async def list_handovers(
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     plot_id: uuid.UUID = Query(...),
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.read")),
 ) -> list[HandoverResponse]:
+    # IDOR closure: tenant must own the plot before seeing its handovers.
+    await _verify_owner_via_plot(session, plot_id, user_payload)
     rows = await service.handovers.list_for_plot(plot_id)
     return [HandoverResponse.model_validate(r) for r in rows]
 
@@ -886,18 +978,25 @@ async def list_handovers(
 @router.post("/handovers/", response_model=HandoverResponse, status_code=201)
 async def create_handover(
     data: HandoverCreate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.handover")),
 ) -> HandoverResponse:
+    # IDOR closure: must own the plot before scheduling a handover against it.
+    await _verify_owner_via_plot(session, data.plot_id, user_payload)
     return HandoverResponse.model_validate(await service.create_handover(data))
 
 
 @router.get("/handovers/{h_id}", response_model=HandoverResponse)
 async def get_handover(
     h_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.read")),
 ) -> HandoverResponse:
+    await _verify_owner_via_handover(session, h_id, user_payload)
     return HandoverResponse.model_validate(await service.get_handover(h_id))
 
 
@@ -905,9 +1004,12 @@ async def get_handover(
 async def update_handover(
     h_id: uuid.UUID,
     data: HandoverUpdate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.handover")),
 ) -> HandoverResponse:
+    await _verify_owner_via_handover(session, h_id, user_payload)
     return HandoverResponse.model_validate(
         await service.update_handover(h_id, data)
     )
@@ -916,9 +1018,12 @@ async def update_handover(
 @router.delete("/handovers/{h_id}", status_code=204)
 async def delete_handover(
     h_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.delete")),
 ) -> None:
+    await _verify_owner_via_handover(session, h_id, user_payload)
     await service.delete_handover(h_id)
 
 
@@ -926,9 +1031,12 @@ async def delete_handover(
 async def complete_handover(
     h_id: uuid.UUID,
     data: HandoverCompleteRequest,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.handover")),
 ) -> HandoverResponse:
+    await _verify_owner_via_handover(session, h_id, user_payload)
     return HandoverResponse.model_validate(
         await service.complete_handover(h_id, data)
     )
@@ -1106,19 +1214,57 @@ async def list_warranty_claims(
     user_payload: CurrentUserPayload,
     buyer_id: uuid.UUID | None = Query(default=None),
     plot_id: uuid.UUID | None = Query(default=None),
+    development_id: uuid.UUID | None = Query(default=None),
+    project_id: uuid.UUID | None = Query(default=None),
     status: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
     service: PropertyDevService = Depends(_svc),
     _perm: None = Depends(RequirePermission("property_dev.read")),
 ) -> list[WarrantyClaimResponse]:
+    """List warranty claims.
+
+    Supports four scoping modes (mutually exclusive — buyer wins, then
+    plot, then development, then project). When NONE are supplied the
+    endpoint returns the empty list to avoid an accidental cross-tenant
+    enumeration (matches the v3110 ``list_warranty_claims`` behavior).
+    """
     if buyer_id is not None:
         await _verify_owner_via_buyer(session, buyer_id, user_payload)
         rows = await service.warranty.list_for_buyer(buyer_id, status=status)
     elif plot_id is not None:
         await _verify_owner_via_plot(session, plot_id, user_payload)
         rows = await service.warranty.list_for_plot(plot_id, status=status)
+    elif development_id is not None:
+        await _verify_owner_via_development(
+            session, development_id, user_payload
+        )
+        rows = await service.warranty.list_for_development(
+            development_id,
+            status=status,
+            category=category,
+            severity=severity,
+        )
+    elif project_id is not None:
+        # Project-level listing — IDOR-gated via the project ownership
+        # check that already powers ``_verify_owner_via_plot``.
+        from app.modules.projects.repository import ProjectRepository
+
+        proj = await ProjectRepository(session).get_by_id(project_id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        owner_id = uuid.UUID(str(user_payload["sub"]))
+        if proj.owner_id != owner_id:
+            raise HTTPException(status_code=404, detail="Resource not found")
+        rows = await service.warranty.list_for_project(
+            project_id, status=status
+        )
     else:
         rows = []
-    return [WarrantyClaimResponse.model_validate(r) for r in rows]
+    return [
+        await service.warranty_response(r)
+        for r in rows
+    ]
 
 
 @router.post(
@@ -1133,7 +1279,7 @@ async def create_warranty_claim(
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_plot(session, data.plot_id, user_payload)
     await _verify_owner_via_buyer(session, data.buyer_id, user_payload)
-    return WarrantyClaimResponse.model_validate(
+    return await service.warranty_response(
         await service.raise_warranty_claim(data.plot_id, data.buyer_id, data)
     )
 
@@ -1149,7 +1295,7 @@ async def get_warranty_claim(
     _perm: None = Depends(RequirePermission("property_dev.read")),
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_warranty(session, w_id, user_payload)
-    return WarrantyClaimResponse.model_validate(await service.get_warranty(w_id))
+    return await service.warranty_response(await service.get_warranty(w_id))
 
 
 @router.patch(
@@ -1164,7 +1310,7 @@ async def update_warranty_claim(
     _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_warranty(session, w_id, user_payload)
-    return WarrantyClaimResponse.model_validate(
+    return await service.warranty_response(
         await service.update_warranty(w_id, data)
     )
 
@@ -1182,6 +1328,25 @@ async def delete_warranty_claim(
 
 
 @router.post(
+    "/warranty-claims/{w_id}/assign",
+    response_model=WarrantyClaimResponse,
+)
+async def assign_warranty_claim(
+    w_id: uuid.UUID,
+    data: WarrantyClaimAssignRequest,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
+) -> WarrantyClaimResponse:
+    """Assign (or unassign with ``null``) a contractor / PM owner."""
+    await _verify_owner_via_warranty(session, w_id, user_payload)
+    return await service.warranty_response(
+        await service.assign_warranty(w_id, data.assigned_to_user_id)
+    )
+
+
+@router.post(
     "/warranty/{w_id}/accept", response_model=WarrantyClaimResponse,
 )
 async def accept_warranty_claim(
@@ -1192,7 +1357,7 @@ async def accept_warranty_claim(
     _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_warranty(session, w_id, user_payload)
-    return WarrantyClaimResponse.model_validate(await service.warranty_accept(w_id))
+    return await service.warranty_response(await service.warranty_accept(w_id))
 
 
 @router.post(
@@ -1206,7 +1371,7 @@ async def reject_warranty_claim(
     _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_warranty(session, w_id, user_payload)
-    return WarrantyClaimResponse.model_validate(await service.warranty_reject(w_id))
+    return await service.warranty_response(await service.warranty_reject(w_id))
 
 
 @router.post(
@@ -1220,7 +1385,158 @@ async def close_warranty_claim(
     _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
 ) -> WarrantyClaimResponse:
     await _verify_owner_via_warranty(session, w_id, user_payload)
-    return WarrantyClaimResponse.model_validate(await service.warranty_close(w_id))
+    return await service.warranty_response(await service.warranty_close(w_id))
+
+
+@router.get("/warranty-claims/{w_id}/pdf")
+async def warranty_claim_pdf(
+    w_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+):
+    """Generate a printable PDF for a warranty claim (legal / insurance).
+
+    Falls back to a plain-text response when the reportlab PDF stack is
+    unavailable so the endpoint never 500s the page; mirrors the
+    document_templates fallback path.
+    """
+    from fastapi.responses import Response
+
+    await _verify_owner_via_warranty(session, w_id, user_payload)
+    claim = await service.get_warranty(w_id)
+    payload = await service.warranty_response(claim)
+
+    lines = [
+        "WARRANTY CLAIM",
+        "",
+        f"Claim ID:       {claim.id}",
+        f"Plot ID:        {claim.plot_id}",
+        f"Buyer ID:       {claim.buyer_id}",
+        f"Handover ID:    {claim.handover_id or '—'}",
+        f"Raised at:      {claim.raised_at or '—'}",
+        f"Category:       {claim.category}",
+        f"Severity:       {claim.severity}",
+        f"Status:         {claim.status}",
+        f"In warranty:    {'YES' if payload.is_in_warranty else 'NO'}",
+        f"SLA deadline:   {claim.sla_deadline or '—'}",
+        f"Assigned to:    {claim.assigned_to_user_id or '—'}",
+        "",
+        "Description:",
+        claim.description or "(none)",
+        "",
+        "Resolution notes:",
+        claim.resolution_notes or "(none)",
+    ]
+    body = "\n".join(lines)
+
+    try:
+        from io import BytesIO
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas as _canvas
+
+        buf = BytesIO()
+        c = _canvas.Canvas(buf, pagesize=A4)
+        c.setFont("Helvetica", 10)
+        y = 800
+        for ln in body.splitlines():
+            c.drawString(50, y, ln[:110])
+            y -= 14
+            if y < 50:
+                c.showPage()
+                c.setFont("Helvetica", 10)
+                y = 800
+        c.save()
+        pdf_bytes = buf.getvalue()
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="warranty-claim-{w_id}.pdf"'
+                ),
+            },
+        )
+    except Exception:
+        # reportlab missing or rendering failed — return the txt fallback
+        # so the legal/insurance team still gets something printable.
+        return Response(
+            content=body.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="warranty-claim-{w_id}.txt"'
+                ),
+            },
+        )
+
+
+@router.post(
+    "/warranty-claims/from-snag/{snag_id}",
+    response_model=WarrantyClaimResponse,
+    status_code=201,
+)
+async def create_warranty_claim_from_snag(
+    snag_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.process_warranty")),
+) -> WarrantyClaimResponse:
+    """Promote a snag into a warranty claim (idempotent).
+
+    Useful when a defect identified during/after handover turns out to
+    be in-warranty and the buyer-facing process needs to escalate.
+    Idempotent: if a claim is already linked via ``source_snag_id``, it
+    is returned instead of creating a duplicate.
+    """
+    from app.modules.property_dev.schemas import WarrantyClaimCreate as _WCreate
+
+    await _verify_owner_via_snag(session, snag_id, user_payload)
+    snag = await service.get_snag(snag_id)
+
+    existing = await service.warranty.find_by_source_snag(snag_id)
+    if existing is not None:
+        return await service.warranty_response(existing)
+
+    # Resolve the buyer: prefer the buyer who raised the snag, else
+    # whichever buyer is attached to the plot via the handover chain.
+    buyer_id = snag.buyer_id
+    handover = await service.get_handover(snag.handover_id)
+    plot_id = handover.plot_id
+    if buyer_id is None:
+        # Best-effort: fall back to any buyer on the plot.
+        from sqlalchemy import select as _select
+
+        from app.modules.property_dev.models import Buyer as _Buyer
+
+        row = (
+            await session.execute(
+                _select(_Buyer).where(_Buyer.plot_id == plot_id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot raise warranty claim: snag has no buyer link",
+            )
+        buyer_id = row.id
+
+    severity_map = {"minor": "minor", "major": "major", "critical": "critical"}
+    payload = _WCreate(
+        plot_id=plot_id,
+        buyer_id=buyer_id,
+        handover_id=snag.handover_id,
+        source_snag_id=snag.id,
+        category="defect",
+        severity=severity_map.get(snag.severity, "minor"),
+        description=snag.description or "(promoted from snag)",
+        photos=list(snag.photos or []),
+    )
+    claim = await service.raise_warranty_claim(plot_id, buyer_id, payload)
+    return await service.warranty_response(claim)
 
 
 # ── Cancel buyer + deposit forfeiture ──────────────────────────────────

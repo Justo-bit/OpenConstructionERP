@@ -239,6 +239,12 @@ const navGroups: NavGroup[] = [
       { labelKey: 'nav.variations', to: '/variations', icon: GitBranch },
       { labelKey: 'nav.supplier_catalogs', to: '/supplier-catalogs', icon: ShoppingCart },
       { labelKey: 'nav.property_dev', to: '/property-dev', icon: Building2 },
+      {
+        labelKey: 'nav.property_dev_house_types',
+        to: '/property-dev/settings/house-types',
+        icon: Building2,
+        advancedOnly: true,
+      },
     ],
   },
   // ── PLANNING & CONTROL (advanced) ──────────────────────────────────

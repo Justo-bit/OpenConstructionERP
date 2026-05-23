@@ -486,6 +486,60 @@ class WarrantyClaimRepository(_BaseRepo):
         result = await self.session.execute(stmt)
         return result.scalar_one() or 0
 
+    async def list_for_development(
+        self,
+        development_id: uuid.UUID,
+        *,
+        status: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        limit: int = 500,
+    ) -> list[WarrantyClaim]:
+        """List warranty claims across every plot in a development."""
+        stmt = (
+            select(WarrantyClaim)
+            .join(Plot, Plot.id == WarrantyClaim.plot_id)
+            .where(Plot.development_id == development_id)
+        )
+        if status is not None:
+            stmt = stmt.where(WarrantyClaim.status == status)
+        if category is not None:
+            stmt = stmt.where(WarrantyClaim.category == category)
+        if severity is not None:
+            stmt = stmt.where(WarrantyClaim.severity == severity)
+        stmt = stmt.order_by(WarrantyClaim.created_at.desc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        status: str | None = None,
+        limit: int = 500,
+    ) -> list[WarrantyClaim]:
+        """List warranty claims across every plot in a project."""
+        stmt = (
+            select(WarrantyClaim)
+            .join(Plot, Plot.id == WarrantyClaim.plot_id)
+            .join(Development, Development.id == Plot.development_id)
+            .where(Development.project_id == project_id)
+        )
+        if status is not None:
+            stmt = stmt.where(WarrantyClaim.status == status)
+        stmt = stmt.order_by(WarrantyClaim.created_at.desc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def find_by_source_snag(
+        self, snag_id: uuid.UUID
+    ) -> WarrantyClaim | None:
+        """Return the WarrantyClaim that was raised from a given snag, if any."""
+        result = await self.session.execute(
+            select(WarrantyClaim).where(WarrantyClaim.source_snag_id == snag_id)
+        )
+        return result.scalar_one_or_none()
+
 
 # ── HandoverDoc ─────────────────────────────────────────────────────────
 

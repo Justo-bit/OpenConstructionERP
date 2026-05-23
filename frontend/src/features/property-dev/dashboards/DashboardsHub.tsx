@@ -6,7 +6,7 @@
  * every card.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -18,7 +18,7 @@ import {
   Filter,
   Compass,
 } from 'lucide-react';
-import { Card } from '@/shared/ui';
+import { Breadcrumb, Card } from '@/shared/ui';
 import { listDevelopments, type Development } from '../api';
 import { InventoryHeatmap } from './InventoryHeatmap';
 import { SalesVelocity } from './SalesVelocity';
@@ -63,10 +63,15 @@ export function DashboardsHub() {
     queryFn: () => listDevelopments({ limit: 100 }),
   });
 
-  const first = developments?.[0];
-  if (first && !developmentId) {
-    setDevelopmentId(first.id);
-  }
+  // Earlier this set state during render which trips React's
+  // ``setState in render`` warning under StrictMode. ``useEffect`` is
+  // the supported way to seed local state from async query data.
+  useEffect(() => {
+    if (!developmentId && developments && developments.length > 0) {
+      const first = developments[0];
+      if (first) setDevelopmentId(first.id);
+    }
+  }, [developments, developmentId]);
 
   if (isLoading) return <DashboardLoading />;
   if (!developments || developments.length === 0) {
@@ -85,12 +90,33 @@ export function DashboardsHub() {
 
   return (
     <div className="space-y-4 p-4">
+      <Breadcrumb
+        items={[
+          {
+            label: t('propdev.title', { defaultValue: 'Property Development' }),
+            to: '/property-dev',
+          },
+          {
+            label: t('propdev.dashboards.hub.title', {
+              defaultValue: 'Property Development Dashboards',
+            }),
+          },
+        ]}
+      />
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-lg font-semibold text-content-primary">
-          {t('propdev.dashboards.hub.title', {
-            defaultValue: 'Property Development Dashboards',
-          })}
-        </h1>
+        <div>
+          <h1 className="text-lg font-semibold text-content-primary">
+            {t('propdev.dashboards.hub.title', {
+              defaultValue: 'Property Development Dashboards',
+            })}
+          </h1>
+          <p className="mt-0.5 text-xs text-content-tertiary">
+            {t('propdev.dashboards.hub.subtitle', {
+              defaultValue:
+                'Sales velocity, inventory ageing, cash flow and conversion — scoped to one development.',
+            })}
+          </p>
+        </div>
         <label className="flex items-center gap-2 text-xs">
           <span className="text-content-secondary">
             {t('propdev.dashboards.hub.development', {
