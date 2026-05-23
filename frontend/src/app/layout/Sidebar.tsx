@@ -166,14 +166,6 @@ const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { labelKey: 'boq.title', to: '/boq', icon: Table2, tourId: 'boq' },
-      // BOQ Templates — was reachable only via deep-link before; surface
-      // it here so estimators discover the reusable starting points.
-      {
-        labelKey: 'nav.boq_templates',
-        to: '/templates',
-        icon: FileText,
-        advancedOnly: true,
-      },
       { labelKey: 'nav.match_elements', to: '/match-elements', icon: Link2, badge: 'BETA' },
       { labelKey: 'nav.ai_estimate', to: '/ai-estimate', icon: Sparkles, badge: 'BETA' },
       { labelKey: 'nav.estimation_dashboard', to: '/project-intelligence', icon: BrainCircuit, badge: 'BETA' },
@@ -191,7 +183,6 @@ const navGroups: NavGroup[] = [
       { labelKey: 'costs.title', to: '/costs', icon: Database, tourId: 'costs' },
       { labelKey: 'catalog.title', to: '/catalog', icon: Boxes },
       { labelKey: 'nav.assemblies', to: '/assemblies', icon: Layers },
-      { labelKey: 'nav.assembly_library', to: '/assemblies/library', icon: Library, badge: 'BETA' },
     ],
   },
   // ── TAKEOFF ────────────────────────────────────────────────────────
