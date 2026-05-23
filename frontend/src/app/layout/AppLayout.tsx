@@ -11,6 +11,8 @@ import { GlobalUploadIndicator } from '@/shared/ui/GlobalUploadIndicator';
 import { DwgUploadIndicator } from '@/shared/ui/DwgUploadIndicator';
 import { GlobalCatalogueInstallIndicator } from '@/shared/ui/GlobalCatalogueInstallIndicator';
 import { DemoBanner } from '@/shared/ui/DemoBanner';
+import { FloatingChatButton } from '@/features/erp-chat/FloatingChatButton';
+import { FloatingChatPanel } from '@/features/erp-chat/FloatingChatPanel';
 import {
   DashboardBackdrop,
   backdropVariantForPath,
@@ -139,7 +141,14 @@ export function AppLayout({ title, children }: AppLayoutProps) {
 
       {/* Floating Recent button — bottom-right corner */}
       <FloatingRecentButton />
-      {/* FloatingChatButton hidden for now */}
+
+      {/* Floating chat — always-visible button + slide-in panel that talks
+          to the erp_chat backend. The button hides itself on /chat (no
+          duplication of the full-page experience) and on auth-bypass routes
+          (/login, /onboarding). The panel is mounted at the layout level so
+          the conversation survives navigation. */}
+      <FloatingChatButton />
+      <FloatingChatPanel />
 
       {/* OnboardingTour mounts once at App.tsx top level — moving it
           out of here was the fix for BUG-UI02-TOUR-PERSISTENT.  When

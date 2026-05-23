@@ -6620,6 +6620,32 @@ const resource = {
     "country_combobox.custom_region": "Custom region (free text)",
     "country_combobox.footer_hint": "{{count}} countries · ↑↓ to navigate · ↵ to pick",
     // --- /CountryCombobox ---
+
+    // --- Floating chat widget (bottom-right) ---
+    "chat.floating.open": "Ask AI about your data",
+    "chat.floating.unread_badge": "{{count}} new",
+    "chat.panel.title_default": "AI assistant",
+    "chat.panel.title_edit": "Conversation title",
+    "chat.panel.input_placeholder": "Ask anything about your projects, BOQs, costs, clashes...",
+    "chat.panel.send": "Send",
+    "chat.panel.streaming": "Thinking...",
+    "chat.panel.token_warn": "Long message",
+    "chat.panel.token_over": "Too long — please shorten",
+    "chat.panel.open_full": "Open full page",
+    "chat.panel.sessions_title": "Recent sessions",
+    "chat.panel.new_session": "New conversation",
+    "chat.panel.tool_running": "Running {{name}}...",
+    "chat.panel.tool_failed": "Tool {{name}} failed",
+    "chat.panel.empty_state": "Ask about a project, BOQ, validation, clashes, costs, or run an action like \"create RFI for clash 32\".",
+    "chat.panel.no_sessions": "No previous sessions yet.",
+    "chat.panel.untitled": "(untitled)",
+    "chat.panel.sugg_over_budget": "What are my over-budget projects?",
+    "chat.panel.sugg_top_risks": "Show me top open risks",
+    "chat.panel.sugg_walls": "Find all walls > 30cm in current project's BIM",
+    "chat.panel.sugg_validate_boq": "Validate the current BOQ",
+    "chat.panel.sugg_draft_rfi": "Create a draft RFI from the latest clash",
+    "chat.panel.sugg_critical_path": "What's the schedule critical path?",
+    // --- /Floating chat widget ---
   }
 } as { translation: Record<string, string> };
 

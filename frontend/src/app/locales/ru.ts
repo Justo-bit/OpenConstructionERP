@@ -6236,6 +6236,32 @@ const resource = {
     "propdev.bedrooms": "Спален",
     "propdev.phone": "Телефон",
     // --- /propdev ---
+
+    // --- Floating chat widget (bottom-right) ---
+    "chat.floating.open": "Спросить ИИ о ваших данных",
+    "chat.floating.unread_badge": "новых: {{count}}",
+    "chat.panel.title_default": "ИИ-ассистент",
+    "chat.panel.title_edit": "Название беседы",
+    "chat.panel.input_placeholder": "Спросите о проектах, ВОР, стоимости, коллизиях...",
+    "chat.panel.send": "Отправить",
+    "chat.panel.streaming": "Думает...",
+    "chat.panel.token_warn": "Длинное сообщение",
+    "chat.panel.token_over": "Слишком длинное — сократите",
+    "chat.panel.open_full": "Открыть на весь экран",
+    "chat.panel.sessions_title": "Недавние беседы",
+    "chat.panel.new_session": "Новая беседа",
+    "chat.panel.tool_running": "Выполняется {{name}}...",
+    "chat.panel.tool_failed": "Инструмент {{name}} не отработал",
+    "chat.panel.empty_state": "Спросите о проекте, ВОР, валидации, коллизиях, стоимости или запустите действие вроде «создать RFI по коллизии 32».",
+    "chat.panel.no_sessions": "Пока нет прежних бесед.",
+    "chat.panel.untitled": "(без названия)",
+    "chat.panel.sugg_over_budget": "Какие проекты превышают бюджет?",
+    "chat.panel.sugg_top_risks": "Покажи главные открытые риски",
+    "chat.panel.sugg_walls": "Найди все стены > 30 см в BIM текущего проекта",
+    "chat.panel.sugg_validate_boq": "Запусти валидацию ВОР текущего проекта",
+    "chat.panel.sugg_draft_rfi": "Сделай черновик RFI по последней коллизии",
+    "chat.panel.sugg_critical_path": "Какой критический путь в графике?",
+    // --- /Floating chat widget ---
   }
 } as { translation: Record<string, string> };
 

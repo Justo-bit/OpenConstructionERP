@@ -6241,6 +6241,32 @@ const resource = {
     "propdev.bedrooms": "Schlafzimmer",
     "propdev.phone": "Telefon",
     // --- /propdev ---
+
+    // --- Floating chat widget (bottom-right) ---
+    "chat.floating.open": "KI zu deinen Daten fragen",
+    "chat.floating.unread_badge": "{{count}} neu",
+    "chat.panel.title_default": "KI-Assistent",
+    "chat.panel.title_edit": "Titel des Gesprächs",
+    "chat.panel.input_placeholder": "Frage etwas zu Projekten, LV, Kosten, Kollisionen...",
+    "chat.panel.send": "Senden",
+    "chat.panel.streaming": "Denkt nach...",
+    "chat.panel.token_warn": "Lange Nachricht",
+    "chat.panel.token_over": "Zu lang — bitte kürzen",
+    "chat.panel.open_full": "Vollbild öffnen",
+    "chat.panel.sessions_title": "Letzte Sitzungen",
+    "chat.panel.new_session": "Neues Gespräch",
+    "chat.panel.tool_running": "Führe {{name}} aus...",
+    "chat.panel.tool_failed": "Tool {{name}} fehlgeschlagen",
+    "chat.panel.empty_state": "Frage zu Projekten, LV, Validierung, Kollisionen, Kosten — oder löse eine Aktion aus wie \"RFI für Kollision 32 erstellen\".",
+    "chat.panel.no_sessions": "Noch keine früheren Sitzungen.",
+    "chat.panel.untitled": "(ohne Titel)",
+    "chat.panel.sugg_over_budget": "Welche Projekte sind über Budget?",
+    "chat.panel.sugg_top_risks": "Zeige die wichtigsten offenen Risiken",
+    "chat.panel.sugg_walls": "Finde alle Wände > 30 cm im BIM des aktuellen Projekts",
+    "chat.panel.sugg_validate_boq": "LV des aktuellen Projekts validieren",
+    "chat.panel.sugg_draft_rfi": "RFI-Entwurf aus der neuesten Kollision erstellen",
+    "chat.panel.sugg_critical_path": "Wie ist der kritische Pfad im Terminplan?",
+    // --- /Floating chat widget ---
   }
 } as { translation: Record<string, string> };
 
