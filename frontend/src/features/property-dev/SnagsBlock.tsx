@@ -437,7 +437,7 @@ function CreateSnagModal({
         severity: form.severity,
         description: form.description,
         location_in_plot: form.location_in_plot || undefined,
-        cost_impact: Number(form.cost_impact) || 0,
+        cost_impact: form.cost_impact.trim() || undefined,
       }),
     onSuccess: () => {
       addToast({

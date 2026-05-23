@@ -338,7 +338,7 @@ export interface CreatePlotPayload {
   bathrooms?: number;
   parking_spaces?: number;
   sun_exposure_hours?: number;
-  price_base?: number;
+  price_base?: number | string;
   currency?: string;
   status?: PlotStatus;
 }
@@ -645,7 +645,7 @@ export function getBuyerContact(buyerId: string): Promise<{
 export function contractBuyer(
   id: string,
   data: {
-    contract_value: number;
+    contract_value: number | string;
     currency: string;
     contract_signed_at: string;
     deposit_paid_at?: string;
@@ -799,7 +799,7 @@ export interface CreateSnagPayload {
   description: string;
   status?: SnagStatus;
   reported_at?: string | null;
-  cost_impact?: number;
+  cost_impact?: number | string;
 }
 
 export function createSnag(data: CreateSnagPayload): Promise<Snag> {

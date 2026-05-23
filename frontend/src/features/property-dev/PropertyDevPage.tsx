@@ -1,7 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useQueries,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   Building2,
@@ -1147,12 +1152,13 @@ function OverviewDevRow({
  * parallel. While any dashboard is still loading the tile shows a dash
  * rather than a transient 0 (which would read as truth).
  *
- * The ``dashQs`` array is built via a stable ``.map`` over the
- * ``developments`` slice passed in from the parent. React-Query keys
- * encode the development id so the hook order is stable across
- * renders — but the linter still flags rules-of-hooks; we suppress
- * narrowly because the invariant (stable key order keyed by ``dev.id``
- * across renders) is what the rule actually enforces.
+ * Uses React-Query's ``useQueries`` — a single hook call that internally
+ * manages a dynamic array of queries. This is the idiomatic, hook-safe
+ * way to fan out N parallel queries; calling ``useQuery`` inside a
+ * ``.map`` over ``developments`` would violate the rules-of-hooks if
+ * the list ever reordered between renders (e.g. new dev with earlier
+ * ``created_at``, or a resort), because React tracks hooks by call
+ * index, not by key.
  */
 function OverviewKpiRow({
   developments,
@@ -1162,14 +1168,13 @@ function OverviewKpiRow({
   onJumpTo: (tab: Tab, filter?: { warrantyStatus?: string }) => void;
 }) {
   const { t } = useTranslation();
-  const dashQs = developments.map((d) =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useQuery({
+  const dashQs = useQueries({
+    queries: developments.map((d) => ({
       queryKey: ['propdev', 'dashboard', d.id],
       queryFn: () => getDevelopmentDashboard(d.id),
       staleTime: 60_000,
-    }),
-  );
+    })),
+  });
   const allLoaded = dashQs.every((q) => !q.isLoading);
   const anyError = dashQs.some((q) => q.isError);
 
@@ -2832,7 +2837,7 @@ function ConvertLeadModal({
     mutationFn: () =>
       convertLeadToReservation(lead.id, {
         plot_id: form.plot_id,
-        deposit_amount: Number(form.deposit_amount) || 0,
+        deposit_amount: form.deposit_amount.trim() || '0',
         currency: form.currency,
         cooling_off_days: Number(form.cooling_off_days) || 0,
         expires_at: form.expires_at || undefined,
@@ -6182,7 +6187,7 @@ function EditPlotModal({
         bathrooms: Number(form.bathrooms) || 0,
         parking_spaces: Number(form.parking_spaces) || 0,
         sun_exposure_hours: optNum(form.sun_exposure_hours),
-        price_base: Number(form.price_base) || 0,
+        price_base: form.price_base.trim() || '0',
         currency: optStr(form.currency),
       });
       addToast({ type: 'success', title: t('propdev.plot_updated', { defaultValue: 'Plot updated' }) });
@@ -6806,7 +6811,7 @@ function ContractBuyerBlock({ buyer }: { buyer: Buyer }) {
   const mut = useMutation({
     mutationFn: () =>
       contractBuyer(buyer.id, {
-        contract_value: Number(form.contract_value) || 0,
+        contract_value: form.contract_value.trim() || '0',
         currency: form.currency,
         contract_signed_at: form.contract_signed_at,
         freeze_deadline: form.freeze_deadline,
