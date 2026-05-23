@@ -19,6 +19,9 @@ import {
   clearErrorLog,
   getErrorLog,
   shouldSuppress,
+  isLastErrorNetworkOnly,
+  isNetworkErrorMessage,
+  isTransientHttpStatus,
 } from './errorLogger';
 
 describe('errorLogger.getLastError — bug-report payload selection', () => {
@@ -162,5 +165,139 @@ describe('errorLogger recording whitelist', () => {
     ).toBe(false);
     // Empty input never matches.
     expect(shouldSuppress({})).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Network-blip filter — GitHub issue #155
+//
+// User Mourdi59 filed "Failed to fetch" TypeError from a SettingsPage
+// React Query function while the backend was simply not running. That's
+// not a code defect — getLastError() must skip transport-level blips
+// (Failed to fetch / NetworkError / Load failed / AbortError / 0 /
+// 502 / 503 / 504) when picking the representative error for the
+// auto-bug-report payload.
+
+describe('errorLogger network-blip filter (#155)', () => {
+  beforeEach(() => {
+    clearErrorLog();
+  });
+
+  it('isNetworkErrorMessage matches all browser dialects', () => {
+    // Chrome / Edge
+    expect(isNetworkErrorMessage('TypeError: Failed to fetch')).toBe(true);
+    expect(isNetworkErrorMessage('Failed to fetch')).toBe(true);
+    // Firefox
+    expect(
+      isNetworkErrorMessage(
+        'TypeError: NetworkError when attempting to fetch resource.',
+      ),
+    ).toBe(true);
+    // Safari
+    expect(isNetworkErrorMessage('TypeError: Load failed')).toBe(true);
+    expect(isNetworkErrorMessage('Load failed')).toBe(true);
+    // AbortController
+    expect(
+      isNetworkErrorMessage('AbortError: signal is aborted without reason'),
+    ).toBe(true);
+    expect(
+      isNetworkErrorMessage('AbortError: The user aborted a request'),
+    ).toBe(true);
+    expect(isNetworkErrorMessage('The operation was aborted.')).toBe(true);
+    // Real defects must NOT match
+    expect(
+      isNetworkErrorMessage("TypeError: Cannot read properties of undefined (reading 'id')"),
+    ).toBe(false);
+    expect(isNetworkErrorMessage('ReferenceError: foo is not defined')).toBe(false);
+    expect(isNetworkErrorMessage('SyntaxError: Unexpected token < in JSON at position 0')).toBe(false);
+    expect(isNetworkErrorMessage(null)).toBe(false);
+    expect(isNetworkErrorMessage('')).toBe(false);
+  });
+
+  it('isTransientHttpStatus flags only the documented codes', () => {
+    expect(isTransientHttpStatus(0)).toBe(true);
+    expect(isTransientHttpStatus(502)).toBe(true);
+    expect(isTransientHttpStatus(503)).toBe(true);
+    expect(isTransientHttpStatus(504)).toBe(true);
+    // Real failures — NOT transient
+    expect(isTransientHttpStatus(400)).toBe(false);
+    expect(isTransientHttpStatus(401)).toBe(false);
+    expect(isTransientHttpStatus(404)).toBe(false);
+    expect(isTransientHttpStatus(422)).toBe(false);
+    expect(isTransientHttpStatus(500)).toBe(false);
+    expect(isTransientHttpStatus(undefined)).toBe(false);
+    expect(isTransientHttpStatus(null)).toBe(false);
+  });
+
+  it('getLastError skips a "Failed to fetch" blip in favour of a real error', () => {
+    // Real defect captured first (e.g. undefined-property read in a
+    // BOQ row renderer).
+    logError(
+      new TypeError("Cannot read properties of undefined (reading 'rows')"),
+    );
+    // Backend then went down — multiple Failed to fetch errors filed
+    // after the real one. The picker must STILL surface the real bug.
+    logError(new TypeError('Failed to fetch'), 'network');
+    logError(new TypeError('Failed to fetch'), 'network');
+    logError(new TypeError('Failed to fetch'), 'network');
+
+    const last = getLastError();
+    expect(last).not.toBeNull();
+    expect(last!.message).toContain('Cannot read properties of undefined');
+    expect(last!.message).not.toContain('Failed to fetch');
+  });
+
+  it('getLastError skips a transient 503 in favour of a real 500', () => {
+    logApiError('/v1/projects/abc/boqs/', 500, 'internal error');
+    logApiError('/v1/projects/abc/boqs/', 503, 'service unavailable');
+    logApiError('/v1/projects/abc/boqs/', 503, 'service unavailable');
+    const last = getLastError();
+    expect(last).not.toBeNull();
+    expect(last!.message).toContain('returned 500');
+  });
+
+  it('getLastError falls back to a network blip when nothing else is available', () => {
+    // Backend-down session — nothing but Failed to fetch. The picker
+    // returns the blip (so the report has *something* to show) but the
+    // UI calls isLastErrorNetworkOnly() to decide whether to warn.
+    logError(new TypeError('Failed to fetch'), 'network');
+    const last = getLastError();
+    expect(last).not.toBeNull();
+    expect(last!.message).toContain('Failed to fetch');
+  });
+
+  it('isLastErrorNetworkOnly is false when no errors exist', () => {
+    expect(isLastErrorNetworkOnly()).toBe(false);
+  });
+
+  it('isLastErrorNetworkOnly is true when all level=error are network blips', () => {
+    logError(new TypeError('Failed to fetch'), 'network');
+    logApiError('/v1/foo/', 503, 'unavailable');
+    expect(isLastErrorNetworkOnly()).toBe(true);
+  });
+
+  it('isLastErrorNetworkOnly is false when a real exception is mixed in', () => {
+    logError(new ReferenceError('foo is not defined'));
+    logError(new TypeError('Failed to fetch'), 'network');
+    expect(isLastErrorNetworkOnly()).toBe(false);
+  });
+
+  it('isLastErrorNetworkOnly ignores warning-level entries', () => {
+    // Warnings (handled 4xx) should not flip the predicate.
+    logApiError('/v1/projects/abc/boqs/', 404, 'not found');
+    expect(isLastErrorNetworkOnly()).toBe(false);
+    // Now add a network blip → all *error*-level entries are blips → true.
+    logError(new TypeError('Failed to fetch'), 'network');
+    expect(isLastErrorNetworkOnly()).toBe(true);
+  });
+
+  it('preserves the user-override escape hatch by still recording blips', () => {
+    // The entries themselves must still hit the buffer — the user can
+    // still file the report after clicking "Report anyway", and the
+    // downloaded JSON log should contain the blips so support can
+    // diagnose connectivity issues. We only filter the *picker*.
+    logError(new TypeError('Failed to fetch'), 'network');
+    logError(new TypeError('Failed to fetch'), 'network');
+    expect(getErrorLog().length).toBeGreaterThanOrEqual(2);
   });
 });

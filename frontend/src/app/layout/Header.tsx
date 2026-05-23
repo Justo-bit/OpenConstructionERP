@@ -12,7 +12,12 @@ import { useThemeStore } from '@/stores/useThemeStore';
 import { CountryFlag } from '@/shared/ui';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
 import { apiGet } from '@/shared/lib/api';
-import { exportErrorReport, getErrorCount, getLastError } from '@/shared/lib/errorLogger';
+import {
+  exportErrorReport,
+  getErrorCount,
+  getLastError,
+  isLastErrorNetworkOnly,
+} from '@/shared/lib/errorLogger';
 import { APP_VERSION, APP_BUILD_FINGERPRINT } from '@/shared/lib/version';
 import { useToastStore } from '@/stores/useToastStore';
 import { useI18nReady } from '@/shared/lib/useI18nReady';
@@ -250,8 +255,16 @@ function BugReportMenu() {
   const { t } = useTranslation();
   const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
+  // Once the user clicks "report anyway" we stop nagging them with the
+  // network-only banner for the rest of the popover lifetime.
+  const [overrodeNetworkWarning, setOverrodeNetworkWarning] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const errorCount = getErrorCount();
+  // Re-evaluated each open of the popover. ``isLastErrorNetworkOnly``
+  // returns true when every recent level=error entry is a transport
+  // blip (Failed to fetch, AbortError, 502/503/504, …) — i.e. nothing
+  // actionable for a GitHub issue. See errorLogger#155.
+  const networkOnly = open && !overrodeNetworkWarning && isLastErrorNetworkOnly();
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -268,6 +281,12 @@ function BugReportMenu() {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
+  }, [open]);
+
+  // Reset the network-only override each time the popover is dismissed
+  // so the next open shows the banner again if nothing new has happened.
+  useEffect(() => {
+    if (!open) setOverrodeNetworkWarning(false);
   }, [open]);
 
   const handleGithub = () => {
@@ -434,7 +453,35 @@ function BugReportMenu() {
             </p>
           </div>
 
-          <div className="py-1">
+          {networkOnly && (
+            <div
+              role="alert"
+              className="mx-3 my-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
+            >
+              <p className="text-2xs font-semibold text-amber-600 dark:text-amber-400">
+                {t('bug.network_only_title', {
+                  defaultValue: 'Looks like a network issue, not a bug',
+                })}
+              </p>
+              <p className="mt-1 text-2xs text-amber-700/90 dark:text-amber-300/90 leading-snug">
+                {t('bug.network_only_desc', {
+                  defaultValue:
+                    'Recent errors look like the backend was unreachable (offline, restarting, or VPN dropped). Check your connection and reload — if the problem persists, you can still file a report.',
+                })}
+              </p>
+              <button
+                type="button"
+                onClick={() => setOverrodeNetworkWarning(true)}
+                className="mt-1.5 text-2xs font-medium text-amber-700 dark:text-amber-300 underline-offset-2 hover:underline"
+              >
+                {t('bug.network_only_override', {
+                  defaultValue: 'Report anyway →',
+                })}
+              </button>
+            </div>
+          )}
+
+          <div className={clsx('py-1', networkOnly && 'opacity-40 pointer-events-none')}>
             {channels.map((ch, idx) => {
               const Icon = ch.icon;
               return (
