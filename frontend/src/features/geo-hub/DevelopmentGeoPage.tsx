@@ -169,7 +169,9 @@ export function DevelopmentGeoPage() {
     error instanceof ApiError && error.status === 404;
 
   return (
-    <div className="flex h-full w-full flex-col">
+    // Full-bleed layout — negate AppLayout's <main> padding so the map fills the
+    // viewport, claim exactly viewport-minus-header so it never overflows.
+    <div className="-mx-4 -mt-6 -mb-4 flex h-[calc(100vh-var(--oe-header-height,52px))] w-[calc(100%+2rem)] flex-col sm:-mx-7 sm:w-[calc(100%+3.5rem)]">
       <header
         className={[
           'flex items-center gap-4 border-b border-border bg-surface-primary',

@@ -969,7 +969,7 @@ function ProfileCard({ profile, loading, editing, setEditing, formName, setFormN
 
 // ── Tab definitions ──────────────────────────────────────────────────────────
 
-type SettingsTab = 'general' | 'dashboard' | 'account' | 'regional' | 'bimcad' | 'ai' | 'integrations' | 'advanced';
+type SettingsTab = 'general' | 'dashboard' | 'account' | 'regional' | 'converters' | 'ai' | 'integrations' | 'advanced';
 
 interface TabDef {
   id: SettingsTab;
@@ -994,7 +994,7 @@ const TABS: readonly TabDef[] = [
   { id: 'dashboard',    labelKey: 'settings.tab_dashboard',    defaultLabel: 'Dashboard',    icon: LayoutGrid, descKey: 'settings.tab_dashboard_desc',  descDefault: 'Reorder, show or hide dashboard sections' },
   { id: 'account',      labelKey: 'settings.tab_account',      defaultLabel: 'Account',      icon: User,     descKey: 'settings.tab_account_desc',      descDefault: 'Password and sign out' },
   { id: 'regional',     labelKey: 'settings.tab_regional',     defaultLabel: 'Regional',     icon: Globe,    descKey: 'settings.tab_regional_desc',     descDefault: 'Language, timezone, and formats' },
-  { id: 'bimcad',       labelKey: 'settings.tab_bimcad',       defaultLabel: 'BIM / CAD',    icon: Layers,   descKey: 'settings.tab_bimcad_desc',       descDefault: 'BIM, takeoff, and DWG modules' },
+  { id: 'converters',   labelKey: 'settings.tab_converters',   defaultLabel: 'Converters',  icon: Layers,   descKey: 'settings.tab_converters_desc',   descDefault: 'DDC CAD/BIM converters — installed versions and GitHub sources' },
   { id: 'ai',           labelKey: 'settings.tab_ai',           defaultLabel: 'AI',           icon: Sparkles, descKey: 'settings.tab_ai_desc',           descDefault: 'AI provider and semantic search' },
   { id: 'integrations', labelKey: 'settings.tab_integrations', defaultLabel: 'Integrations', icon: Plug,     descKey: 'settings.tab_integrations_desc', descDefault: 'Slack, Teams, Telegram, webhooks' },
   { id: 'advanced',     labelKey: 'settings.tab_advanced',     defaultLabel: 'Advanced',     icon: Wrench,   descKey: 'settings.tab_advanced_desc',     descDefault: 'Backup, databases, setup wizard' },
@@ -1416,60 +1416,11 @@ export function SettingsPage() {
             </>
           )}
 
-          {/* ── BIM / CAD ────────────────────────────────────────── */}
-          {activeTab === 'bimcad' && (
-            <Card className="lg:col-span-2">
-              <CardHeader
-                title={t('settings.bimcad_title', { defaultValue: 'BIM & CAD' })}
-                subtitle={t('settings.bimcad_subtitle', { defaultValue: 'Manage BIM converters and takeoff settings from their dedicated modules' })}
-              />
-              <CardContent>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Link
-                    to="/bim"
-                    className="group flex flex-col gap-1 rounded-xl border border-border-light bg-surface-secondary/40 px-4 py-3.5 transition-all hover:bg-surface-secondary hover:border-oe-blue/40"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-content-primary">
-                        {t('settings.open_bim', { defaultValue: 'Open BIM' })}
-                      </span>
-                      <ChevronRight size={14} className="text-content-tertiary group-hover:text-oe-blue transition-colors" />
-                    </div>
-                    <p className="text-xs text-content-tertiary">
-                      {t('settings.bimcad_bim_desc', { defaultValue: 'Browse BIM models and elements' })}
-                    </p>
-                  </Link>
-                  <Link
-                    to="/takeoff"
-                    className="group flex flex-col gap-1 rounded-xl border border-border-light bg-surface-secondary/40 px-4 py-3.5 transition-all hover:bg-surface-secondary hover:border-oe-blue/40"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-content-primary">
-                        {t('settings.open_takeoff', { defaultValue: 'Open Takeoff' })}
-                      </span>
-                      <ChevronRight size={14} className="text-content-tertiary group-hover:text-oe-blue transition-colors" />
-                    </div>
-                    <p className="text-xs text-content-tertiary">
-                      {t('settings.bimcad_takeoff_desc', { defaultValue: 'PDF takeoff and quantity extraction' })}
-                    </p>
-                  </Link>
-                  <Link
-                    to="/dwg-takeoff"
-                    className="group flex flex-col gap-1 rounded-xl border border-border-light bg-surface-secondary/40 px-4 py-3.5 transition-all hover:bg-surface-secondary hover:border-oe-blue/40"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-content-primary">
-                        {t('settings.open_dwg', { defaultValue: 'Open DWG Takeoff' })}
-                      </span>
-                      <ChevronRight size={14} className="text-content-tertiary group-hover:text-oe-blue transition-colors" />
-                    </div>
-                    <p className="text-xs text-content-tertiary">
-                      {t('settings.bimcad_dwg_desc', { defaultValue: 'DWG drawing import and takeoff' })}
-                    </p>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
+          {/* ── Converters ───────────────────────────────────────── */}
+          {activeTab === 'converters' && (
+            <div className="lg:col-span-2">
+              <ConverterStatusPanel />
+            </div>
           )}
 
           {/* ── AI ────────────────────────────────────────────────── */}
@@ -1587,5 +1538,263 @@ export function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Converters panel ────────────────────────────────────────────────────────
+// Lists every DDC CAD/BIM converter, shows installed-vs-latest version and
+// a link to the corresponding source on GitHub. Backed by
+// /api/system/converters/version-check (cached server-side for 6 h).
+
+interface ConverterRow {
+  id: string;
+  name: string;
+  exe: string;
+  installed: boolean;
+  installed_path: string | null;
+  installed_size: number | null;
+  installed_sha: string | null;
+  latest_size: number | null;
+  latest_sha: string | null;
+  is_outdated: boolean;
+  download_url: string | null;
+  html_url: string | null;
+}
+
+interface ConverterStatusResponse {
+  converters: ConverterRow[];
+  any_outdated: boolean;
+  network_ok: boolean;
+  checked_at: string;
+  ttl_seconds: number;
+}
+
+const DDC_REPO_URL =
+  'https://github.com/datadrivenconstruction/cad2data-Revit-IFC-DWG-DGN-pipeline-with-conversion-validation-qto';
+
+function formatBytes(n: number | null): string {
+  if (n === null || n === undefined) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ConverterStatusPanel() {
+  const { t } = useTranslation();
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<ConverterStatusResponse>({
+    queryKey: ['system', 'converters', 'version-check'],
+    queryFn: () => apiGet<ConverterStatusResponse>('/api/system/converters/version-check'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  return (
+    <Card>
+      <CardHeader
+        title={t('settings.converters_title', { defaultValue: 'CAD / BIM converters' })}
+        subtitle={t('settings.converters_subtitle', {
+          defaultValue:
+            'DDC cad2data pipeline — installed bridges and the latest source available on GitHub.',
+        })}
+        action={
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border-light px-2.5 py-1 text-xs font-medium text-content-secondary hover:bg-surface-secondary hover:text-content-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue"
+            disabled={isFetching}
+            aria-label={t('common.refresh', { defaultValue: 'Refresh' })}
+          >
+            {isFetching ? <Loader2 size={12} className="animate-spin" /> : <Package size={12} />}
+            {t('common.refresh', { defaultValue: 'Refresh' })}
+          </button>
+        }
+      />
+      <CardContent>
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-border-light bg-surface-secondary/40 px-3.5 py-2.5">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-content-primary">
+              {t('settings.converters_source_title', {
+                defaultValue: 'Source repository',
+              })}
+            </p>
+            <p className="text-2xs text-content-tertiary">
+              {t('settings.converters_source_desc', {
+                defaultValue:
+                  'Open-source converters for Revit (RVT), IFC, DWG and DGN, maintained by DataDrivenConstruction.',
+              })}
+            </p>
+          </div>
+          <a
+            href={DDC_REPO_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-oe-blue/30 bg-oe-blue/[0.04] px-2.5 py-1.5 text-xs font-medium text-oe-blue hover:bg-oe-blue/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue"
+          >
+            <ExternalLink size={12} />
+            {t('settings.converters_open_repo', { defaultValue: 'GitHub repo' })}
+          </a>
+        </div>
+
+        {isLoading && (
+          <div className="space-y-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        )}
+
+        {!isLoading && isError && (
+          <div className="rounded-lg border border-red-300/40 bg-red-50 px-3 py-3 text-xs text-red-900 dark:bg-red-950/40 dark:text-red-100">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <div className="font-semibold">
+                  {t('settings.converters_error_title', {
+                    defaultValue: 'Could not check converter versions',
+                  })}
+                </div>
+                <div className="opacity-80">
+                  {t('settings.converters_error_hint', {
+                    defaultValue:
+                      'The backend could not reach GitHub. Installed converters still work — only the up-to-date check is unavailable.',
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!isLoading && !isError && data && (
+          <>
+            {!data.network_ok && (
+              <div className="mb-3 rounded-md border border-amber-300/40 bg-amber-50 px-3 py-2 text-2xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                {t('settings.converters_offline_hint', {
+                  defaultValue:
+                    'GitHub is not reachable from the server right now. Showing installed-only status; the up-to-date check is skipped.',
+                })}
+              </div>
+            )}
+            <ul className="space-y-2">
+              {data.converters.map((c) => {
+                const status: 'outdated' | 'current' | 'missing' = !c.installed
+                  ? 'missing'
+                  : c.is_outdated
+                    ? 'outdated'
+                    : 'current';
+                const statusLabel =
+                  status === 'missing'
+                    ? t('settings.converter_status_missing', { defaultValue: 'Not installed' })
+                    : status === 'outdated'
+                      ? t('settings.converter_status_outdated', { defaultValue: 'Update available' })
+                      : t('settings.converter_status_current', { defaultValue: 'Up to date' });
+                const statusClass =
+                  status === 'missing'
+                    ? 'bg-slate-100 text-slate-700 ring-1 ring-slate-300/60 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700'
+                    : status === 'outdated'
+                      ? 'bg-amber-100 text-amber-900 ring-1 ring-amber-300/60 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-700/60'
+                      : 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-300/60 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-700/60';
+                const StatusIcon = status === 'current' ? CheckCircle2 : status === 'outdated' ? AlertCircle : XCircle;
+                return (
+                  <li
+                    key={c.id}
+                    className="flex items-start gap-3 rounded-lg border border-border-light bg-surface-secondary/30 px-3.5 py-3"
+                  >
+                    <div className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-tertiary text-content-secondary">
+                      <Layers size={14} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-content-primary">
+                          {c.name}
+                        </span>
+                        <span className="font-mono text-2xs text-content-tertiary">
+                          {c.exe}
+                        </span>
+                        <span
+                          className={['inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium', statusClass].join(' ')}
+                        >
+                          <StatusIcon size={11} />
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <dl className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-0.5 text-2xs text-content-tertiary sm:grid-cols-2">
+                        <div className="flex items-center gap-1.5">
+                          <dt className="font-medium uppercase tracking-wider">
+                            {t('settings.converter_installed', { defaultValue: 'Installed' })}
+                          </dt>
+                          <dd className="font-mono">
+                            {c.installed
+                              ? `${formatBytes(c.installed_size)} · ${c.installed_sha?.slice(0, 7) ?? '—'}`
+                              : '—'}
+                          </dd>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <dt className="font-medium uppercase tracking-wider">
+                            {t('settings.converter_latest', { defaultValue: 'Latest' })}
+                          </dt>
+                          <dd className="font-mono">
+                            {c.latest_sha
+                              ? `${formatBytes(c.latest_size)} · ${c.latest_sha.slice(0, 7)}`
+                              : t('settings.converter_unknown', { defaultValue: 'Unknown' })}
+                          </dd>
+                        </div>
+                      </dl>
+                      {c.installed_path && (
+                        <p
+                          className="mt-1 truncate font-mono text-2xs text-content-tertiary"
+                          title={c.installed_path}
+                        >
+                          {c.installed_path}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-1.5">
+                      {c.html_url && (
+                        <a
+                          href={c.html_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-1 rounded-md border border-border-light px-2 py-1 text-2xs font-medium text-content-secondary hover:bg-surface-secondary hover:text-content-primary"
+                        >
+                          <ExternalLink size={11} />
+                          {t('settings.converter_view_source', { defaultValue: 'GitHub' })}
+                        </a>
+                      )}
+                      {c.download_url && (
+                        <a
+                          href={c.download_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          download
+                          className={[
+                            'inline-flex items-center gap-1 rounded-md px-2 py-1 text-2xs font-medium',
+                            status === 'outdated' || status === 'missing'
+                              ? 'border border-oe-blue/30 bg-oe-blue/[0.04] text-oe-blue hover:bg-oe-blue/10'
+                              : 'border border-border-light text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
+                          ].join(' ')}
+                        >
+                          <Package size={11} />
+                          {status === 'missing'
+                            ? t('settings.converter_install', { defaultValue: 'Download' })
+                            : status === 'outdated'
+                              ? t('settings.converter_update', { defaultValue: 'Update' })
+                              : t('settings.converter_reinstall', { defaultValue: 'Re-download' })}
+                        </a>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-3 text-2xs text-content-tertiary">
+              {t('settings.converters_checked_at', {
+                defaultValue: 'Last checked: {{when}} (cached for 6 h)',
+                when: new Date(data.checked_at).toLocaleString(getIntlLocale()),
+              })}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -220,6 +220,8 @@ interface CesiumLike {
     fromCssColorString?: (css: string) => unknown;
   };
   EllipsoidTerrainProvider: new () => unknown;
+  UrlTemplateImageryProvider: new (options: Record<string, unknown>) => unknown;
+  ImageryLayer: new (provider: unknown) => unknown;
   Cesium3DTileset: {
     fromUrl: (url: string) => Promise<unknown>;
   };
