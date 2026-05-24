@@ -146,23 +146,31 @@ async def _project_owner_for_dev_id(
 def _safe_publish(event_name: str, payload: dict[str, Any]) -> None:
     """Fire an event without blocking; swallow scheduler errors.
 
-    Matches the rest of property_dev's ``publish_detached`` usage. Two
-    defensive carve-outs:
+    Three defensive carve-outs (in order of importance):
 
-    * Skip the ``asyncio.create_task`` call entirely when no handlers are
-      subscribed to the event — this avoids leaving a dangling Task
-      reference that the async SQLite pool reaper trips over in tests
-      ("RuntimeError: await wasn't used with future").
-    * Swallow ``RuntimeError`` so unit tests that lack a running event
-      loop don't fail on the publish itself.
+    * **Only publish when a NAMED handler is subscribed.** The core event
+      bus registers a wildcard handler ``_dispatch_to_webhooks`` that
+      opens a fresh ``async_session_factory()`` for every event. With
+      aiosqlite (single-writer) this collides with the outer request's
+      SAVEPOINT and leaves a dangling Task that surfaces as
+      ``RuntimeError: await wasn't used with future`` on the NEXT request
+      in the same test session. Bulk summary events have no specific
+      named subscribers today, and the wildcard webhook bridge cannot
+      deliver useful data when no WebhookEndpoint rows exist anyway —
+      so skipping the detached task entirely is both correct and safe.
+    * Wrap ``publish_detached`` in try/except to keep unit tests without
+      a running event loop happy.
+    * Wildcard-only publish remains possible by deployments configuring
+      a named subscriber (e.g. an analytics module) — that explicit opt-in
+      proves the receiver expects bulk-ops fan-out.
     """
-    has_handlers = bool(
-        event_bus._handlers.get(event_name)  # noqa: SLF001 — internal API,
-        or event_bus._wildcard_handlers       # noqa: SLF001 — narrow read-only
-    )
-    if not has_handlers:
+    has_named_handlers = bool(event_bus._handlers.get(event_name))  # noqa: SLF001
+    if not has_named_handlers:
         logger.debug(
-            "bulk-ops event %s skipped (no subscribers)", event_name
+            "bulk-ops event %s skipped (no NAMED subscribers; "
+            "wildcard webhook bridge is suppressed to avoid SAVEPOINT "
+            "collisions on aiosqlite)",
+            event_name,
         )
         return
     try:

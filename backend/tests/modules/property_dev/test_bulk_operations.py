@@ -106,7 +106,7 @@ async def _make_reservation(client: AsyncClient, ctx, plot_id: str, buyer_id: st
         json={
             "plot_id": plot_id,
             "buyer_id": buyer_id,
-            "reservation_number": f"RES-T-{uuid.uuid4().hex[:5]}-00001",
+            "reservation_number": f"RES-T-{uuid.uuid4().hex[:5].upper()}-00001",
             "deposit_amount": "5000",
             "currency": "EUR",
             "cooling_off_days": 7,
@@ -123,14 +123,25 @@ async def _make_reservation(client: AsyncClient, ctx, plot_id: str, buyer_id: st
 
 @pytest_asyncio.fixture(scope="module")
 async def admin_a(client: AsyncClient):
-    """Admin owning a project + development."""
-    return await _make_project_dev(client, "adm-bulk-a")
+    """Primary tenant — MANAGER role so the IDOR gate fires.
+
+    NOTE: we deliberately use ``manager`` (not ``admin``) here. The global
+    ``Role.ADMIN`` carries a full IDOR bypass everywhere in property_dev
+    (see ``_verify_owner_via_plot``), so an admin caller cannot exercise
+    cross-tenant skip semantics — they would simply succeed on every
+    plot. Bulk-ops are still MANAGER+ gated at the permission layer, so
+    using a manager here covers both the gate and the IDOR contract.
+    The fixture name is kept as ``admin_a`` to read intuitively in the
+    test names ("admin A vs admin B") even though both are technically
+    managers.
+    """
+    return await _make_project_dev(client, "mgr-bulk-a", role="manager")
 
 
 @pytest_asyncio.fixture(scope="module")
 async def admin_b(client: AsyncClient):
-    """Second tenant for IDOR probes — manager role so they own a separate dev
-    but go through the IDOR gate (admin would bypass).
+    """Second tenant for IDOR probes — also manager so neither side
+    benefits from the admin bypass.
     """
     return await _make_project_dev(client, "mgr-bulk-b", role="manager")
 
