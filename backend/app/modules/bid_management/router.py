@@ -376,7 +376,7 @@ async def record_subcontractor_scorecard(
     payload: SubcontractorScorecardCreate,
     session: SessionDep,
     user_id: CurrentUserId,
-    _perm: None = Depends(RequirePermission("bid_management.update")),
+    _perm: None = Depends(RequirePermission("bid_management.record_scorecard")),
 ) -> SubcontractorScorecardResponse:
     """Capture a post-award subcontractor performance scorecard."""
     await _verify_package_access(session, package_id, user_id)
