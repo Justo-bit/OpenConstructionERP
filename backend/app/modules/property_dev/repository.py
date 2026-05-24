@@ -39,6 +39,9 @@ from app.modules.property_dev.models import (
     Phase,
     Plot,
     PriceMatrix,
+    SalesPriceList,
+    SalesPriceListEntry,
+    SalesPricingRule,
     Reservation,
     SalesContract,
     SalesContractRevision,
@@ -731,6 +734,21 @@ class ReservationRepository(_BaseRepo):
         existing = (await self.session.execute(stmt)).scalar_one()
         return int(existing) + 1
 
+    async def count_for_buyer(self, buyer_id: uuid.UUID) -> int:
+        """Return the count of non-cancelled prior reservations for a buyer.
+
+        Used by the pricing engine's ``loyalty`` rule to resolve
+        ``prior_purchases_min`` without forcing the engine itself to
+        touch the DB.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Reservation)
+            .where(Reservation.buyer_id == buyer_id)
+            .where(Reservation.status.in_(("active", "converted")))
+        )
+        return int((await self.session.execute(stmt)).scalar_one() or 0)
+
 
 class SalesContractRepository(_BaseRepo):
     """Data access for :class:`SalesContract` rows."""
@@ -1331,6 +1349,123 @@ class PriceMatrixRepository(_BaseRepo):
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+
+# ── Pricing engine — SalesPriceList / SalesPriceListEntry / SalesPricingRule ──
+
+
+class PriceListRepository(_BaseRepo):
+    """Data access for :class:`SalesPriceList`."""
+
+    model = SalesPriceList
+
+    async def list_for_development(
+        self, development_id: uuid.UUID,
+    ) -> list[SalesPriceList]:
+        result = await self.session.execute(
+            select(SalesPriceList)
+            .where(SalesPriceList.development_id == development_id)
+            .order_by(SalesPriceList.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active_for_development(
+        self, development_id: uuid.UUID,
+    ) -> list[SalesPriceList]:
+        result = await self.session.execute(
+            select(SalesPriceList)
+            .where(SalesPriceList.development_id == development_id)
+            .where(SalesPriceList.status == "active")
+            .order_by(SalesPriceList.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def supersede_other_active(
+        self,
+        development_id: uuid.UUID,
+        keep_id: uuid.UUID,
+    ) -> int:
+        """Mark every active price list (except ``keep_id``) as superseded.
+
+        Returns the number of rows updated. Caller is responsible for
+        wrapping this in a SAVEPOINT alongside the activation of
+        ``keep_id`` so two concurrent activations can't both win.
+        """
+        result = await self.session.execute(
+            update(SalesPriceList)
+            .where(SalesPriceList.development_id == development_id)
+            .where(SalesPriceList.status == "active")
+            .where(SalesPriceList.id != keep_id)
+            .values(status="superseded")
+        )
+        await self.session.flush()
+        return result.rowcount or 0
+
+
+class PriceListEntryRepository(_BaseRepo):
+    """Data access for :class:`SalesPriceListEntry`."""
+
+    model = SalesPriceListEntry
+
+    async def list_for_price_list(
+        self, price_list_id: uuid.UUID,
+    ) -> list[SalesPriceListEntry]:
+        result = await self.session.execute(
+            select(SalesPriceListEntry)
+            .where(SalesPriceListEntry.price_list_id == price_list_id)
+        )
+        return list(result.scalars().all())
+
+    async def find_for_plot(
+        self,
+        price_list_id: uuid.UUID,
+        plot_id: uuid.UUID,
+    ) -> SalesPriceListEntry | None:
+        result = await self.session.execute(
+            select(SalesPriceListEntry)
+            .where(SalesPriceListEntry.price_list_id == price_list_id)
+            .where(SalesPriceListEntry.plot_id == plot_id)
+        )
+        return result.scalar_one_or_none()
+
+
+class PricingRuleRepository(_BaseRepo):
+    """Data access for :class:`SalesPricingRule`."""
+
+    model = SalesPricingRule
+
+    async def list_for_price_list(
+        self, price_list_id: uuid.UUID,
+    ) -> list[SalesPricingRule]:
+        result = await self.session.execute(
+            select(SalesPricingRule)
+            .where(SalesPricingRule.price_list_id == price_list_id)
+            .order_by(SalesPricingRule.priority.asc(), SalesPricingRule.name.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_active_for_price_list(
+        self, price_list_id: uuid.UUID,
+    ) -> list[SalesPricingRule]:
+        result = await self.session.execute(
+            select(SalesPricingRule)
+            .where(SalesPricingRule.price_list_id == price_list_id)
+            .where(SalesPricingRule.active.is_(True))
+            .order_by(SalesPricingRule.priority.asc(), SalesPricingRule.name.asc())
+        )
+        return list(result.scalars().all())
+
+    async def bump_times_used(
+        self, rule_ids: list[uuid.UUID], by: int = 1,
+    ) -> None:
+        if not rule_ids:
+            return
+        await self.session.execute(
+            update(SalesPricingRule)
+            .where(SalesPricingRule.id.in_(rule_ids))
+            .values(times_used=SalesPricingRule.times_used + by)
+        )
+        await self.session.flush()
 
 
 # ── unused-import sentinels (keep ruff happy) ──────────────────────────

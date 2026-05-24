@@ -1436,6 +1436,10 @@ class ReservationResponse(BaseModel):
     cooling_off_until: str | None = None
     expires_at: str | None = None
     status: str = "active"
+    # Pricing-engine snapshot captured at reservation create — see
+    # ``property_dev.pricing_engine.PriceQuote``. Empty dict for legacy
+    # rows pre-dating the snapshot column.
+    price_breakdown_snapshot: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(
         default_factory=dict, validation_alias="metadata_"
     )
@@ -3345,4 +3349,326 @@ class PropertyDevHouseTypeResponse(BaseModel):
     created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ── Pricing engine — PriceList / PriceListEntry / PricingRule ───────────
+
+
+_PRICE_LIST_STATUS_PATTERN = r"^(draft|active|superseded)$"
+_RULE_TYPE_PATTERN = (
+    r"^(early_bird|view_premium|floor_premium|corner_premium|"
+    r"size_premium|promo_code|friends_family|loyalty|bulk_buy)$"
+)
+
+
+def _validate_condition_for_rule_type(rule_type: str, cond: dict[str, Any]) -> None:
+    """Lightweight discriminated-union check for ``condition_json``.
+
+    Pydantic v2's true discriminated unions are awkward when the
+    discriminator lives on the parent model; we keep ``condition_json``
+    as a free dict at the DB layer and validate the per-type required
+    keys here. Each branch enforces the keys documented in
+    :mod:`app.modules.property_dev.pricing_engine`.
+    """
+    if not isinstance(cond, dict):
+        raise ValueError("condition_json must be an object")
+
+    if rule_type == "early_bird":
+        if not isinstance(cond.get("before"), str):
+            raise ValueError("early_bird requires 'before' (ISO date string)")
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", cond["before"]):
+            raise ValueError("'before' must be YYYY-MM-DD")
+        return
+
+    if rule_type == "view_premium":
+        attr = cond.get("plot_attribute", "view")
+        vals = cond.get("values")
+        if not isinstance(attr, str) or not attr:
+            raise ValueError("view_premium requires 'plot_attribute'")
+        if not isinstance(vals, list) or not vals:
+            raise ValueError("view_premium requires a non-empty 'values' list")
+        return
+
+    if rule_type == "floor_premium":
+        if "min_floor" not in cond and "floor" not in cond:
+            raise ValueError("floor_premium requires 'min_floor' or 'floor'")
+        for key in ("min_floor", "floor"):
+            if key in cond and not isinstance(cond[key], int):
+                raise ValueError(f"'{key}' must be an integer")
+        return
+
+    if rule_type == "corner_premium":
+        # plot_attribute + value both optional (default 'is_corner' / True).
+        return
+
+    if rule_type == "size_premium":
+        if "min_area_m2" not in cond and "max_area_m2" not in cond:
+            raise ValueError(
+                "size_premium requires 'min_area_m2' or 'max_area_m2'"
+            )
+        return
+
+    if rule_type == "promo_code":
+        code = cond.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("promo_code requires a non-empty 'code'")
+        return
+
+    if rule_type == "friends_family":
+        # Optional 'buyer_tag' (defaults to 'ff') — anything goes.
+        return
+
+    if rule_type == "loyalty":
+        threshold = cond.get("prior_purchases_min", 1)
+        if not isinstance(threshold, int) or threshold < 1:
+            raise ValueError(
+                "loyalty requires 'prior_purchases_min' >= 1"
+            )
+        return
+
+    if rule_type == "bulk_buy":
+        threshold = cond.get("min_plots", 2)
+        if not isinstance(threshold, int) or threshold < 2:
+            raise ValueError("bulk_buy requires 'min_plots' >= 2")
+        return
+
+    raise ValueError(f"unknown rule_type: {rule_type}")
+
+
+class PricingRuleCreate(BaseModel):
+    """Create a PricingRule under a PriceList."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(..., min_length=1, max_length=255)
+    rule_type: str = Field(..., pattern=_RULE_TYPE_PATTERN)
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+    adjustment_pct: Decimal = Field(default=Decimal("0"))
+    adjustment_fixed: Decimal | None = None
+    priority: int = Field(default=100, ge=0, le=10000)
+    active: bool = True
+    effective_from: str = Field(default="", pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+    effective_to: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    max_uses: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _check_condition(self) -> PricingRuleCreate:
+        _validate_condition_for_rule_type(self.rule_type, self.condition_json)
+        return self
+
+
+class PricingRuleUpdate(BaseModel):
+    """Partial update for a PricingRule."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    rule_type: str | None = Field(default=None, pattern=_RULE_TYPE_PATTERN)
+    condition_json: dict[str, Any] | None = None
+    adjustment_pct: Decimal | None = None
+    adjustment_fixed: Decimal | None = None
+    priority: int | None = Field(default=None, ge=0, le=10000)
+    active: bool | None = None
+    effective_from: str | None = Field(
+        default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$"
+    )
+    effective_to: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    max_uses: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _check_condition(self) -> PricingRuleUpdate:
+        if self.rule_type is not None and self.condition_json is not None:
+            _validate_condition_for_rule_type(
+                self.rule_type, self.condition_json
+            )
+        return self
+
+
+class PricingRuleResponse(BaseModel):
+    """PricingRule returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    price_list_id: UUID
+    name: str
+    rule_type: str
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+    adjustment_pct: Decimal = Decimal("0")
+    adjustment_fixed: Decimal | None = None
+    priority: int = 100
+    active: bool = True
+    effective_from: str = ""
+    effective_to: str | None = None
+    max_uses: int | None = None
+    times_used: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    @field_serializer("adjustment_pct", "adjustment_fixed", when_used="json")
+    @classmethod
+    def _ser_money(cls, v: Decimal | None) -> str | None:
+        return _serialize_money_string(v)
+
+
+class PriceListEntryInput(BaseModel):
+    """Per-plot base price input on PriceListCreate."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    plot_id: UUID
+    base_price: Decimal = Field(..., ge=0)
+
+
+class PriceListEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    price_list_id: UUID
+    plot_id: UUID
+    base_price: Decimal = Decimal("0")
+
+    @field_serializer("base_price", when_used="json")
+    @classmethod
+    def _ser_money(cls, v: Decimal) -> str:
+        return _serialize_money_string(v) or "0"
+
+
+class PriceListCreate(BaseModel):
+    """Create a new PriceList (status starts as 'draft')."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(..., min_length=1, max_length=255)
+    effective_from: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    effective_to: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    currency: str = Field(..., min_length=3, max_length=3)
+    notes: str | None = None
+    entries: list[PriceListEntryInput] = Field(default_factory=list)
+    rules: list[PricingRuleCreate] = Field(default_factory=list)
+
+    @field_validator("currency")
+    @classmethod
+    def _v_currency(cls, v: str) -> str:
+        return _strict_currency_validator(v) or ""
+
+
+class PriceListUpdate(BaseModel):
+    """Partial update for a PriceList (status changes go via /activate)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    effective_from: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    effective_to: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    notes: str | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def _v_currency(cls, v: str | None) -> str | None:
+        return _strict_currency_validator(v)
+
+
+class PriceListResponse(BaseModel):
+    """A PriceList row as returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    development_id: UUID
+    name: str
+    effective_from: str = ""
+    effective_to: str | None = None
+    currency: str = ""
+    status: str = "draft"
+    created_by: UUID | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PriceQuoteLineResponse(BaseModel):
+    """A single line in a price quote (used inside :class:`PriceQuoteResponse`)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    rule_id: UUID | None = None
+    rule_name: str = ""
+    rule_type: str = "base"
+    pct: Decimal | None = None
+    fixed: Decimal | None = None
+    amount: Decimal = Decimal("0")
+
+    @field_serializer("amount", "pct", "fixed", when_used="json")
+    @classmethod
+    def _ser_money(cls, v: Decimal | None) -> str | None:
+        return _serialize_money_string(v)
+
+
+class PriceQuoteResponse(BaseModel):
+    """A computed price quote for a plot."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    plot_id: UUID
+    base_price: Decimal = Decimal("0")
+    lines: list[PriceQuoteLineResponse] = Field(default_factory=list)
+    total: Decimal = Decimal("0")
+    currency: str = ""
+    computed_at: datetime
+    price_list_id: UUID | None = None
+
+    @field_serializer("base_price", "total", when_used="json")
+    @classmethod
+    def _ser_money(cls, v: Decimal) -> str:
+        return _serialize_money_string(v) or "0"
+
+
+class PriceQuoteBasketRequest(BaseModel):
+    """Request body for ``POST /price-lists/{id}/quote-basket/``."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    plot_ids: list[UUID] = Field(..., min_length=1)
+    promo_code: str | None = None
+    buyer_id: UUID | None = None
+    quote_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    )
+
+
+class PriceQuoteBasketResponse(BaseModel):
+    """Response for ``POST /price-lists/{id}/quote-basket/``."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    quotes: list[PriceQuoteResponse] = Field(default_factory=list)
+    total: Decimal = Decimal("0")
+    currency: str = ""
+
+    @field_serializer("total", when_used="json")
+    @classmethod
+    def _ser_money(cls, v: Decimal) -> str:
+        return _serialize_money_string(v) or "0"
+
+
+class EffectiveRulesResponse(BaseModel):
+    """``GET /price-lists/{id}/rules/effective/?date=`` response."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    price_list_id: UUID
+    on_date: str
+    rules: list[PricingRuleResponse] = Field(default_factory=list)
 

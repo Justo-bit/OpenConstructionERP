@@ -6877,3 +6877,345 @@ async def portal_list_my_warranty_claims(
     stmt = stmt.order_by(_WC.created_at.desc()).limit(500)
     rows = (await session.execute(stmt)).scalars().all()
     return [WarrantyClaimResponse.model_validate(r) for r in rows]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Pricing Engine — PriceList / PriceListEntry / PricingRule (v3124)
+# ════════════════════════════════════════════════════════════════════════
+#
+# Six endpoints:
+#   GET    /developments/{dev_id}/price-lists/
+#   POST   /developments/{dev_id}/price-lists/
+#   POST   /price-lists/{id}/activate/
+#   GET    /price-lists/{id}/quote/                   (with plot_id query)
+#   POST   /price-lists/{id}/quote-basket/
+#   GET    /price-lists/{id}/rules/effective/?date=
+#
+# Manager+ on writes (create, activate, rule mutation). Viewer on reads.
+# Cross-tenant IDOR closed via _verify_owner_via_development and a new
+# _verify_owner_via_price_list helper that chains list → dev → project.
+
+
+from app.modules.property_dev.schemas import (  # noqa: E402
+    EffectiveRulesResponse,
+    PriceListCreate,
+    PriceListResponse,
+    PriceListUpdate,
+    PriceQuoteBasketRequest,
+    PriceQuoteBasketResponse,
+    PriceQuoteResponse,
+    PricingRuleCreate,
+    PricingRuleResponse,
+    PricingRuleUpdate,
+)
+
+
+async def _verify_owner_via_price_list(
+    session: SessionDep,
+    price_list_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> None:
+    """IDOR closure for PriceList (list → development → project owner)."""
+    from app.modules.property_dev.repository import PriceListRepository
+
+    pl = await PriceListRepository(session).get_by_id(price_list_id)
+    if pl is None:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    await _verify_owner_via_development(session, pl.development_id, payload)
+
+
+async def _verify_owner_via_pricing_rule(
+    session: SessionDep,
+    rule_id: uuid.UUID,
+    payload: dict[str, Any],
+) -> None:
+    from app.modules.property_dev.repository import PricingRuleRepository
+
+    rule = await PricingRuleRepository(session).get_by_id(rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    await _verify_owner_via_price_list(session, rule.price_list_id, payload)
+
+
+@router.get(
+    "/developments/{dev_id}/price-lists/",
+    response_model=list[PriceListResponse],
+)
+async def list_price_lists(
+    dev_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> list[PriceListResponse]:
+    """List price lists for a development (newest first)."""
+    await _verify_owner_via_development(session, dev_id, user_payload)
+    rows = await service.price_lists.list_for_development(dev_id)
+    return [PriceListResponse.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/developments/{dev_id}/price-lists/",
+    response_model=PriceListResponse,
+    status_code=201,
+)
+async def create_price_list(
+    dev_id: uuid.UUID,
+    data: PriceListCreate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> PriceListResponse:
+    """Create a draft price list (MANAGER+ — touches commercial terms)."""
+    await _verify_owner_via_development(session, dev_id, user_payload)
+    created_by_raw = user_payload.get("sub") or user_payload.get("user_id")
+    created_by: uuid.UUID | None = None
+    if created_by_raw:
+        try:
+            created_by = uuid.UUID(str(created_by_raw))
+        except (ValueError, TypeError):
+            created_by = None
+    pl = await service.create_price_list(dev_id, data, created_by=created_by)
+    return PriceListResponse.model_validate(pl)
+
+
+@router.patch(
+    "/price-lists/{price_list_id}", response_model=PriceListResponse,
+)
+async def update_price_list(
+    price_list_id: uuid.UUID,
+    data: PriceListUpdate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> PriceListResponse:
+    """Update a draft price list (only drafts are mutable; status via /activate)."""
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    pl = await service.price_lists.get_by_id(price_list_id)
+    if pl.status != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Only draft price lists can be edited; clone to amend.",
+        )
+    fields = _dump(data) if hasattr(data, "model_dump") else data.model_dump(
+        exclude_unset=True
+    )
+    if fields:
+        await service.price_lists.update_fields(price_list_id, **fields)
+    pl = await service.price_lists.get_by_id(price_list_id)
+    return PriceListResponse.model_validate(pl)
+
+
+@router.post(
+    "/price-lists/{price_list_id}/activate/",
+    response_model=PriceListResponse,
+)
+async def activate_price_list(
+    price_list_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> PriceListResponse:
+    """Activate a price list, atomically superseding the previous active one."""
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    pl = await service.activate_price_list(price_list_id)
+    return PriceListResponse.model_validate(pl)
+
+
+@router.get(
+    "/price-lists/{price_list_id}/quote/",
+    response_model=PriceQuoteResponse,
+)
+async def quote_price(
+    price_list_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    plot_id: uuid.UUID = Query(...),
+    promo_code: str | None = Query(default=None, max_length=80),
+    buyer_id: uuid.UUID | None = Query(default=None),
+    quote_date: str | None = Query(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> PriceQuoteResponse:
+    """Compute a single-plot quote (simulator endpoint)."""
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    await _verify_owner_via_plot(session, plot_id, user_payload)
+    quote = await service.compute_price_quote(
+        price_list_id,
+        plot_id=plot_id,
+        promo_code=promo_code,
+        buyer_id=buyer_id,
+        quote_date=quote_date,
+    )
+    return PriceQuoteResponse.model_validate(quote.model_dump())
+
+
+@router.post(
+    "/price-lists/{price_list_id}/quote-basket/",
+    response_model=PriceQuoteBasketResponse,
+)
+async def quote_basket(
+    price_list_id: uuid.UUID,
+    data: PriceQuoteBasketRequest,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> PriceQuoteBasketResponse:
+    """Compute a multi-plot basket with bulk-buy rule applied."""
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    # Verify every plot in the basket belongs to the caller's tenant.
+    for pid in data.plot_ids:
+        await _verify_owner_via_plot(session, pid, user_payload)
+
+    quotes: list[PriceQuoteResponse] = []
+    total = Decimal("0")
+    currency = ""
+    for pid in data.plot_ids:
+        q = await service.compute_price_quote(
+            price_list_id,
+            plot_id=pid,
+            promo_code=data.promo_code,
+            buyer_id=data.buyer_id,
+            quote_date=data.quote_date,
+            basket_plot_ids=list(data.plot_ids),
+        )
+        quotes.append(PriceQuoteResponse.model_validate(q.model_dump()))
+        total += Decimal(str(q.total))
+        currency = currency or q.currency
+    return PriceQuoteBasketResponse(
+        quotes=quotes, total=total, currency=currency,
+    )
+
+
+@router.get(
+    "/price-lists/{price_list_id}/rules/effective/",
+    response_model=EffectiveRulesResponse,
+)
+async def list_effective_rules(
+    price_list_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    on_date: str | None = Query(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", alias="date",
+    ),
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> EffectiveRulesResponse:
+    """Return rules effective on ``date`` (with consumed counts)."""
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    rules = await service.effective_rules_on_date(
+        price_list_id, on_date=on_date,
+    )
+    from datetime import datetime as _dt, UTC as _UTC
+    target = on_date or _dt.now(_UTC).date().isoformat()
+    return EffectiveRulesResponse(
+        price_list_id=price_list_id,
+        on_date=target,
+        rules=[PricingRuleResponse.model_validate(r) for r in rules],
+    )
+
+
+# ── Rule CRUD (sub-routes of a price list) ──────────────────────────────
+
+
+@router.get(
+    "/price-lists/{price_list_id}/rules/",
+    response_model=list[PricingRuleResponse],
+)
+async def list_pricing_rules(
+    price_list_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.read")),
+) -> list[PricingRuleResponse]:
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    rows = await service.pricing_rules.list_for_price_list(price_list_id)
+    return [PricingRuleResponse.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/price-lists/{price_list_id}/rules/",
+    response_model=PricingRuleResponse,
+    status_code=201,
+)
+async def create_pricing_rule(
+    price_list_id: uuid.UUID,
+    data: PricingRuleCreate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> PricingRuleResponse:
+    await _verify_owner_via_price_list(session, price_list_id, user_payload)
+    from app.modules.property_dev.models import SalesPricingRule as _PR
+
+    rule = _PR(
+        price_list_id=price_list_id,
+        name=data.name,
+        rule_type=data.rule_type,
+        condition_json=data.condition_json,
+        adjustment_pct=Decimal(str(data.adjustment_pct)),
+        adjustment_fixed=(
+            Decimal(str(data.adjustment_fixed))
+            if data.adjustment_fixed is not None else None
+        ),
+        priority=data.priority,
+        active=data.active,
+        effective_from=data.effective_from or "",
+        effective_to=data.effective_to,
+        max_uses=data.max_uses,
+        times_used=0,
+    )
+    rule = await service.pricing_rules.create(rule)
+    return PricingRuleResponse.model_validate(rule)
+
+
+@router.patch(
+    "/price-lists/{price_list_id}/rules/{rule_id}",
+    response_model=PricingRuleResponse,
+)
+async def update_pricing_rule(
+    price_list_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    data: PricingRuleUpdate,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> PricingRuleResponse:
+    await _verify_owner_via_pricing_rule(session, rule_id, user_payload)
+    fields: dict[str, Any] = data.model_dump(exclude_unset=True)
+    # Coerce Decimal-ish.
+    if "adjustment_pct" in fields and fields["adjustment_pct"] is not None:
+        fields["adjustment_pct"] = Decimal(str(fields["adjustment_pct"]))
+    if (
+        "adjustment_fixed" in fields
+        and fields["adjustment_fixed"] is not None
+    ):
+        fields["adjustment_fixed"] = Decimal(str(fields["adjustment_fixed"]))
+    if fields:
+        await service.pricing_rules.update_fields(rule_id, **fields)
+    rule = await service.pricing_rules.get_by_id(rule_id)
+    return PricingRuleResponse.model_validate(rule)
+
+
+@router.delete(
+    "/price-lists/{price_list_id}/rules/{rule_id}", status_code=204,
+)
+async def delete_pricing_rule(
+    price_list_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    session: SessionDep,
+    user_payload: CurrentUserPayload,
+    service: PropertyDevService = Depends(_svc),
+    _perm: None = Depends(RequirePermission("property_dev.contract_buyer")),
+) -> None:
+    await _verify_owner_via_pricing_rule(session, rule_id, user_payload)
+    await service.pricing_rules.delete(rule_id)
