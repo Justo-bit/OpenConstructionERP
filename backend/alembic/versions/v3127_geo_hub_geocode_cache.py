@@ -29,8 +29,8 @@ from alembic import op
 
 from app.database import GUID
 
-revision: str = "v3124_geo_hub_geocode_cache"
-down_revision: Union[str, Sequence[str], None] = "v3123_boq_fk_indexes"
+revision: str = "v3127_geo_hub_geocode_cache"
+down_revision: Union[str, Sequence[str], None] = "v3126_propdev_portal_tokens"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
