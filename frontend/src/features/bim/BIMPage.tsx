@@ -962,17 +962,57 @@ function NonReadyOverlay({ model, onUploadConverted, onDelete, onRetry, onInstal
     finally { setIsInstalling(false); }
   };
 
-  // Show install button when the failure is "converter missing"; otherwise
-  // show retry. Either way the user has a one-click path forward.
-  const showInstallButton = !isProcessing && errorCode === 'ddc_not_found' && !!converterId;
+  // Show install button when the failure is "converter missing" OR the
+  // installed binary is older than the platform expects (the v4.6.2 RVT
+  // CLI mismatch). In both cases a reinstall is the actionable fix; for
+  // outdated CLI we also override the headline copy so the user sees
+  // *why* they should reinstall instead of the generic guidance.
+  const isOutdatedConverter =
+    !isProcessing && errorCode === 'converter_outdated' && !!converterId;
+  const showInstallButton =
+    !isProcessing
+    && (errorCode === 'ddc_not_found' || isOutdatedConverter)
+    && !!converterId;
   const showRetryButton = !isProcessing && !showInstallButton;
+
+  // Localised override for the converter_outdated branch — when the
+  // backend ships ``cause="converter_outdated"`` (i.e. exit-15 from an
+  // old DDC CLI), we replace the generic title with one that names the
+  // specific problem and the specific fix. The body keeps the backend's
+  // composed message because it already includes the file's RVT format,
+  // the installed converter version and a single-line stderr excerpt —
+  // none of which the frontend can synthesise on its own.
+  const headlineTitle = isOutdatedConverter
+    ? t('bim.overlay_converter_outdated_title', {
+        defaultValue: 'Converter is out of date',
+      })
+    : c.title;
+  const installButtonLabel = isOutdatedConverter
+    ? isInstalling
+      ? t('bim.overlay_reinstall_in_progress', { defaultValue: 'Reinstalling…' })
+      : t('bim.overlay_reinstall_converter_btn', {
+          defaultValue: 'Reinstall converter',
+        })
+    : isInstalling
+      ? t('bim.overlay_install_in_progress', { defaultValue: 'Installing…' })
+      : t('bim.overlay_install_converter_btn', {
+          defaultValue: 'Install converter',
+        });
 
   return (
     <div className="flex flex-col items-center justify-center h-full bg-surface-secondary" role={isProcessing ? 'status' : 'alert'}>
       <div className="text-center max-w-md px-6 w-full">
         <div className={`mx-auto w-20 h-20 rounded-2xl ${c.bg} border flex items-center justify-center mb-5`}>{c.icon}</div>
-        <h2 className="text-lg font-bold text-content-primary mb-2">{c.title}</h2>
+        <h2 className="text-lg font-bold text-content-primary mb-2">{headlineTitle}</h2>
         <p className="text-sm text-content-secondary mb-2 whitespace-pre-line">{description}</p>
+        {isOutdatedConverter && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-300 mb-3 px-3 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 inline-block">
+            {t('bim.overlay_converter_outdated_hint', {
+              defaultValue:
+                'Reinstall fetches the latest converter from GitHub and retries your upload automatically.',
+            })}
+          </p>
+        )}
         <p className="text-[11px] text-content-quaternary mb-6">{model.name}{model.file_size ? ` · ${formatFileSize(model.file_size)}` : ''}</p>
 
         {isProcessing && (
@@ -1003,13 +1043,11 @@ function NonReadyOverlay({ model, onUploadConverted, onDelete, onRetry, onInstal
               <button
                 onClick={handleInstall}
                 disabled={isInstalling}
-                aria-label={t('bim.overlay_install_converter_btn', { defaultValue: 'Install converter' })}
+                aria-label={installButtonLabel}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {isInstalling ? <Loader2 size={15} className="animate-spin" /> : <DownloadCloud size={15} />}
-                {isInstalling
-                  ? t('bim.overlay_install_in_progress', { defaultValue: 'Installing…' })
-                  : t('bim.overlay_install_converter_btn', { defaultValue: 'Install converter' })}
+                {installButtonLabel}
               </button>
             )}
             {showRetryButton && (

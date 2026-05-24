@@ -567,6 +567,189 @@ def detect_converter_version(extension: str) -> dict[str, str | None]:
     return result
 
 
+# ── Per-binary CLI capability matrix ──────────────────────────────────────
+#
+# Different DDC RvtExporter / IfcExporter builds accept different positional
+# arguments and flags.  Older releases (the ones a user already has installed
+# on disk) reject anything beyond ``<input> <output>``; newer releases accept
+# a depth-mode token (``standard`` / ``complete``) and the ``-no-collada``
+# flag we use to skip the geometry pass.
+#
+# The platform's invocation has historically appended those extra tokens
+# unconditionally — which produces a ``The following arguments were not
+# expected`` failure on old binaries even though they could otherwise
+# convert the file just fine.  This matrix records what each installed
+# binary actually understands so ``ifc_processor._run_ddc`` can build a
+# version-tolerant command line.
+#
+# Cache key is the resolved binary path (str), so a user with two
+# extensions sharing the same install dir gets one probe per binary.  We
+# also keep a per-extension "negative" sentinel so we don't re-probe a
+# missing converter on every call.
+_CONVERTER_CAPABILITIES: dict[str, dict[str, Any]] = {}
+
+
+def _default_capabilities() -> dict[str, Any]:
+    """‌⁠‍Conservative defaults for an unknown/old binary.
+
+    Old DDC CLIs only accept ``[converter, input, output]`` — they reject
+    the depth-mode positional and the ``-no-collada`` flag.  When the probe
+    fails we fall back to this profile so the retry path matches what
+    ``_run_ddc`` would have emitted as its second-attempt fallback.
+    """
+    return {
+        "accepts_depth_mode": False,
+        "accepts_no_collada_flag": False,
+        "version_text": None,
+        "probed": True,
+    }
+
+
+def _modern_capabilities(version_text: str | None = None) -> dict[str, Any]:
+    """‌⁠‍Capability profile for a confirmed-modern DDC binary."""
+    return {
+        "accepts_depth_mode": True,
+        "accepts_no_collada_flag": True,
+        "version_text": version_text,
+        "probed": True,
+    }
+
+
+# Substrings in ``--help`` / ``--version`` output that confirm the CLI
+# understands the modern argument shape.  Kept liberal because DDC has
+# shipped help text in several phrasings across releases; the goal is to
+# avoid false-negatives that force an unnecessary retry on a perfectly
+# modern binary.
+_MODERN_HELP_MARKERS = (
+    "-no-collada",
+    "--no-collada",
+    "no-collada",
+    "complete",       # the depth-mode token only newer CLIs document
+)
+
+
+def detect_converter_capabilities(extension: str) -> dict[str, Any]:
+    """‌⁠‍Probe the installed DDC converter to learn which CLI args it accepts.
+
+    The probe runs the binary with ``--help`` (and falls back to
+    ``--version``); both calls are cheap (sub-second, no file IO).
+    Results are cached per-binary-path for the lifetime of the process so
+    subsequent conversions don't pay the probe cost.
+
+    Returns a dict with the keys:
+      * ``accepts_depth_mode`` (bool) — append ``standard`` / ``complete``?
+      * ``accepts_no_collada_flag`` (bool) — append ``-no-collada``?
+      * ``version_text`` (str | None) — raw probe output (debug only)
+      * ``probed`` (bool) — True once the binary was actually executed
+
+    If the probe itself fails (non-zero exit, no recognizable output,
+    process never started), the conservative "old CLI" profile is
+    returned and cached — so the conversion path skips the extra args
+    and avoids the exit-15 trap.
+    """
+    exe = find_converter(extension)
+    if exe is None:
+        # No binary installed at all — nothing to probe; mark as not-probed
+        # so a later install can trigger a fresh detect.
+        return {
+            "accepts_depth_mode": False,
+            "accepts_no_collada_flag": False,
+            "version_text": None,
+            "probed": False,
+        }
+
+    cache_key = str(exe)
+    cached = _CONVERTER_CAPABILITIES.get(cache_key)
+    if cached is not None:
+        return cached
+
+    import subprocess
+
+    probe_text = ""
+    probe_ok = False
+    for flag in ("--help", "-h", "--version"):
+        try:
+            proc = subprocess.run(
+                [str(exe), flag],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(exe.parent),
+                input=b"\n",
+                timeout=8,
+            )
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            logger.debug("Converter probe (%s %s) failed to start: %s", exe, flag, exc)
+            continue
+        except subprocess.TimeoutExpired:
+            logger.debug("Converter probe (%s %s) timed out", exe, flag)
+            continue
+
+        # DDC binaries occasionally emit their banner on stderr instead of
+        # stdout; combine both so the marker scan doesn't miss it.
+        out = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
+        try:
+            text = out.decode("utf-8", errors="replace").lower()
+        except UnicodeError:
+            text = ""
+        if text.strip():
+            probe_text = text
+            # Any non-empty banner counts as "we successfully spoke to the
+            # binary" — even an exit-1 from ``-h`` on a CLI that wants
+            # ``--help``.  The marker scan below decides the actual profile.
+            probe_ok = True
+            break
+
+    if not probe_ok or not probe_text:
+        # Probe failed entirely → assume old CLI.  This is the SAFE branch:
+        # if we're wrong and the binary is actually modern, we just lose
+        # the COLLADA-skip optimisation but conversion still succeeds.
+        caps = _default_capabilities()
+        _CONVERTER_CAPABILITIES[cache_key] = caps
+        logger.info(
+            "DDC capability probe for %s produced no usable output — "
+            "assuming legacy CLI (no depth-mode, no -no-collada)",
+            exe.name,
+        )
+        return caps
+
+    # Modern marker found → accept the full v18+ argument set.
+    if any(marker in probe_text for marker in _MODERN_HELP_MARKERS):
+        caps = _modern_capabilities(version_text=probe_text[:512])
+        _CONVERTER_CAPABILITIES[cache_key] = caps
+        logger.info(
+            "DDC capability probe for %s detected modern CLI "
+            "(depth-mode + -no-collada accepted)",
+            exe.name,
+        )
+        return caps
+
+    # Help worked but no modern marker → treat as legacy.  Surfaced at INFO
+    # because this is the path the v4.6.2 user-reported bug originally hit.
+    caps = _default_capabilities()
+    _CONVERTER_CAPABILITIES[cache_key] = caps
+    logger.info(
+        "DDC capability probe for %s did not advertise modern flags — "
+        "assuming legacy CLI (no depth-mode, no -no-collada)",
+        exe.name,
+    )
+    return caps
+
+
+def invalidate_converter_capabilities(extension: str | None = None) -> None:
+    """‌⁠‍Drop the cached capability profile so the next conversion re-probes.
+
+    Call this after a reinstall / update so an upgraded binary's new
+    argument shape is picked up without a service restart.  Matches the
+    sibling ``invalidate_converter_health`` API.
+    """
+    if extension is None:
+        _CONVERTER_CAPABILITIES.clear()
+        return
+    exe = find_converter(extension)
+    if exe is not None:
+        _CONVERTER_CAPABILITIES.pop(str(exe), None)
+
+
 def invalidate_converter_health(extension: str | None = None) -> None:
     """Drop cached health for one or all converters.
 
@@ -578,6 +761,9 @@ def invalidate_converter_health(extension: str | None = None) -> None:
         _HEALTH_CACHE.clear()
     else:
         _HEALTH_CACHE.pop(extension, None)
+    # Capabilities are tied 1:1 to the installed binary — drop them in
+    # lock-step so a reinstall picks up the new CLI shape immediately.
+    invalidate_converter_capabilities(extension)
 
 
 async def convert_cad_to_excel(
