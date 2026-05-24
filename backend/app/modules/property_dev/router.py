@@ -6880,7 +6880,7 @@ async def portal_list_my_warranty_claims(
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Pricing Engine — PriceList / PriceListEntry / PricingRule (v3124)
+# Pricing Engine — PriceList / PriceListEntry / PricingRule
 # ════════════════════════════════════════════════════════════════════════
 #
 # Six endpoints:
@@ -7219,3 +7219,15 @@ async def delete_pricing_rule(
 ) -> None:
     await _verify_owner_via_pricing_rule(session, rule_id, user_payload)
     await service.pricing_rules.delete(rule_id)
+
+
+# ── Buyer self-service portal (magic-link auth) ─────────────────────────
+#
+# The portal endpoints live in a separate file so the public surface
+# area (no JWT auth on most routes) is easy to audit in isolation.
+# Mounting via ``include_router`` keeps them under
+# ``/api/v1/property-dev/portal/*`` alongside the existing
+# ``/portal/me/*`` portal-user endpoints above.
+from app.modules.property_dev.portal_router import portal_router  # noqa: E402
+
+router.include_router(portal_router)
