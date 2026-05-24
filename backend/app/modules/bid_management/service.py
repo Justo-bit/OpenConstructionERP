@@ -943,6 +943,21 @@ class BidManagementService:
             raise HTTPException(
                 status_code=409, detail="Submission already exists for this invitation"
             )
+        # Bidder-impersonation guard: the bidder row referenced by the
+        # submission MUST belong to the same package as the invitation. A
+        # caller with manager access on project A who knows a bidder UUID
+        # on project B's package could otherwise forge a submission row
+        # linking project-A invitation -> project-B bidder snapshot. Use a
+        # 404 (not 403) for the leak-safe policy mandated by R5/R6.
+        inv_for_bidder = await self.invitation_repo.get_by_id(data.invitation_id)
+        if inv_for_bidder is None:
+            raise HTTPException(status_code=404, detail="Invitation not found")
+        bidder_row = await self.bidder_repo.get_by_id(data.bidder_id)
+        if bidder_row is None or bidder_row.package_id != inv_for_bidder.package_id:
+            raise HTTPException(
+                status_code=404,
+                detail="Bidder not found for this invitation's package",
+            )
         sub = BidSubmission(
             invitation_id=data.invitation_id,
             bidder_id=data.bidder_id,
@@ -1043,6 +1058,19 @@ class BidManagementService:
         self, data: BidSubmissionLineCreate
     ) -> BidSubmissionLine:
         await self._assert_submission_mutable(data.submission_id)
+        # Cross-package line-item guard: the line_item must belong to the
+        # same package as the submission. Otherwise a caller could price
+        # a project-B line_item against a project-A submission row,
+        # cross-polluting the leveling matrix.
+        sub_pkg = await self._package_for_submission(data.submission_id)
+        if sub_pkg is None:
+            raise HTTPException(status_code=404, detail="Submission not found")
+        line_item = await self.line_repo.get_by_id(data.line_item_id)
+        if line_item is None or line_item.package_id != sub_pkg.id:
+            raise HTTPException(
+                status_code=404,
+                detail="Line item not found for this submission's package",
+            )
         total_price = (_to_decimal(data.unit_price) * _to_decimal(data.quantity_priced))
         line = BidSubmissionLine(
             submission_id=data.submission_id,
@@ -1118,6 +1146,17 @@ class BidManagementService:
 
     async def create_qa(self, data: BidQACreate) -> BidQA:
         await self.get_package(data.package_id)
+        # Bidder consistency: when the Q&A is attributed to a bidder, that
+        # bidder row MUST belong to the same package — otherwise the Q&A
+        # board would attribute questions from project-B's bidder to
+        # project-A's package, breaking the audit trail.
+        if data.bidder_id is not None:
+            bidder_row = await self.bidder_repo.get_by_id(data.bidder_id)
+            if bidder_row is None or bidder_row.package_id != data.package_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Bidder not found for this package",
+                )
         qa = BidQA(
             package_id=data.package_id,
             bidder_id=data.bidder_id,
@@ -1303,6 +1342,16 @@ class BidManagementService:
 
     async def create_rejection(self, data: BidRejectionCreate) -> BidRejection:
         await self.get_package(data.package_id)
+        # Bidder-impersonation guard: the bidder being rejected must
+        # belong to the same package as the rejection. Without this, a
+        # manager on project A could file a rejection record naming a
+        # project-B bidder, polluting cross-tenant audit history.
+        bidder_row = await self.bidder_repo.get_by_id(data.bidder_id)
+        if bidder_row is None or bidder_row.package_id != data.package_id:
+            raise HTTPException(
+                status_code=404,
+                detail="Bidder not found for this package",
+            )
         rejection = BidRejection(
             package_id=data.package_id,
             bidder_id=data.bidder_id,
@@ -1722,6 +1771,16 @@ class BidManagementService:
         module can update the long-term bidder rating in its own table.
         """
         package = await self.get_package(package_id)
+        # Bidder-impersonation guard: the bidder being scored must belong
+        # to this package — otherwise a manager on project A could plant
+        # a score against project-B's subcontractor in project-A's
+        # metadata trail.
+        bidder_row = await self.bidder_repo.get_by_id(bidder_id)
+        if bidder_row is None or bidder_row.package_id != package_id:
+            raise HTTPException(
+                status_code=404,
+                detail="Bidder not found for this package",
+            )
         # The scorecard ranges 0..100 per pillar; the composite is the
         # straight average. Anything outside [0, 100] is clamped, then
         # quantized to 2 dp for deterministic persistence.
