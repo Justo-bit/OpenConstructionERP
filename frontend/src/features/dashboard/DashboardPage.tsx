@@ -60,6 +60,7 @@ import {
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { DashboardLayoutManager } from './DashboardLayoutManager';
 import { DASHBOARD_WIDGET_IDS } from './widgetRegistry';
+import { DashboardRollupProvider } from './context/DashboardRollupContext';
 import {
   useDashboardLayoutStore,
   reconcileOrder,
@@ -2037,6 +2038,7 @@ export function DashboardPage() {
   };
 
   return (
+    <DashboardRollupProvider>
     <div className="space-y-5 animate-fade-in">
       {/* "What's new in vX.Y.Z" release-notes card. Self-gates on a
           localStorage `oe_whats_new_seen_<version>` flag so it only
@@ -2201,6 +2203,7 @@ export function DashboardPage() {
         return node ? <Fragment key={id}>{node}</Fragment> : null;
       })}
     </div>
+    </DashboardRollupProvider>
   );
 }
 
