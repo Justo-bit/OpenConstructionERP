@@ -1044,6 +1044,12 @@ export interface Reservation {
   cooling_off_until: string | null;
   expires_at: string | null;
   status: ReservationStatus;
+  /**
+   * Pricing-engine snapshot captured at reservation create. Shape:
+   * `{ base_price, lines, total, currency, computed_at, price_list_id }`.
+   * Empty `{}` for legacy rows pre-dating the snapshot column.
+   */
+  price_breakdown_snapshot?: Record<string, unknown>;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -2740,4 +2746,200 @@ export async function downloadPropDevDocument(
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.blob();
+}
+
+/* ── Pricing Engine (v3124) ────────────────────────────────────────────── */
+
+export type PricingRuleType =
+  | 'early_bird'
+  | 'view_premium'
+  | 'floor_premium'
+  | 'corner_premium'
+  | 'size_premium'
+  | 'promo_code'
+  | 'friends_family'
+  | 'loyalty'
+  | 'bulk_buy';
+
+export type PriceListStatus = 'draft' | 'active' | 'superseded';
+
+export interface PriceList {
+  id: string;
+  development_id: string;
+  name: string;
+  effective_from: string;
+  effective_to: string | null;
+  currency: string;
+  status: PriceListStatus;
+  created_by: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PriceListEntryInput {
+  plot_id: string;
+  base_price: string;
+}
+
+export interface PricingRule {
+  id: string;
+  price_list_id: string;
+  name: string;
+  rule_type: PricingRuleType;
+  condition_json: Record<string, unknown>;
+  adjustment_pct: string;
+  adjustment_fixed: string | null;
+  priority: number;
+  active: boolean;
+  effective_from: string;
+  effective_to: string | null;
+  max_uses: number | null;
+  times_used: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PriceQuoteLine {
+  rule_id: string | null;
+  rule_name: string;
+  rule_type: string;
+  pct: string | null;
+  fixed: string | null;
+  amount: string;
+}
+
+export interface PriceQuote {
+  plot_id: string;
+  base_price: string;
+  lines: PriceQuoteLine[];
+  total: string;
+  currency: string;
+  computed_at: string;
+  price_list_id: string | null;
+}
+
+export interface PriceQuoteBasketResponse {
+  quotes: PriceQuote[];
+  total: string;
+  currency: string;
+}
+
+export interface CreatePriceListPayload {
+  name: string;
+  effective_from: string;
+  effective_to?: string | null;
+  currency: string;
+  notes?: string | null;
+  entries?: PriceListEntryInput[];
+  rules?: CreatePricingRulePayload[];
+}
+
+export interface CreatePricingRulePayload {
+  name: string;
+  rule_type: PricingRuleType;
+  condition_json: Record<string, unknown>;
+  adjustment_pct: string;
+  adjustment_fixed?: string | null;
+  priority: number;
+  active: boolean;
+  effective_from?: string;
+  effective_to?: string | null;
+  max_uses?: number | null;
+}
+
+export function listPriceLists(devId: string): Promise<PriceList[]> {
+  return apiGet<PriceList[]>(`${BASE}/developments/${devId}/price-lists/`);
+}
+
+export function createPriceList(
+  devId: string,
+  data: CreatePriceListPayload,
+): Promise<PriceList> {
+  return apiPost<PriceList>(`${BASE}/developments/${devId}/price-lists/`, data);
+}
+
+export function activatePriceList(priceListId: string): Promise<PriceList> {
+  return apiPost<PriceList>(
+    `${BASE}/price-lists/${priceListId}/activate/`,
+    {},
+  );
+}
+
+export function listPricingRules(priceListId: string): Promise<PricingRule[]> {
+  return apiGet<PricingRule[]>(`${BASE}/price-lists/${priceListId}/rules/`);
+}
+
+export function createPricingRule(
+  priceListId: string,
+  data: CreatePricingRulePayload,
+): Promise<PricingRule> {
+  return apiPost<PricingRule>(
+    `${BASE}/price-lists/${priceListId}/rules/`,
+    data,
+  );
+}
+
+export function updatePricingRule(
+  priceListId: string,
+  ruleId: string,
+  data: Partial<CreatePricingRulePayload>,
+): Promise<PricingRule> {
+  return apiPatch<PricingRule>(
+    `${BASE}/price-lists/${priceListId}/rules/${ruleId}`,
+    data,
+  );
+}
+
+export function deletePricingRule(
+  priceListId: string,
+  ruleId: string,
+): Promise<void> {
+  return apiDelete<void>(
+    `${BASE}/price-lists/${priceListId}/rules/${ruleId}`,
+  );
+}
+
+export function quotePrice(params: {
+  priceListId: string;
+  plot_id: string;
+  promo_code?: string;
+  buyer_id?: string;
+  quote_date?: string;
+}): Promise<PriceQuote> {
+  const qs = new URLSearchParams();
+  qs.set('plot_id', params.plot_id);
+  if (params.promo_code) qs.set('promo_code', params.promo_code);
+  if (params.buyer_id) qs.set('buyer_id', params.buyer_id);
+  if (params.quote_date) qs.set('quote_date', params.quote_date);
+  return apiGet<PriceQuote>(
+    `${BASE}/price-lists/${params.priceListId}/quote/?${qs.toString()}`,
+  );
+}
+
+export function quoteBasket(
+  priceListId: string,
+  data: {
+    plot_ids: string[];
+    promo_code?: string;
+    buyer_id?: string;
+    quote_date?: string;
+  },
+): Promise<PriceQuoteBasketResponse> {
+  return apiPost<PriceQuoteBasketResponse>(
+    `${BASE}/price-lists/${priceListId}/quote-basket/`,
+    data,
+  );
+}
+
+export function listEffectiveRules(
+  priceListId: string,
+  on_date?: string,
+): Promise<{ price_list_id: string; on_date: string; rules: PricingRule[] }> {
+  const qs = new URLSearchParams();
+  if (on_date) qs.set('date', on_date);
+  const q = qs.toString();
+  return apiGet(
+    `${BASE}/price-lists/${priceListId}/rules/effective/${q ? `?${q}` : ''}`,
+  );
 }

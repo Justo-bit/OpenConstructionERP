@@ -280,6 +280,11 @@ const PropertyDevDocumentTemplatesSettingsPage = lazy(() =>
     default: m.DocumentTemplatesSettingsPage,
   })),
 );
+const PropertyDevPricingEnginePage = lazy(() =>
+  import('@/features/property-dev').then((m) => ({
+    default: m.PricingEnginePage,
+  })),
+);
 // ── Geo Hub — Cesium 3D Tiles + cross-module geo. Lazy-loaded because
 // CesiumJS is ~3 MB; this keeps the main bundle untouched.
 const GeoHubPage = lazy(() =>
@@ -781,6 +786,7 @@ export default function App() {
         <Route path="/crm" element={<P title="CRM"><CRMPage /></P>} />
         <Route path="/property-dev" element={<P title="Property Development"><PropertyDevPage /></P>} />
         <Route path="/property-dev/developments/:devId/geo" element={<P title="Development map"><DevelopmentGeoPage /></P>} />
+        <Route path="/property-dev/developments/:devId/pricing" element={<P title="Pricing Engine"><PropertyDevPricingEnginePage /></P>} />
         <Route path="/property-dev/dashboards" element={<P title="Property Development Dashboards"><PropertyDevDashboardsHub /></P>} />
         <Route
           path="/property-dev/settings/house-types"
