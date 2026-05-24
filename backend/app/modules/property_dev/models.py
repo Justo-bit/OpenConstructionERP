@@ -891,6 +891,15 @@ class Reservation(Base):
     status: Mapped[str] = mapped_column(
         String(40), nullable=False, default="active", index=True
     )
+    # Pricing-engine snapshot captured at the moment this reservation was
+    # created — the canonical audit record of "why did this deal close at
+    # X?". Shape mirrors :class:`PriceQuote` from
+    # :mod:`app.modules.property_dev.pricing_engine` (base_price, lines[],
+    # total, currency, computed_at, price_list_id). Legacy rows pre-dating
+    # the pricing engine carry ``{base_price, lines: [], total}``.
+    price_breakdown_snapshot: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
     metadata_: Mapped[dict] = mapped_column(  # type: ignore[assignment]
         "metadata", JSON, nullable=False, default=dict, server_default="{}"
     )
@@ -1774,6 +1783,175 @@ class PropertyDevCustomTemplate(Base):
         )
 
 
+# ── Pricing Engine (PriceList / PriceListEntry / PricingRule) ───────────
+#
+# Versioned, rule-driven sales pricing for property developments. Distinct
+# from :class:`PriceMatrix` (which derives price-per-m² from a small set
+# of plot-attribute multipliers): PriceList carries a per-plot ``base_price``
+# row plus an ordered chain of :class:`PricingRule` objects (early-bird,
+# view premium, floor premium, corner premium, size premium, promo code,
+# friends & family, loyalty, bulk-buy). The engine in
+# :mod:`app.modules.property_dev.pricing_engine` evaluates the rules in
+# ``priority`` order against (plot + buyer + quote_date + promo + basket)
+# and returns a fully-itemised :class:`PriceQuote` with a waterfall of
+# discounts/premiums leading to the final price.
+
+
+class SalesPriceList(Base):
+    """A versioned sales price list for a Development.
+
+    Distinct from :class:`app.modules.supplier_catalogs.models.PriceList`
+    (which is a vendor catalogue of materials). This is a *property-sales*
+    price list — per-plot ``base_price`` rows + an ordered chain of
+    :class:`SalesPricingRule` objects (early-bird, view premium, floor
+    premium, corner, size, promo code, friends & family, loyalty,
+    bulk-buy). The class name carries the ``Sales`` prefix so the
+    SQLAlchemy registry doesn't fall over the collision.
+
+    Lifecycle: ``draft`` → ``active`` → ``superseded``. Activating a
+    sales price list atomically supersedes any other active sales price
+    list for the same development (handled in the service layer via a
+    SAVEPOINT so two concurrent activations can't both win).
+    """
+
+    __tablename__ = "oe_property_dev_price_list"
+
+    development_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("oe_property_dev_development.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    effective_from: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="", server_default=""
+    )
+    effective_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="", server_default=""
+    )
+    # ``draft`` / ``active`` / ``superseded``.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="draft", server_default="draft",
+        index=True,
+    )
+    # Plain UUID — refers to oe_users_user.id but kept FK-less (cross-module).
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<SalesPriceList {self.name!r} ({self.status})>"
+
+
+class SalesPriceListEntry(Base):
+    """A per-plot base price within a :class:`SalesPriceList`.
+
+    UNIQUE on (price_list_id, plot_id) so a plot can only appear once
+    per price list.
+    """
+
+    __tablename__ = "oe_property_dev_price_list_entry"
+    __table_args__ = (
+        UniqueConstraint(
+            "price_list_id", "plot_id",
+            name="uq_oe_property_dev_price_list_entry_list_plot",
+        ),
+    )
+
+    price_list_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("oe_property_dev_price_list.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plot_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("oe_property_dev_plot.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    base_price: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SalesPriceListEntry list={self.price_list_id} "
+            f"plot={self.plot_id}>"
+        )
+
+
+class SalesPricingRule(Base):
+    """A single discount / premium rule attached to a :class:`SalesPriceList`.
+
+    ``rule_type`` discriminates the shape of ``condition_json``. See
+    :mod:`app.modules.property_dev.pricing_engine` for the per-type
+    Pydantic conditions and the evaluation logic.
+
+    ``adjustment_pct`` is the percentage change applied to the running
+    subtotal (e.g. ``-5.000`` = 5% discount, ``+8.000`` = 8% premium).
+    ``adjustment_fixed`` is an alternative absolute amount (e.g.
+    ``-2500.00`` = €2 500 off). Exactly one of the two should drive the
+    rule; the schema layer accepts both for ergonomics and they are
+    additive in the engine (pct first then fixed).
+
+    Rules apply in ``priority`` order (lower first). Rules with
+    ``max_uses`` set are gated on ``times_used`` so launch promos
+    self-deactivate after N applications.
+    """
+
+    __tablename__ = "oe_property_dev_pricing_rule"
+
+    price_list_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("oe_property_dev_price_list.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # ``early_bird`` / ``view_premium`` / ``floor_premium`` / ``corner_premium``
+    # / ``size_premium`` / ``promo_code`` / ``friends_family`` / ``loyalty``
+    # / ``bulk_buy``. Enforced at the schema layer (discriminated union).
+    rule_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="early_bird",
+        server_default="early_bird", index=True,
+    )
+    condition_json: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
+    # Percentage adjustment (negative for discount, positive for premium).
+    # Numeric(6, 3) so we can express 0.001 % nuance and well beyond ±100 %.
+    adjustment_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 3), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    adjustment_fixed: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2), nullable=True
+    )
+    # Lower priority value = applied first.
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default="100"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1", index=True
+    )
+    effective_from: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="", server_default=""
+    )
+    effective_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    times_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SalesPricingRule {self.name!r} type={self.rule_type} "
+            f"prio={self.priority}>"
+        )
+
+
 __all__ = [
     "Block",
     "Broker",
@@ -1803,6 +1981,9 @@ __all__ = [
     "Reservation",
     "SalesContract",
     "SalesContractRevision",
+    "SalesPriceList",
+    "SalesPriceListEntry",
+    "SalesPricingRule",
     "Snag",
     "WarrantyClaim",
 ]

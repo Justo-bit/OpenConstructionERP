@@ -74,7 +74,10 @@ from app.modules.property_dev.repository import (
     PaymentScheduleRepository,
     PhaseRepository,
     PlotRepository,
+    PriceListEntryRepository,
+    PriceListRepository,
     PriceMatrixRepository,
+    PricingRuleRepository,
     ReservationRepository,
     SalesContractRepository,
     SalesContractRevisionRepository,
@@ -924,6 +927,10 @@ class PropertyDevService:
         self.escrow_accounts = EscrowAccountRepository(session)
         self.escrow_transactions = EscrowTransactionRepository(session)
         self.price_matrices = PriceMatrixRepository(session)
+        # ── Pricing engine (v3124) ─────────────────────────────────
+        self.price_lists = PriceListRepository(session)
+        self.price_list_entries = PriceListEntryRepository(session)
+        self.pricing_rules = PricingRuleRepository(session)
 
     # ── Development ─────────────────────────────────────────────────────
 
@@ -2833,6 +2840,41 @@ class PropertyDevService:
         cooling_off_until = (
             today + timedelta(days=cooling_off_days)
         ).isoformat()
+        # Capture pricing snapshot from the active PriceList (if any).
+        # This is the audit-trail entry surfaced in the Quote History tab.
+        # Falls back to a base-only quote when no active price list exists
+        # so legacy flows continue to work unchanged.
+        snapshot: dict[str, Any] = {}
+        try:
+            active_lists = await self.price_lists.list_active_for_development(
+                plot.development_id,
+            )
+            if active_lists:
+                pl = active_lists[0]
+                quote = await self.compute_price_quote(  # type: ignore[attr-defined]
+                    pl.id,
+                    plot_id=plot.id,
+                    buyer_id=buyer_id,
+                    promo_code=(metadata or {}).get("promo_code"),
+                )
+                snapshot = quote.model_dump(mode="json")
+            else:
+                snapshot = {
+                    "base_price": str(Decimal(str(plot.price_base or 0))),
+                    "lines": [],
+                    "total": str(Decimal(str(plot.price_base or 0))),
+                    "currency": currency,
+                    "price_list_id": None,
+                }
+        except Exception:  # noqa: BLE001 — never block a reservation on snapshot
+            snapshot = {
+                "base_price": str(Decimal(str(plot.price_base or 0))),
+                "lines": [],
+                "total": str(Decimal(str(plot.price_base or 0))),
+                "currency": currency,
+                "price_list_id": None,
+            }
+
         obj = Reservation(
             plot_id=plot.id,
             lead_id=lead_id,
@@ -2846,6 +2888,7 @@ class PropertyDevService:
             cooling_off_until=cooling_off_until,
             expires_at=expires_at,
             status="active",
+            price_breakdown_snapshot=snapshot,
             metadata_=metadata or {},
         )
         reservation = await self.reservations.create(obj)
@@ -6474,6 +6517,243 @@ def _dump(data: Any) -> dict[str, Any]:
     if "metadata" in fields:
         fields["metadata_"] = fields.pop("metadata")
     return fields
+
+
+# ── Pricing engine service methods (v3124) ──────────────────────────────
+
+
+async def _svc_create_price_list(
+    svc: PropertyDevService,
+    development_id: uuid.UUID,
+    data: Any,
+    *,
+    created_by: uuid.UUID | None = None,
+) -> Any:
+    """Create a draft PriceList with optional entries + rules."""
+    from app.modules.property_dev.models import (
+        SalesPriceList as _PL,
+        SalesPriceListEntry as _PLE,
+        SalesPricingRule as _PR,
+    )
+
+    dev = await svc.developments.get_by_id(development_id)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="Development not found")
+
+    pl = _PL(
+        development_id=development_id,
+        name=data.name,
+        effective_from=data.effective_from,
+        effective_to=data.effective_to,
+        currency=data.currency,
+        status="draft",
+        created_by=created_by,
+        notes=data.notes,
+    )
+    pl = await svc.price_lists.create(pl)
+
+    for entry in data.entries or []:
+        # Verify plot belongs to this development (cross-tenant safety).
+        plot = await svc.plots.get_by_id(entry.plot_id)
+        if plot is None or plot.development_id != development_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Plot {entry.plot_id} does not belong to this development",
+            )
+        await svc.price_list_entries.create(
+            _PLE(
+                price_list_id=pl.id,
+                plot_id=entry.plot_id,
+                base_price=Decimal(str(entry.base_price)),
+            )
+        )
+
+    for r in data.rules or []:
+        await svc.pricing_rules.create(
+            _PR(
+                price_list_id=pl.id,
+                name=r.name,
+                rule_type=r.rule_type,
+                condition_json=r.condition_json,
+                adjustment_pct=Decimal(str(r.adjustment_pct)),
+                adjustment_fixed=(
+                    Decimal(str(r.adjustment_fixed))
+                    if r.adjustment_fixed is not None else None
+                ),
+                priority=r.priority,
+                active=r.active,
+                effective_from=r.effective_from or "",
+                effective_to=r.effective_to,
+                max_uses=r.max_uses,
+                times_used=0,
+            )
+        )
+
+    return pl
+
+
+async def _svc_activate_price_list(
+    svc: PropertyDevService, price_list_id: uuid.UUID,
+) -> Any:
+    """Atomically activate a price list, superseding the previously
+    active one for the same development.
+
+    Wraps the two writes (supersede-others + flip-this-to-active) in
+    a SAVEPOINT when one is open, falling back to back-to-back flushes
+    on the outer request-scope transaction otherwise. Either way the
+    pair commits together — concurrent activations against the same
+    development serialise on the row lock the UPDATE acquires.
+    """
+    pl = await svc.price_lists.get_by_id(price_list_id)
+    if pl is None:
+        raise HTTPException(status_code=404, detail="PriceList not found")
+    if pl.status == "active":
+        return pl
+    if pl.status == "superseded":
+        raise HTTPException(
+            status_code=409,
+            detail="A superseded price list cannot be re-activated; clone it.",
+        )
+
+    # Atomicity model:
+    # * On Postgres we wrap the supersede+activate pair in a SAVEPOINT
+    #   (``begin_nested``) so a concurrent activation against the same
+    #   development serialises on the row lock the UPDATE acquires.
+    # * On SQLite (local dev + tests only) we skip SAVEPOINT — aiosqlite's
+    #   savepoint path loses the greenlet context and trips MissingGreenlet.
+    #   SQLite has no concurrent-write story anyway (one writer at a time
+    #   serialised by the database lock), so the pair is naturally atomic
+    #   at the flush boundary.
+    dialect = svc.session.bind.dialect.name if svc.session.bind else ""
+    if dialect == "postgresql" and svc.session.in_transaction():
+        async with svc.session.begin_nested():
+            await svc.price_lists.supersede_other_active(
+                pl.development_id, keep_id=pl.id,
+            )
+            await svc.price_lists.update_fields(pl.id, status="active")
+    else:
+        await svc.price_lists.supersede_other_active(
+            pl.development_id, keep_id=pl.id,
+        )
+        await svc.price_lists.update_fields(pl.id, status="active")
+
+    event_bus.publish_detached(
+        "property_dev.price_list.activated",
+        data={
+            "price_list_id": str(pl.id),
+            "development_id": str(pl.development_id),
+        },
+        source_module="property_dev",
+    )
+    return await svc.price_lists.get_by_id(pl.id)
+
+
+async def _svc_compute_price_quote(
+    svc: PropertyDevService,
+    price_list_id: uuid.UUID,
+    *,
+    plot_id: uuid.UUID,
+    promo_code: str | None = None,
+    buyer_id: uuid.UUID | None = None,
+    quote_date: str | None = None,
+    basket_plot_ids: list[uuid.UUID] | None = None,
+) -> Any:
+    """Compute a :class:`PriceQuote` against a price list."""
+    from app.modules.property_dev.pricing_engine import compute_final_price
+
+    pl = await svc.price_lists.get_by_id(price_list_id)
+    if pl is None:
+        raise HTTPException(status_code=404, detail="PriceList not found")
+    plot = await svc.plots.get_by_id(plot_id)
+    if plot is None or plot.development_id != pl.development_id:
+        raise HTTPException(status_code=404, detail="Plot not found")
+
+    buyer = None
+    prior_purchases = 0
+    if buyer_id is not None:
+        buyer = await svc.buyers.get_by_id(buyer_id)
+        if buyer is not None:
+            prior_purchases = await svc.reservations.count_for_buyer(buyer_id) \
+                if hasattr(svc.reservations, "count_for_buyer") else 0
+
+    rules = await svc.pricing_rules.list_active_for_price_list(pl.id)
+
+    # Resolve base_price: prefer per-plot entry; fallback to Plot.price_base.
+    entry = await svc.price_list_entries.find_for_plot(pl.id, plot_id)
+    if entry is not None:
+        base_price = Decimal(str(entry.base_price))
+    else:
+        base_price = Decimal(str(plot.price_base or 0))
+
+    qd = (
+        date.fromisoformat(quote_date)
+        if quote_date else datetime.now(UTC).date()
+    )
+
+    basket = None
+    if basket_plot_ids:
+        basket = []
+        for pid in basket_plot_ids:
+            p = await svc.plots.get_by_id(pid)
+            if p is not None and p.development_id == pl.development_id:
+                basket.append(p)
+
+    return await compute_final_price(
+        plot=plot,
+        price_list=pl,
+        buyer=buyer,
+        promo_code=promo_code,
+        quote_date=qd,
+        bulk_basket=basket,
+        rules=rules,
+        base_price=base_price,
+        prior_purchases=prior_purchases,
+    )
+
+
+async def _svc_effective_rules_on_date(
+    svc: PropertyDevService,
+    price_list_id: uuid.UUID,
+    *,
+    on_date: str | None = None,
+) -> list[Any]:
+    """Return the rules effective on ``on_date`` (with times_used baked in)."""
+    pl = await svc.price_lists.get_by_id(price_list_id)
+    if pl is None:
+        raise HTTPException(status_code=404, detail="PriceList not found")
+    target = (
+        date.fromisoformat(on_date)
+        if on_date else datetime.now(UTC).date()
+    )
+    rules = await svc.pricing_rules.list_for_price_list(pl.id)
+    out: list[Any] = []
+    for r in rules:
+        if not r.active:
+            continue
+        if r.effective_from:
+            try:
+                if date.fromisoformat(r.effective_from[:10]) > target:
+                    continue
+            except ValueError:
+                pass
+        if r.effective_to:
+            try:
+                if date.fromisoformat(r.effective_to[:10]) < target:
+                    continue
+            except ValueError:
+                pass
+        if r.max_uses is not None and (r.times_used or 0) >= r.max_uses:
+            continue
+        out.append(r)
+    return out
+
+
+PropertyDevService.create_price_list = _svc_create_price_list  # type: ignore[attr-defined]
+PropertyDevService.activate_price_list = _svc_activate_price_list  # type: ignore[attr-defined]
+PropertyDevService.compute_price_quote = _svc_compute_price_quote  # type: ignore[attr-defined]
+PropertyDevService.effective_rules_on_date = (  # type: ignore[attr-defined]
+    _svc_effective_rules_on_date
+)
 
 
 __all__ = [
