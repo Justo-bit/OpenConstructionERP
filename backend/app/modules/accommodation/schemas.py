@@ -209,12 +209,18 @@ class BookingUpdate(BaseModel):
 
 
 class BookingResponse(BaseModel):
-    """Read shape for a booking."""
+    """Read shape for a booking.
+
+    ``room_label`` is optional and only populated by list endpoints that
+    eagerly resolve the parent room — single-booking GETs leave it
+    ``None`` because the room id is already in scope at the call site.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     room_id: UUID
+    room_label: str | None = None
     occupant_contact_id: UUID | None = None
     occupant_name: str | None = None
     check_in: date
@@ -231,6 +237,15 @@ class BookingDetailResponse(BookingResponse):
     """Detail shape — adds nested charges."""
 
     charges: list[ChargeResponse] = Field(default_factory=list)
+
+
+class BookingListResponse(BaseModel):
+    """Paginated booking list with room labels decorated server-side."""
+
+    items: list[BookingResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int
+    offset: int
 
 
 # ── Charge ───────────────────────────────────────────────────────────────
@@ -319,3 +334,4 @@ class SuggestFromHRResponse(BaseModel):
 # from earlier schemas).
 AccommodationDetailResponse.model_rebuild()
 BookingDetailResponse.model_rebuild()
+BookingListResponse.model_rebuild()

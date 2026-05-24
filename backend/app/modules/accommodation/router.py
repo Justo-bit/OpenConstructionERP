@@ -13,7 +13,7 @@ in :mod:`app.modules.accommodation.service`.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, select
@@ -32,6 +32,7 @@ from app.modules.accommodation.schemas import (
     AccommodationUpdate,
     BookingCreate,
     BookingDetailResponse,
+    BookingListResponse,
     BookingResponse,
     BookingUpdate,
     BootstrapFromPropDevResponse,
@@ -54,8 +55,44 @@ from app.modules.accommodation.service import (
     get_room_or_404,
     inherit_currency_for_room,
     is_valid_booking_transition,
+    list_bookings_for_accommodation,
+    list_bookings_for_room,
     suggest_room_for_employee,
 )
+
+# ── Allowed status values for the list filter ────────────────────────────
+# Mirror the regex in ``schemas._BOOKING_STATUS_PATTERN`` so an unknown
+# value reaches a 422 before we touch the DB.
+_BOOKING_STATUS_VALUES = ("reserved", "checked_in", "checked_out", "cancelled")
+
+
+def _parse_booking_status_filter(values: list[str] | None) -> list[str] | None:
+    """Validate a ``?status=`` query filter (single or multi-value)."""
+    if not values:
+        return None
+    cleaned: list[str] = []
+    for v in values:
+        if v not in _BOOKING_STATUS_VALUES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown booking status: {v!r}",
+            )
+        if v not in cleaned:
+            cleaned.append(v)
+    return cleaned
+
+
+def _decorate_bookings(
+    bookings: list[Booking],
+    room_label_by_id: dict[uuid.UUID, str],
+) -> list[BookingResponse]:
+    """Attach ``room_label`` to each booking response (no extra queries)."""
+    out: list[BookingResponse] = []
+    for b in bookings:
+        base = BookingResponse.model_validate(b).model_dump(by_alias=False)
+        base["room_label"] = room_label_by_id.get(b.room_id)
+        out.append(BookingResponse.model_validate(base))
+    return out
 
 router = APIRouter()
 
@@ -202,6 +239,49 @@ async def delete_accommodation(
     await session.flush()
 
 
+@router.get(
+    "/{accommodation_id}/bookings",
+    response_model=BookingListResponse,
+    dependencies=[Depends(RequirePermission("accommodation.read"))],
+)
+async def list_bookings_for_accommodation_endpoint(
+    accommodation_id: uuid.UUID,
+    session: SessionDep,
+    user_id: CurrentUserId,
+    status_filter: list[str] | None = Query(
+        default=None, alias="status",
+    ),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> BookingListResponse:
+    """List bookings across every room of one accommodation.
+
+    Multi-value ``?status=`` is accepted (FastAPI parses repeated query
+    params into a list). Date filtering uses overlap semantics — see
+    :func:`service._apply_booking_filters`.
+    """
+    statuses = _parse_booking_status_filter(status_filter)
+    bookings, room_label_by_id = await list_bookings_for_accommodation(
+        session,
+        accommodation_id,
+        user_id,
+        statuses=statuses,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit,
+        offset=offset,
+    )
+    items = _decorate_bookings(bookings, room_label_by_id)
+    return BookingListResponse(
+        items=items,
+        total=len(items),
+        limit=limit,
+        offset=offset,
+    )
+
+
 # ── Rooms ─────────────────────────────────────────────────────────────────
 
 
@@ -321,6 +401,44 @@ async def update_room(
 
 
 # ── Bookings ──────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/rooms/{room_id}/bookings",
+    response_model=BookingListResponse,
+    dependencies=[Depends(RequirePermission("accommodation.read"))],
+)
+async def list_bookings_for_room_endpoint(
+    room_id: uuid.UUID,
+    session: SessionDep,
+    user_id: CurrentUserId,
+    status_filter: list[str] | None = Query(
+        default=None, alias="status",
+    ),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> BookingListResponse:
+    """List bookings for one specific room."""
+    statuses = _parse_booking_status_filter(status_filter)
+    bookings, room_label_by_id = await list_bookings_for_room(
+        session,
+        room_id,
+        user_id,
+        statuses=statuses,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit,
+        offset=offset,
+    )
+    items = _decorate_bookings(bookings, room_label_by_id)
+    return BookingListResponse(
+        items=items,
+        total=len(items),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(
