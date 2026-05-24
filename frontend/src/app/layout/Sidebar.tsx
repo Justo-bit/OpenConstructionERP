@@ -11,7 +11,6 @@ import {
   Database,
   Bot,
   Layers,
-  Library,
   Boxes,
   Box,
   ShieldCheck,
