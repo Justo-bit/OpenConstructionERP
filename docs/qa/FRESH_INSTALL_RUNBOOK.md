@@ -22,8 +22,11 @@
 > First-time pip + npm installs over a slow link push this toward 30
 > minutes.
 >
-> **Total wall-clock observed**: 14 m 17 s on Windows 11 / Python 3.13.9 /
-> Node v24.14.1 / 1 Gb/s residential link (see `FRESH_INSTALL_RESULTS.md`).
+> **Total wall-clock observed**: ~12 m on Windows 11 / Python 3.13.9 /
+> Node v24.14.1 / 1 Gb/s residential link, AFTER the install paper-cuts
+> sweep on top of `0cb0f5c8` (see `FRESH_INSTALL_RESULTS.md`). The
+> pre-sweep 14 m 17 s figure included ~3 min of debugging around five
+> documented paper-cuts that are now fixed.
 
 ---
 
@@ -96,38 +99,17 @@ python -m pip install --upgrade pip
 
 ## 3 · Install backend in editable mode  (~3-5 min)
 
-### 3a · Pre-flight: create the `frontend/dist` placeholder
-
-The backend `pyproject.toml` declares the pre-built frontend as a forced
-inclusion for the wheel build target. Hatchling currently consults that
-inclusion map even for the editable target (see Troubleshooting → "Forced
-include not found" below). Work around it with a one-byte placeholder:
-
-**PowerShell**:
-
-```powershell
-New-Item -ItemType Directory -Force frontend\dist | Out-Null
-New-Item -ItemType File -Force frontend\dist\.placeholder | Out-Null
-```
-
-**Bash**:
-
-```bash
-mkdir -p frontend/dist
-touch    frontend/dist/.placeholder
-```
-
-You will overwrite this with a real Vite build only if you decide to
-serve the SPA from the backend (production-style); for development you
-just need the directory to exist.
-
-### 3b · Install the backend
-
 **PowerShell / bash (same)**:
 
 ```bash
 pip install -e ./backend
 ```
+
+> The backend's `backend/hatch_build.py` build hook creates an empty
+> `frontend/dist/.placeholder` automatically before hatchling resolves
+> its force-include map. You no longer need the historical
+> `mkdir frontend/dist && touch frontend/dist/.placeholder` workaround
+> from earlier revisions of this runbook.
 
 **Expected**: ~60 packages downloaded, ending with
 `Successfully installed ... openconstructionerp-4.6.1 ...`. Total wheel
@@ -192,23 +174,18 @@ migrations, no seed data yet).
 
 ## 5 · Install frontend dependencies  (~1-2 min)
 
-**PowerShell**:
-
-```powershell
-Remove-Item -Recurse -Force frontend\dist        # drop the placeholder
-cd frontend
-npm install --no-audit --no-fund
-cd ..
-```
-
-**Bash**:
+**PowerShell / bash (same)**:
 
 ```bash
-rm -rf frontend/dist                              # drop the placeholder
 cd frontend
 npm install --no-audit --no-fund
 cd ..
 ```
+
+> The `frontend/dist/.placeholder` left behind by the editable install is
+> harmless — Vite ignores `frontend/dist` entirely when serving via
+> `npm run dev`, and the directory is overwritten cleanly by
+> `npm run build` when you eventually produce a production bundle.
 
 **Expected**: `added 1033 packages in <time>`. Several `npm warn
 deprecated` lines are normal (transitive lodash / glob / uuid / inflight
@@ -328,44 +305,50 @@ npm run dev
 
 ```
   VITE v6.4.2  ready in <ms>
-  ➜  Local:   http://127.0.0.1:5180/
+  ➜  Local:   http://127.0.0.1:5173/
 ```
 
-> **README says `:5173`, the actual port is `:5180`.** `vite.config.ts`
-> hard-codes `server.port = 5180` and `strictPort = true`. Open
-> http://127.0.0.1:5180 — opening :5173 will time out.
-
-The dev server proxies `/api/*` to `http://127.0.0.1:9090` by default
-(set in `vite.config.ts`). Since step 7 starts the backend on `:8000`,
-**point the proxy at the right backend**:
+The dev server proxies `/api/*` to `http://127.0.0.1:8000` by default
+(matches the backend port from step 7). If you run the backend on a
+different port, override with:
 
 **PowerShell**:
 
 ```powershell
-$env:VITE_API_TARGET = "http://127.0.0.1:8000"
+$env:VITE_API_TARGET = "http://127.0.0.1:8765"
 npm run dev
 ```
 
 **Bash**:
 
 ```bash
-VITE_API_TARGET=http://127.0.0.1:8000 npm run dev
+VITE_API_TARGET=http://127.0.0.1:8765 npm run dev
 ```
 
-Without that env var the proxy 502s on every API call because port 9090
-is empty in a fresh setup.
+> **Earlier revisions of this runbook** required setting `VITE_API_TARGET`
+> manually because the proxy defaulted to `:9090`, and warned that the
+> Vite port was `:5180`, not the `:5173` advertised in the README. Both
+> defaults were fixed in the install paper-cuts sweep — vite now binds
+> `:5173` and proxies to `:8000` out of the box.
 
 ---
 
 ## 9 · Log in & manual smoke test  (~30 s)
 
-1. Open http://127.0.0.1:5180/login in a browser.
+1. Open http://127.0.0.1:5173/login in a browser.
 2. The login page should render the OpenConstructionERP brand and a
    three-tab role selector (Admin / Estimator / Manager).
-3. **Credentials**: read the auto-generated password from
-   `~/.openestimator/.demo_credentials.json` — the README's quoted
-   `DemoPass1234!` only works if you exported
-   `DEMO_USER_PASSWORD=DemoPass1234!` BEFORE the first boot.
+3. **Credentials**: the demo password is printed on first boot in the
+   backend log, e.g.:
+
+   ```
+   [seed] Demo user created: demo@openestimator.io / xK7p_Q2nR8sT4uV6wX9yZ
+   [seed] Pre-set DEMO_USER_PASSWORD env to skip random generation
+   ```
+
+   The same password is also persisted to
+   `~/.openestimator/.demo_credentials.json` (chmod 600). Read it back
+   any time with:
 
    **PowerShell**:
    ```powershell
@@ -376,6 +359,9 @@ is empty in a fresh setup.
    ```bash
    cat ~/.openestimator/.demo_credentials.json
    ```
+
+   To pin a known password (e.g. for a team demo or CI), export
+   `DEMO_USER_PASSWORD=YourSecret` **before** the first boot.
 
    Look up `demo@openestimator.io` (note the trailing **`r`** — a common
    typo is `openestimate.io` which silently returns 401 because that
@@ -434,7 +420,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/system/modul
 
 ### "Forced include not found: …/frontend/dist" during `pip install -e ./backend`
 
-**Symptom**:
+**Symptom** (historical — fixed in the install paper-cuts sweep):
 
 ```
 FileNotFoundError: Forced include not found:
@@ -442,26 +428,31 @@ FileNotFoundError: Forced include not found:
 error: metadata-generation-failed
 ```
 
-**Cause**: `backend/pyproject.toml` has both a wheel `force-include` map
-(`"../frontend/dist" = "app/_frontend_dist"`) and an editable target that
-tries to inherit nothing — but at least one hatchling version still
-walks the wheel map during editable metadata generation.
+**Cause**: `backend/pyproject.toml` had both a wheel `force-include` map
+(`"../frontend/dist" = "app/_frontend_dist"`) and an editable target
+that tried to inherit nothing — but at least one hatchling version
+still walked the wheel map during editable metadata generation.
 
-**Fix**: ensure `frontend/dist/` exists before the install (step 3a
-above). A directory with one placeholder file is enough; the editable
-install does not actually bundle the contents.
+**Fix**: `backend/hatch_build.py` is a custom hatchling build hook that
+creates `../frontend/dist/.placeholder` before any target resolves its
+file lists. If you somehow still see this error (e.g. you removed the
+hook or stripped pyproject's `[tool.hatch.build.hooks.custom]` section),
+restore the file or fall back to `mkdir frontend/dist` before the
+install.
 
 ### `/api/v1/users/auth/login/` returns `Invalid email or password`
 
 **Cause**: you're using a password that doesn't match the
 auto-generated one. Solutions in order of preference:
 
-1. Read `~/.openestimator/.demo_credentials.json` and use that password.
-2. Set `DEMO_USER_PASSWORD=DemoPass1234!` (and the matching
+1. Scroll back through the backend startup log for a `[seed]` line:
+   `[seed] Demo user created: demo@openestimator.io / <password>`.
+2. Read `~/.openestimator/.demo_credentials.json` and use that password.
+3. Set `DEMO_USER_PASSWORD=YourSecret` (and the matching
    `DEMO_ESTIMATOR_PASSWORD` / `DEMO_MANAGER_PASSWORD`) **before** the
    first backend boot, delete `backend/openestimate.db`, and start the
    backend again — that re-seeds the demo accounts with your password.
-3. Double-check the email: it must be `demo@openestimator.io`
+4. Double-check the email: it must be `demo@openestimator.io`
    (with the trailing `r`). `demo@openestimate.io` (no `r`) does not
    exist and silently returns 401.
 
@@ -473,12 +464,13 @@ header.
 
 ### Vite dev server starts but every API call 502s
 
-**Cause**: `vite.config.ts` proxies `/api/*` to
-`http://127.0.0.1:9090` by default, but you're running the backend on
-:8000. Solution: set `VITE_API_TARGET=http://127.0.0.1:8000` before
-`npm run dev` (step 8).
+**Cause** (historical — fixed in the install paper-cuts sweep): the
+proxy used to default to `http://127.0.0.1:9090` while the README said
+the backend ran on `:8000`. The new default is `:8000`. If you run the
+backend somewhere else, set `VITE_API_TARGET=http://127.0.0.1:<port>`
+before `npm run dev` (step 8).
 
-### `EADDRINUSE` on port 5180 or 8000
+### `EADDRINUSE` on port 5173 or 8000
 
 **Cause**: another instance of the app is already running on the same
 port. `vite.config.ts` uses `strictPort: true`, so it will not pick a
@@ -571,5 +563,11 @@ Then restart from step 2.
 
 Observed clean-room run on Windows 11 / Python 3.13.9 / Node v24.14.1 /
 1 Gb/s residential link, with `pip cache` and `npm cache` already warm:
-**14 m 17 s** end-to-end including all verification steps and writing
-this runbook's companion `FRESH_INSTALL_RESULTS.md`.
+**14 m 17 s** end-to-end (pre-sweep, against `0cb0f5c8`) including all
+verification steps. After the install paper-cuts sweep landed on top of
+`0cb0f5c8`, a re-verification of steps 3-8 took **~7 minutes** of
+wall-clock (264 s for `pip install -e ./backend`, 67 s for `npm
+install`, ~1 min for backend boot + login probe, ~1 s for Vite ready)
+with **zero workarounds applied** — the documented commands worked
+verbatim end-to-end. A clean-cache new developer is expected to finish
+the full runbook in well under 15 minutes.

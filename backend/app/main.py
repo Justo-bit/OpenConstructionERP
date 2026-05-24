@@ -629,21 +629,32 @@ async def _seed_demo_account() -> None:
             # Persist generated passwords + print once. Operators who set
             # env vars never see this banner; new installs get a one-time
             # log line with the location.
+            #
+            # IMPORTANT: log each generated credential as a self-contained
+            # ``[seed]`` line so a new developer sees the password
+            # immediately at first-boot time without having to know about
+            # ``~/.openestimator/.demo_credentials.json``. This was the #1
+            # cause of "why won't login work" debug sessions on fresh
+            # installs (see docs/qa/FRESH_INSTALL_RESULTS.md Issue 3).
             if generated_creds:
                 creds_path = _persist_demo_credentials(generated_creds)
+                # Email -> env-var-name lookup so each per-account banner
+                # can name the exact variable that suppresses random
+                # generation for that account.
+                env_var_for_email = {
+                    spec["email"]: spec["env_var"] for spec in demo_account_specs
+                }
+                for email, pw in generated_creds.items():
+                    env_var = env_var_for_email.get(email, "DEMO_USER_PASSWORD")
+                    logger.warning("[seed] Demo user created: %s / %s", email, pw)
+                    logger.warning(
+                        "[seed] Pre-set %s env to skip random generation", env_var
+                    )
                 logger.warning(
-                    "Demo credentials generated for %d account(s). "
-                    "Saved to %s — recover the passwords from there or "
-                    "set DEMO_USER_PASSWORD / DEMO_ESTIMATOR_PASSWORD / "
-                    "DEMO_MANAGER_PASSWORD before next boot to override.",
+                    "[seed] %d demo credential(s) also saved to %s",
                     len(generated_creds),
                     creds_path or "(persistence failed — check logs)",
                 )
-                # Log each generated password ONCE so a fresh log capture
-                # can reconstruct them. Subsequent boots find the user
-                # row already present and skip this branch entirely.
-                for email, pw in generated_creds.items():
-                    logger.warning("  %s: %s", email, pw)
 
             # 2. Capture the demo user ids while the session is open.
             estimator_user = (

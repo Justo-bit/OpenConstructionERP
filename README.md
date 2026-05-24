@@ -749,13 +749,29 @@ Open **http://localhost:5173** — for hacking on the codebase. Requires Python 
 
 ### Demo Accounts
 
-Three demo accounts are created automatically on first start. The default password is `DemoPass1234!` for all three — override with `DEMO_ADMIN_PASSWORD` / `DEMO_ESTIMATOR_PASSWORD` / `DEMO_MANAGER_PASSWORD` env vars before the first boot if you need a custom one (e.g. for any internet-exposed deployment).
+Three demo accounts are created automatically on first start. Each
+password is **generated per installation** (via `secrets.token_urlsafe`)
+and printed to the backend startup log so you see it immediately, e.g.:
+
+```
+[seed] Demo user created: demo@openestimator.io / xK7p_Q2nR8sT4uV6wX9yZ
+[seed] Pre-set DEMO_USER_PASSWORD env to skip random generation
+```
+
+The same passwords are also persisted to
+`~/.openestimator/.demo_credentials.json` (chmod 600) so you can recover
+them later. To pin known passwords (e.g. for a team demo or CI), set the
+env vars **before the first boot**:
+
+- `DEMO_USER_PASSWORD` — admin (`demo@openestimator.io`)
+- `DEMO_ESTIMATOR_PASSWORD` — estimator (`estimator@openestimator.io`)
+- `DEMO_MANAGER_PASSWORD` — manager (`manager@openestimator.io`)
 
 | Account | Email | Password | Role |
 |---------|-------|----------|------|
-| Admin | `demo@openestimator.io` | `DemoPass1234!` | Full access |
-| Estimator | `estimator@openestimator.io` | `DemoPass1234!` | Estimator |
-| Manager | `manager@openestimator.io` | `DemoPass1234!` | Manager |
+| Admin | `demo@openestimator.io` | _see startup log or `.demo_credentials.json`_ | Full access |
+| Estimator | `estimator@openestimator.io` | _see startup log or `.demo_credentials.json`_ | Estimator |
+| Manager | `manager@openestimator.io` | _see startup log or `.demo_credentials.json`_ | Manager |
 
 > Demo accounts include 5 pre-loaded projects from Berlin, London, New York, Paris, and Dubai with complete BOQs, schedules, and cost models.
 >
