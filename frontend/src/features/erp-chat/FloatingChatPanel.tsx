@@ -510,7 +510,7 @@ function NoAIBanner({
             }}
           >
             {t('chat.panel.no_ai_banner.title', {
-              defaultValue: 'Configure AI to start chatting',
+              defaultValue: 'AI provider key required',
             })}
           </div>
           <div
@@ -522,7 +522,7 @@ function NoAIBanner({
           >
             {t('chat.panel.no_ai_banner.body', {
               defaultValue:
-                'The chat needs an Anthropic, OpenAI, or other provider key. Set it up in Settings.',
+                'Add your AI provider key in Settings → AI to enable chat.',
             })}
           </div>
         </div>
@@ -551,7 +551,7 @@ function NoAIBanner({
             cursor: 'pointer',
           }}
         >
-          {t('chat.panel.no_ai_banner.cta_skip', { defaultValue: 'Skip' })}
+          {t('chat.panel.no_ai_banner.cta_skip', { defaultValue: 'Not now' })}
         </button>
         <button
           type="button"
@@ -590,7 +590,7 @@ function ErrorCard({
   const humanized = apiKey
     ? t('chat.panel.error_card.api_key', {
         defaultValue:
-          'AI provider needs a key — configure it in Settings to keep chatting.',
+          'Add your AI provider key in Settings → AI to enable chat.',
       })
     : message;
 
@@ -657,7 +657,7 @@ function ErrorCard({
             }}
           >
             <KeyRound size={12} />
-            {t('chat.panel.no_ai_banner.cta_configure', { defaultValue: 'Configure AI' })}
+            {t('chat.panel.no_ai_banner.cta_configure', { defaultValue: 'Open Settings' })}
           </button>
         ) : (
           <button
