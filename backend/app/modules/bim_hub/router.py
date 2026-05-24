@@ -1310,6 +1310,17 @@ async def _process_cad_in_background(
                         if result.get("converter_source")
                         else {}
                     ),
+                    # Honesty signal — set when the import only succeeded
+                    # because the runtime stripped modern CLI args (or
+                    # retried without them) to accommodate an older DDC
+                    # binary.  Drives the post-success "converter
+                    # outdated" nudge in the BIM viewer.  Conversion
+                    # itself is fine; the warning is informational only.
+                    **(
+                        {"converter_cli_outdated": True}
+                        if result.get("converter_cli_outdated")
+                        else {}
+                    ),
                 }
 
                 # BUG-V320-DDC-01 / D-TKC-NEW-01 — non-destructive honesty
@@ -1403,6 +1414,7 @@ async def _process_cad_in_background(
                 rvt_app = rvt_info.get("app_name")  # e.g. "Revit 2024"
                 conv_version = conv_info.get("version")  # e.g. "18.0.0.0"
                 stderr_tail = (ddc_failure.get("stderr") or "").strip()
+                cause = ddc_failure.get("cause") or "unknown"
 
                 if ext == ".rvt":
                     model.status = "needs_converter"
@@ -1411,6 +1423,15 @@ async def _process_cad_in_background(
                     # only when its underlying datum is non-empty so we never
                     # ship "File saved with Revit None".
                     parts: list[str] = []
+                    if cause == "converter_outdated":
+                        # Lead with the specific, actionable diagnosis so
+                        # the user sees the fix before the surrounding
+                        # diagnostics.  The full stderr line still goes
+                        # into metadata_ below for the support panel.
+                        parts.append(
+                            "Your installed converter is older than the "
+                            "platform expects."
+                        )
                     if rvt_app:
                         parts.append(
                             f"File saved with {rvt_app}"
@@ -1418,25 +1439,37 @@ async def _process_cad_in_background(
                         )
                     if conv_version:
                         parts.append(f"Installed RVT converter: {conv_version}.")
-                    parts.append(
-                        "The converter produced no elements from this file. "
-                        "Most common causes: the RVT was saved with a Revit "
-                        "version newer than the converter supports, the file "
-                        "is corrupt, or a converter dependency is missing."
-                    )
+                    if cause == "converter_outdated":
+                        parts.append(
+                            "Open Settings → BIM Converters and click "
+                            "Reinstall to fetch the latest version."
+                        )
+                    else:
+                        parts.append(
+                            "The converter produced no elements from this file. "
+                            "Most common causes: the RVT was saved with a Revit "
+                            "version newer than the converter supports, the file "
+                            "is corrupt, or a converter dependency is missing."
+                        )
                     if stderr_tail:
                         # Trim to a single line for the headline message;
                         # the full stderr tail goes into metadata_ below.
                         first_line = stderr_tail.splitlines()[0][:200]
                         if first_line:
                             parts.append(f"Converter said: {first_line}")
-                    parts.append(
-                        "Try updating the RVT converter (Settings → BIM "
-                        "Converters → Reinstall) and clicking Retry."
-                    )
+                    if cause != "converter_outdated":
+                        parts.append(
+                            "Try updating the RVT converter (Settings → BIM "
+                            "Converters → Reinstall) and clicking Retry."
+                        )
                     model.error_message = " ".join(parts)
 
-                    meta["error_code"] = "ddc_failed"
+                    meta["error_code"] = (
+                        "converter_outdated"
+                        if cause == "converter_outdated"
+                        else "ddc_failed"
+                    )
+                    meta["cause"] = cause
                     meta["converter_id"] = "rvt"
                     meta["install_endpoint"] = (
                         "/api/v1/takeoff/converters/rvt/install/"
@@ -1447,6 +1480,7 @@ async def _process_cad_in_background(
                         "rvt_info": rvt_info,
                         "converter_info": conv_info,
                         "reason": ddc_failure.get("reason"),
+                        "cause": cause,
                         "exit_code": ddc_failure.get("exit_code"),
                         "stderr_tail": stderr_tail,
                     }

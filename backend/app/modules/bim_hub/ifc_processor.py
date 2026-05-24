@@ -149,6 +149,45 @@ def last_ddc_failure() -> dict[str, Any]:
     return dict(_LAST_DDC_FAILURE)
 
 
+_OUTDATED_CLI_STDERR_MARKERS = (
+    "arguments were not expected",
+    "unexpected argument",
+    "unknown argument",
+    "unknown option",
+    "unrecognized argument",
+    "unrecognised argument",
+)
+
+
+def _infer_failure_cause(
+    *, reason: str, exit_code: int | None, stderr_text: str
+) -> str:
+    """‌⁠‍Map raw subprocess output to a stable ``cause`` enum for the UI.
+
+    The frontend dispatches on this string — keep the values stable.
+    Currently supported:
+      * ``converter_outdated`` — CLI parse error (exit 15 + unknown-arg
+        substring, or any exit with the substring).  Triggers the
+        Reinstall CTA.
+      * ``timeout`` — converter hung.
+      * ``empty_output`` — converter ran, produced no rows.
+      * ``unknown`` — anything else; UI shows the generic guidance.
+    """
+    lower = stderr_text.lower()
+    if any(m in lower for m in _OUTDATED_CLI_STDERR_MARKERS):
+        return "converter_outdated"
+    if exit_code == 15:
+        # Exit 15 from the DDC CLIs almost always means "argument parse
+        # error".  Even with empty stderr, surfacing the Reinstall CTA is
+        # the right call — a fresh install can only help.
+        return "converter_outdated"
+    if reason == "timeout":
+        return "timeout"
+    if reason == "empty_output":
+        return "empty_output"
+    return "unknown"
+
+
 def _record_ddc_failure(
     extension: str,
     reason: str,
@@ -156,12 +195,21 @@ def _record_ddc_failure(
     exit_code: int | None = None,
     stderr: bytes | str = b"",
     ifc_path: Path | None = None,
+    cause: str | None = None,
 ) -> None:
     """‌⁠‍Update the module-level failure record with everything the router
-    needs to render an actionable error message."""
+    needs to render an actionable error message.
+
+    ``cause`` may be passed explicitly to skip the heuristic — used by
+    the ``_run_ddc`` retry path which already knows the failure was a
+    CLI mismatch.  When omitted, ``_infer_failure_cause`` looks at the
+    exit code and stderr substrings to pick a value.
+    """
     try:
         from app.modules.boq.cad_import import (
             detect_converter_version as _detect,
+        )
+        from app.modules.boq.cad_import import (
             read_rvt_revit_version as _read_rvt,
         )
 
@@ -182,18 +230,23 @@ def _record_ddc_failure(
     # noise) up to 2 KB.
     stderr_tail = stderr_text[-2048:].strip()
 
+    resolved_cause = cause or _infer_failure_cause(
+        reason=reason, exit_code=exit_code, stderr_text=stderr_tail
+    )
+
     _LAST_DDC_FAILURE.clear()
     _LAST_DDC_FAILURE.update(
         extension=extension,
         reason=reason,
+        cause=resolved_cause,
         exit_code=exit_code,
         stderr=stderr_tail,
         rvt_info=rvt_info,
         converter_info=conv_info,
     )
     logger.warning(
-        "DDC failure recorded: ext=%s reason=%s rc=%s rvt=%s converter=%s",
-        extension, reason, exit_code,
+        "DDC failure recorded: ext=%s reason=%s cause=%s rc=%s rvt=%s converter=%s",
+        extension, reason, resolved_cause, exit_code,
         rvt_info.get("app_name") or rvt_info.get("format"),
         conv_info.get("version"),
     )
@@ -237,7 +290,11 @@ def _try_cad2data(ifc_path: Path, output_dir: Path, *, conversion_depth: str = "
     # CRITICAL: DDC needs cwd=converter.parent (Qt6Core.dll lives there),
     # so all paths must be absolute or the converter reports "File does not exist".
     try:
-        from app.modules.boq.cad_import import find_converter, parse_cad_excel
+        from app.modules.boq.cad_import import (
+            detect_converter_capabilities,
+            find_converter,
+            parse_cad_excel,
+        )
 
         converter = find_converter(ext)
         if converter:
@@ -247,17 +304,79 @@ def _try_cad2data(ifc_path: Path, output_dir: Path, *, conversion_depth: str = "
 
             input_abs = ifc_path.resolve()
 
-            def _run_ddc(out_path: Path, *extra_args: str) -> tuple[int, bytes, bytes]:
-                """‌⁠‍Invoke RvtExporter / IfcExporter with the given output target."""
+            # Probe the binary once so we know which positional / flag
+            # arguments it understands.  Old DDC builds reject ``standard``
+            # and ``-no-collada`` with ``exit 15: The following arguments
+            # were not expected``; the matrix below lets us suppress those
+            # tokens up front and avoid the exit-15 trap entirely.
+            caps = detect_converter_capabilities(ext)
+            # Track whether the conservative path was taken for any reason
+            # (probe-driven OR exit-15 retry) so callers can surface a
+            # "converter_outdated" diagnostic to the UI.
+            outdated_cli_observed = not caps.get("accepts_no_collada_flag", False)
+
+            # Stderr substrings that prove the failure was specifically an
+            # "unknown argument" rejection — keep these tight to avoid
+            # false-retries on genuine conversion failures (license probe,
+            # corrupt file, missing DLL, …).  Match is case-insensitive on
+            # the decoded text.  Both phrasings have been observed across
+            # DDC RvtExporter / IfcExporter versions.
+            UNKNOWN_ARG_MARKERS = (
+                "arguments were not expected",
+                "unexpected argument",
+                "unknown argument",
+                "unknown option",
+                "unrecognized argument",
+                "unrecognised argument",
+            )
+
+            def _stderr_indicates_unknown_arg(stderr_bytes: bytes) -> bool:
+                """‌⁠‍True iff stderr contains an 'unknown CLI arg' substring.
+
+                Used in conjunction with exit-15 — *both* must be true for
+                the retry-without-extras path to fire, so a normal
+                conversion failure with a non-zero exit and unrelated
+                stderr keeps the strict error report instead of being
+                silently retried.
+                """
+                if not stderr_bytes:
+                    return False
+                try:
+                    text = stderr_bytes.decode("utf-8", errors="replace").lower()
+                except UnicodeError:
+                    return False
+                return any(marker in text for marker in UNKNOWN_ARG_MARKERS)
+
+            def _build_args(
+                out_path: Path,
+                *,
+                allow_depth_mode: bool,
+                allow_no_collada: bool,
+                extra: tuple[str, ...] = (),
+            ) -> list[str]:
+                """‌⁠‍Compose the CLI invocation honouring the capability flags.
+
+                Depth-mode is only appended when both the caller asked for
+                it AND the binary advertises support.  ``extra`` is the
+                tuple of caller-supplied flags (currently only
+                ``-no-collada`` for the Excel pass) — those are filtered
+                against ``allow_no_collada`` so a probe-confirmed legacy
+                binary never sees the flag at all.
+                """
                 args_list = [str(converter), str(input_abs), str(out_path)]
-                if ext in ("rvt", "ifc"):
-                    # User-selected depth: 'standard' (fast), 'medium' (balanced), 'complete' (full)
-                    # DDC RvtExporter accepts: standard, complete. 'medium' maps to 'standard'
-                    # because DDC has no separate medium mode — the difference is handled
-                    # by our property extraction (medium = standard DDC + full property promotion).
+                if ext in ("rvt", "ifc") and allow_depth_mode:
                     ddc_mode = "complete" if conversion_depth == "complete" else "standard"
                     args_list.append(ddc_mode)
-                args_list.extend(extra_args)
+                for arg in extra:
+                    if arg == "-no-collada" and not allow_no_collada:
+                        continue
+                    args_list.append(arg)
+                return args_list
+
+            def _invoke(args_list: list[str]) -> tuple[int, bytes, bytes]:
+                """‌⁠‍Thin subprocess wrapper — separated so the retry path can
+                rebuild the args list and call again without re-implementing
+                the cwd/timeout/stdin plumbing."""
                 logger.debug("DDC call: %s", args_list)
                 proc = subprocess.run(
                     args_list,
@@ -268,6 +387,74 @@ def _try_cad2data(ifc_path: Path, output_dir: Path, *, conversion_depth: str = "
                     timeout=600,
                 )
                 return proc.returncode, proc.stdout, proc.stderr
+
+            def _run_ddc(out_path: Path, *extra_args: str) -> tuple[int, bytes, bytes]:
+                """‌⁠‍Invoke RvtExporter / IfcExporter with the given output target.
+
+                Two-stage logic:
+                  1. Build args using the probed capability matrix and run.
+                  2. If exit code is 15 AND stderr names an unknown
+                     argument, rebuild args as bare ``[converter, input,
+                     output]`` (no depth-mode, no flags) and retry once.
+                     A success here records the binary as "outdated CLI"
+                     so the UI can surface a Reinstall CTA.
+
+                Why exit code 15 specifically: the bundled CLI parser
+                (CLI11 / similar) emits 15 for "argument parse error".
+                Other failure modes use different codes (file-not-found
+                = 8, license error = 6, ...).  The substring guard is the
+                belt-and-braces second condition so a coincidental exit-15
+                from an unrelated cause doesn't trip the retry.
+                """
+                nonlocal outdated_cli_observed
+                args_list = _build_args(
+                    out_path,
+                    allow_depth_mode=caps.get("accepts_depth_mode", False),
+                    allow_no_collada=caps.get("accepts_no_collada_flag", False),
+                    extra=tuple(extra_args),
+                )
+                rc, stdout, stderr = _invoke(args_list)
+                if rc == 0:
+                    return rc, stdout, stderr
+
+                # Retry guard: only fire when the probe didn't already
+                # downgrade us to the bare form (otherwise we'd retry the
+                # same command), and the failure looks like a CLI parse
+                # error.  Either both signals (exit 15 + stderr marker) or
+                # any-exit + stderr marker is sufficient — DDC has shipped
+                # at least one release that exits 64 for unknown args.
+                already_bare = not (
+                    caps.get("accepts_depth_mode") or caps.get("accepts_no_collada_flag")
+                )
+                stderr_hit = _stderr_indicates_unknown_arg(stderr)
+                if already_bare:
+                    return rc, stdout, stderr
+                if rc == 15 or stderr_hit:
+                    bare_args = _build_args(
+                        out_path,
+                        allow_depth_mode=False,
+                        allow_no_collada=False,
+                        extra=(),
+                    )
+                    logger.warning(
+                        "DDC converter rejected modern CLI args (rc=%d, marker=%s) — "
+                        "retrying with bare invocation: %s",
+                        rc, stderr_hit, bare_args,
+                    )
+                    rc2, stdout2, stderr2 = _invoke(bare_args)
+                    if rc2 == 0:
+                        # Latch the diagnostic so the caller can record
+                        # cause="converter_outdated" once the conversion
+                        # completes — the user keeps their result, but the
+                        # next page-load nudges them to reinstall.
+                        outdated_cli_observed = True
+                        return rc2, stdout2, stderr2
+                    # Second attempt also failed — surface the original
+                    # error so the user sees the parse complaint, not a
+                    # downstream "file not found" from a stripped-down
+                    # invocation that the legacy CLI also couldn't run.
+                    return rc, stdout, stderr
+                return rc, stdout, stderr
 
             # ── Passes 1 + 2 in parallel: Excel + native COLLADA ──────
             # DDC RvtExporter has to load the entire RVT file from scratch
@@ -377,6 +564,13 @@ def _try_cad2data(ifc_path: Path, output_dir: Path, *, conversion_depth: str = "
                     result_excel["converter_source"] = conv_info["source"]
             except Exception:  # noqa: BLE001 — diagnostics must never block import
                 pass
+            # If the conversion only succeeded because we stripped modern
+            # CLI args (or had to retry without them), flag the result so
+            # the router can persist a "converter_outdated" warning in the
+            # model metadata.  The data is good — but the user should be
+            # nudged to reinstall before the next file fails.
+            if outdated_cli_observed:
+                result_excel["converter_cli_outdated"] = True
             return result_excel
     except ImportError:
         logger.debug("cad_import module not available")
