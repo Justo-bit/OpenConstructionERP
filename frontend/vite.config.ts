@@ -236,18 +236,26 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 5180,
+    // Vite default — matches the README quickstart, default Playwright
+    // config, and every "localhost:5173" link in locales/marketing. Was
+    // hard-coded to 5180 historically; reverted to 5173 in the install
+    // paper-cuts sweep (docs/qa/FRESH_INSTALL_RESULTS.md Issue 4) so the
+    // README's documented URL actually reaches the dev server.
+    port: 5173,
     strictPort: true,
     proxy: {
       '/api': {
-        // Local dev backend. 9090 matches the v4.1.0+ default the user
-        // runs; 8000 was the pre-v4 default and was kept until a stale
-        // v3.11.0 process living on it caused /bim/federations Create to
-        // return "Not Found" (the federations route only exists in v4+).
+        // Local dev backend default :8000 — matches the README quickstart
+        // (``uvicorn ... --port 8000``). The previous 9090 default came
+        // from a v4.1.0 local-dev convention nobody else uses and caused
+        // every API call to 502 on a fresh checkout until the user found
+        // the ``VITE_API_TARGET`` override buried in this comment block.
+        // Operators who run on a different port can still override via
+        // ``VITE_API_TARGET=http://127.0.0.1:9090 npm run dev``.
         target:
           process.env.VITE_API_TARGET ??
           process.env.E2E_BACKEND ??
-          'http://127.0.0.1:9090',
+          'http://127.0.0.1:8000',
         changeOrigin: true,
         // 30 minutes. Catalogue v3 installs (`/costs/catalogues-v3/{id}/install`)
         // download a 200–500 MB snapshot from Hugging Face, stream it
@@ -270,20 +278,30 @@ export default defineConfig({
   // and BIM pages.  Including them up-front keeps the version hash stable
   // across the dev session.
   optimizeDeps: {
-    // Cesium ships a mix of ESM + CJS deps (mersenne-twister, urijs, etc.).
-    // Without pre-bundling, Vite's dev server fails the dynamic import with
-    // "does not provide an export named 'default'" the moment Cesium pulls in
-    // a CJS interop. ``include`` forces esbuild to bundle cesium up front so
-    // CJS named-exports become real default exports. The Rollup
-    // ``manualChunks`` rule still keeps it in its own production chunk.
-    include: ['cesium'],
+    // Single ``include`` array — previously this object had TWO ``include``
+    // keys (cesium-only + everything-else) and esbuild's JS evaluator
+    // silently dropped the first one, plus warned on every Vite boot with
+    // ``Duplicate key "include" in object literal``. Merged into one list
+    // in the install paper-cuts sweep (docs/qa/FRESH_INSTALL_RESULTS.md
+    // Issue 6).
+    //
+    // ``cesium`` ships a mix of ESM + CJS deps (mersenne-twister, urijs,
+    // etc.). Without pre-bundling, Vite's dev server fails the dynamic
+    // import with "does not provide an export named 'default'" the moment
+    // Cesium pulls in a CJS interop. Including it here forces esbuild to
+    // bundle cesium up front so CJS named-exports become real default
+    // exports. The Rollup ``manualChunks`` rule still keeps it in its own
+    // production chunk.
+    //
+    // The rest of the list — pdfjs-dist, three, ag-grid, etc. — are heavy
+    // deps reached only via lazy route chunks. Without pre-bundling, Vite
+    // discovers them mid-navigation and the in-flight import 504s with
+    // "Failed to fetch dynamically imported module".
     include: [
+      'cesium',
       'pdfjs-dist',
       'pdfjs-dist/build/pdf.worker.min.mjs',
       'three',
-      // High-risk: heavy deps reached only via lazy route chunks.  Without
-      // pre-bundling, Vite discovers them mid-navigation and the in-flight
-      // import 504s with "Failed to fetch dynamically imported module".
       'ag-grid-react',
       'ag-grid-community',
       'recharts',
