@@ -12,10 +12,11 @@ of a UUID the caller is not allowed to see.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accommodation.models import (
@@ -350,6 +351,118 @@ async def active_bookings_count(
         .where(Booking.status.in_(("reserved", "checked_in")))
     )
     return int((await session.execute(stmt)).scalar() or 0)
+
+
+# ── Booking list queries (with room_label decoration) ────────────────────
+
+
+def _apply_booking_filters(
+    stmt,
+    *,
+    statuses: list[str] | None,
+    from_date: date | None,
+    to_date: date | None,
+):
+    """Apply optional ``status[]`` + date-overlap filters to a Booking query.
+
+    Date overlap rule (half-open interval matching real booking semantics):
+    a booking ``[check_in, check_out)`` overlaps a window
+    ``[from_date, to_date]`` when ``check_in <= to_date`` AND
+    ``(check_out IS NULL OR check_out > from_date)`` — open-ended bookings
+    (NULL ``check_out``) always overlap any future window whose start they
+    precede.
+    """
+    if statuses:
+        stmt = stmt.where(Booking.status.in_(statuses))
+    if from_date is not None:
+        # Booking ends strictly after the window starts (or is open-ended).
+        stmt = stmt.where(
+            or_(Booking.check_out.is_(None), Booking.check_out > from_date),
+        )
+    if to_date is not None:
+        # Booking starts on or before the window ends.
+        stmt = stmt.where(Booking.check_in <= to_date)
+    return stmt
+
+
+async def list_bookings_for_accommodation(
+    session: AsyncSession,
+    accommodation_id: uuid.UUID,
+    user_id: str,
+    *,
+    statuses: list[str] | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Booking], dict[uuid.UUID, str]]:
+    """List bookings across every room of an accommodation.
+
+    Returns ``(bookings, room_label_by_room_id)`` so the router can
+    decorate the response with ``room_label`` without a per-row N+1.
+
+    IDOR-gated through :func:`get_accommodation_or_404` — a caller who
+    can't see the parent project gets a 404, never a 403.
+    """
+    accom = await get_accommodation_or_404(session, accommodation_id, user_id)
+
+    # Pull every room id + label up front so the response decoration is
+    # cheap and a deleted-then-restored room never widens the query.
+    room_rows = (
+        await session.execute(
+            select(Room.id, Room.label).where(
+                Room.accommodation_id == accom.id,
+            )
+        )
+    ).all()
+    room_label_by_id: dict[uuid.UUID, str] = {r[0]: r[1] for r in room_rows}
+    if not room_label_by_id:
+        return [], {}
+
+    stmt = (
+        select(Booking)
+        .where(Booking.room_id.in_(list(room_label_by_id.keys())))
+        .order_by(Booking.check_in.desc(), Booking.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    stmt = _apply_booking_filters(
+        stmt, statuses=statuses, from_date=from_date, to_date=to_date,
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return list(rows), room_label_by_id
+
+
+async def list_bookings_for_room(
+    session: AsyncSession,
+    room_id: uuid.UUID,
+    user_id: str,
+    *,
+    statuses: list[str] | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Booking], dict[uuid.UUID, str]]:
+    """List bookings for a single room.
+
+    Same IDOR posture as :func:`list_bookings_for_accommodation` — the
+    caller must own the parent project or we 404.
+    """
+    room, _accom = await get_room_or_404(session, room_id, user_id)
+
+    stmt = (
+        select(Booking)
+        .where(Booking.room_id == room.id)
+        .order_by(Booking.check_in.desc(), Booking.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    stmt = _apply_booking_filters(
+        stmt, statuses=statuses, from_date=from_date, to_date=to_date,
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return list(rows), {room.id: room.label}
 
 
 # ── Currency-inheritance helpers ─────────────────────────────────────────

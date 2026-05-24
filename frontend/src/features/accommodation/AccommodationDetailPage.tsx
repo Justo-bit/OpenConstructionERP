@@ -13,7 +13,7 @@
  * STRINGS to the API. No `parseFloat()` is ever called on a money field.
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
@@ -33,6 +33,7 @@ import {
   Loader2,
   AlertTriangle,
   Trash2,
+  MoreHorizontal,
 } from 'lucide-react';
 
 import {
@@ -61,6 +62,8 @@ import {
   bootstrapFromPropDev,
   allowedBookingTransitions,
   isBookingTerminal,
+  listAccommodationBookings,
+  updateBooking,
   type AccommodationDetail,
   type Room,
   type RoomStatus,
@@ -69,6 +72,23 @@ import {
   type ChargeKind,
 } from './api';
 import { BulkRoomAddModal } from './BulkRoomAddModal';
+
+/** Visual badge palette for the per-row booking-status pill. */
+const BOOKING_STATUS_BADGE: Record<BookingStatus, string> = {
+  reserved: 'bg-sky-100 text-sky-800 border-sky-300',
+  checked_in: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  checked_out: 'bg-slate-200 text-slate-700 border-slate-300',
+  cancelled: 'bg-rose-100 text-rose-800 border-rose-300',
+};
+
+/** Status filter pill keys in display order (incl. `all`). */
+const FILTER_PILLS: Array<'all' | BookingStatus> = [
+  'all',
+  'reserved',
+  'checked_in',
+  'checked_out',
+  'cancelled',
+];
 
 type DetailTab = 'rooms' | 'bookings' | 'charges' | 'settings';
 
@@ -569,15 +589,43 @@ function AssignOccupantModal({
 
 function BookingsTab({ data }: { data: AccommodationDetail }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const addToast = useToastStore((s) => s.addToast);
 
-  // The detail endpoint returns rooms but NOT bookings — list per-room
-  // via the booking detail endpoint isn't a list. Instead we use a
-  // dedicated query that walks each room's bookings. For the MVP we
-  // surface only one query against the API and synthesize the merged
-  // list by fetching all room IDs at once.
-  // Backend doesn't expose a list-bookings-by-accommodation endpoint —
-  // simplest correct path: lazy-load per room when the user expands a
-  // row. Keep it lightweight for now and show the count + add button.
+  const [filter, setFilter] = useState<'all' | BookingStatus>('all');
+  const [pickerRoom, setPickerRoom] = useState<Room | null>(null);
+
+  const statusFilter = filter === 'all' ? undefined : [filter];
+
+  // Real list endpoint — server returns `items` + `room_label` decorated
+  // per booking so we never need a per-row /rooms/{id} round-trip.
+  const bookingsQuery = useQuery({
+    queryKey: ['accommodation', 'bookings', data.id, filter],
+    queryFn: () =>
+      listAccommodationBookings(data.id, {
+        status: statusFilter,
+        limit: 200,
+      }),
+    enabled: data.rooms.length > 0,
+  });
+
+  if (data.rooms.length === 0) {
+    return (
+      <div
+        role="tabpanel"
+        data-testid="accommodation-tab-panel-bookings"
+        className="space-y-4"
+      >
+        <div className="rounded-xl border border-dashed border-border bg-surface-secondary/40 p-8 text-center text-sm text-content-tertiary">
+          {t('accommodation.bookings.no_rooms', {
+            defaultValue: 'Create rooms first, then book occupants.',
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const items = bookingsQuery.data?.items ?? [];
 
   return (
     <div
@@ -585,88 +633,115 @@ function BookingsTab({ data }: { data: AccommodationDetail }) {
       data-testid="accommodation-tab-panel-bookings"
       className="space-y-4"
     >
-      {data.rooms.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-surface-secondary/40 p-8 text-center text-sm text-content-tertiary">
-          {t('accommodation.bookings.no_rooms', {
-            defaultValue: 'Create rooms first, then book occupants.',
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          role="tablist"
+          aria-label={t('accommodation.bookings.filter_aria', {
+            defaultValue: 'Filter bookings by status',
+          })}
+          className="flex flex-wrap gap-1.5"
+        >
+          {FILTER_PILLS.map((pill) => {
+            const active = filter === pill;
+            const label =
+              pill === 'all'
+                ? t('accommodation.bookings.filter.all', { defaultValue: 'All' })
+                : t(`accommodation.booking.status.${pill}`, {
+                    defaultValue: pill,
+                  });
+            return (
+              <button
+                key={pill}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setFilter(pill)}
+                data-testid={`bookings-filter-${pill}`}
+                className={clsx(
+                  'rounded-full border px-3 py-1 text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue',
+                  active
+                    ? 'border-oe-blue bg-oe-blue/10 text-oe-blue'
+                    : 'border-border bg-surface-secondary/40 text-content-secondary hover:text-content-primary',
+                )}
+              >
+                {label}
+              </button>
+            );
           })}
         </div>
-      ) : (
-        <div className="space-y-2">
-          {data.rooms.map((r) => (
-            <RoomBookingsRow key={r.id} room={r} />
-          ))}
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => setPickerRoom(data.rooms[0] ?? null)}
+          disabled={data.rooms.length === 0}
+          data-testid="bookings-new-button"
+        >
+          <Plus size={14} className="mr-1.5" />
+          {t('accommodation.booking.actions.new', {
+            defaultValue: 'New booking',
+          })}
+        </Button>
+      </div>
+
+      {bookingsQuery.isLoading && (
+        <div className="flex items-center justify-center py-10 text-content-tertiary">
+          <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       )}
-    </div>
-  );
-}
 
-function RoomBookingsRow({ room }: { room: Room }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-
-  // Mock booking listing isn't available — backend exposes booking
-  // creation per room + booking detail, so we hide the listing until the
-  // operator wants to see / book. Open the assign modal directly from
-  // here for convenience.
-  const [assignOpen, setAssignOpen] = useState(false);
-  const queryClient = useQueryClient();
-  const addToast = useToastStore((s) => s.addToast);
-
-  return (
-    <Card>
-      <div className="flex flex-wrap items-center justify-between gap-2 p-3">
-        <div className="flex items-center gap-2 text-sm">
-          <span
-            className={clsx(
-              'inline-flex items-center rounded-md border px-1.5 py-0.5 text-2xs font-semibold',
-              ROOM_STATUS_STYLES[room.status],
-            )}
-          >
-            {room.label}
-          </span>
-          <span className="text-content-secondary">
-            {t(`accommodation.room.status.${room.status}`, {
-              defaultValue: room.status,
+      {bookingsQuery.isError && (
+        <div className="rounded-xl border border-semantic-error/30 bg-semantic-error/10 p-4 text-sm text-semantic-error">
+          <AlertTriangle className="mr-2 inline h-4 w-4" />
+          {getErrorMessage(bookingsQuery.error) ||
+            t('accommodation.bookings.load_failed', {
+              defaultValue: 'Could not load bookings.',
             })}
-          </span>
-          <span className="text-content-tertiary text-xs">
-            {t('accommodation.room.cap_short', {
-              defaultValue: '{{count}} cap',
-              count: room.capacity,
-            })}
-          </span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setOpen((v) => !v)}
-            data-testid={`booking-row-toggle-${room.label}`}
-          >
-            {open
-              ? t('common.collapse', { defaultValue: 'Collapse' })
-              : t('common.expand', { defaultValue: 'Expand' })}
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setAssignOpen(true)}
-            data-testid={`booking-row-new-${room.label}`}
-          >
-            <Plus size={12} className="mr-1" />
-            {t('accommodation.booking.actions.new', {
-              defaultValue: 'New booking',
-            })}
-          </Button>
+      )}
+
+      {!bookingsQuery.isLoading && !bookingsQuery.isError && items.length === 0 && (
+        <div
+          data-testid="bookings-empty"
+          className="rounded-xl border border-dashed border-border bg-surface-secondary/40 p-8 text-center text-sm text-content-tertiary"
+        >
+          {filter === 'all'
+            ? t('accommodation.bookings.empty_all', {
+                defaultValue: 'No bookings yet. Use "New booking" to create one.',
+              })
+            : t('accommodation.bookings.empty_filtered', {
+                defaultValue: 'No bookings match this filter.',
+              })}
         </div>
-      </div>
-      {open && <RoomBookingDetails room={room} />}
-      {assignOpen && (
+      )}
+
+      {items.length > 0 && (
+        <BookingsList
+          accommodationId={data.id}
+          items={items}
+          onMutated={() => {
+            queryClient.invalidateQueries({
+              queryKey: ['accommodation', 'bookings', data.id],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ['accommodation', 'detail', data.id],
+            });
+          }}
+          onError={(err) =>
+            addToast({
+              type: 'error',
+              title: t('accommodation.booking.update_failed', {
+                defaultValue: 'Could not update booking',
+              }),
+              message: getErrorMessage(err),
+            })
+          }
+        />
+      )}
+
+      {pickerRoom && (
         <AssignOccupantModal
-          room={room}
-          onClose={() => setAssignOpen(false)}
+          room={pickerRoom}
+          onClose={() => setPickerRoom(null)}
           onCreated={() => {
             queryClient.invalidateQueries({ queryKey: ['accommodation'] });
             addToast({
@@ -675,34 +750,338 @@ function RoomBookingsRow({ room }: { room: Room }) {
                 defaultValue: 'Booking created',
               }),
             });
-            setAssignOpen(false);
+            setPickerRoom(null);
           }}
         />
       )}
-    </Card>
+    </div>
   );
 }
 
 /**
- * Lazy-load the latest booking for a room. Backend has no list endpoint
- * scoped to a room, so we surface the room's current booking by walking
- * the accommodation detail — `active_bookings_count` tells us there's
- * something to look at, but the actual IDs come from the room metadata
- * if the backend exposes them, otherwise we render a helpful empty.
- *
- * NOTE: for the MVP we hide the expanded list when no IDs are available;
- * the operator can still use the "New booking" CTA from the collapsed
- * row. A future "GET /accommodation/{id}/rooms/{id}/bookings" endpoint
- * would let us list real bookings here.
+ * Renders the booking list — desktop table + mobile cards (auto-switched
+ * at <640px) — plus the per-row 3-dot action menu that drives the state
+ * machine via PATCH /bookings/{id}.
  */
-function RoomBookingDetails({ room: _room }: { room: Room }) {
+function BookingsList({
+  accommodationId: _accommodationId,
+  items,
+  onMutated,
+  onError,
+}: {
+  accommodationId: string;
+  items: Booking[];
+  onMutated: () => void;
+  onError: (err: unknown) => void;
+}) {
   const { t } = useTranslation();
+  const addToast = useToastStore((s) => s.addToast);
+  const [confirm, setConfirm] = useState<{
+    booking: Booking;
+    target: BookingStatus;
+  } | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: ({
+      bookingId,
+      target,
+    }: {
+      bookingId: string;
+      target: BookingStatus;
+    }) => updateBooking(bookingId, { status: target }),
+    onSuccess: (_data, vars) => {
+      onMutated();
+      addToast({
+        type: 'success',
+        title: t(`accommodation.booking.transition_toast.${vars.target}`, {
+          defaultValue: 'Booking updated',
+        }),
+      });
+    },
+    onError,
+  });
+
+  const handleAction = (booking: Booking, target: BookingStatus) => {
+    // Destructive / irreversible transitions get a confirm dialog;
+    // ``checked_in`` is reversible (operator can cancel) so we just go.
+    if (target === 'checked_out' || target === 'cancelled') {
+      setConfirm({ booking, target });
+      return;
+    }
+    mutation.mutate({ bookingId: booking.id, target });
+  };
+
   return (
-    <div className="border-t border-border-light px-3 py-3 text-xs text-content-tertiary">
-      {t('accommodation.booking.detail_hint', {
-        defaultValue:
-          'Booking history per room ships in a follow-up endpoint. Use "New booking" to add one.',
-      })}
+    <>
+      {/* Desktop / tablet ≥640px — full table */}
+      <div
+        data-testid="bookings-table-wrapper"
+        className="hidden sm:block overflow-x-auto rounded-xl border border-border-light"
+      >
+        <table className="min-w-full text-sm">
+          <thead className="bg-surface-secondary/60 text-left text-xs uppercase tracking-wide text-content-tertiary">
+            <tr>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.room', { defaultValue: 'Room' })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.occupant', {
+                  defaultValue: 'Occupant',
+                })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.check_in', {
+                  defaultValue: 'Check-in',
+                })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.check_out', {
+                  defaultValue: 'Check-out',
+                })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.status', {
+                  defaultValue: 'Status',
+                })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t('accommodation.bookings.col.source', {
+                  defaultValue: 'Source',
+                })}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium text-right">
+                <span className="sr-only">
+                  {t('common.actions', { defaultValue: 'Actions' })}
+                </span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-light">
+            {items.map((b) => (
+              <tr
+                key={b.id}
+                data-testid={`booking-row-${b.id}`}
+                className="hover:bg-surface-secondary/30"
+              >
+                <td className="px-3 py-2 font-mono text-xs">
+                  {b.room_label ?? '—'}
+                </td>
+                <td className="px-3 py-2">
+                  {b.occupant_name ||
+                    t('accommodation.bookings.unnamed_occupant', {
+                      defaultValue: '(unnamed)',
+                    })}
+                </td>
+                <td className="px-3 py-2 tabular-nums">{b.check_in}</td>
+                <td className="px-3 py-2 tabular-nums">
+                  {b.check_out ?? '—'}
+                </td>
+                <td className="px-3 py-2">
+                  <span
+                    className={clsx(
+                      'inline-flex items-center rounded-md border px-1.5 py-0.5 text-2xs font-semibold',
+                      BOOKING_STATUS_BADGE[b.status],
+                    )}
+                    data-testid={`booking-status-${b.id}`}
+                  >
+                    {t(`accommodation.booking.status.${b.status}`, {
+                      defaultValue: b.status,
+                    })}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-xs text-content-tertiary">
+                  {t(`accommodation.booking.source.${b.source}`, {
+                    defaultValue: b.source,
+                  })}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <BookingActionMenu booking={b} onAction={handleAction} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile <640px — cards */}
+      <div className="sm:hidden space-y-2" data-testid="bookings-cards-wrapper">
+        {items.map((b) => (
+          <Card key={b.id} data-testid={`booking-card-${b.id}`}>
+            <div className="p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-semibold">
+                      {b.room_label ?? '—'}
+                    </span>
+                    <span
+                      className={clsx(
+                        'inline-flex items-center rounded-md border px-1.5 py-0.5 text-2xs font-semibold',
+                        BOOKING_STATUS_BADGE[b.status],
+                      )}
+                    >
+                      {t(`accommodation.booking.status.${b.status}`, {
+                        defaultValue: b.status,
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm">
+                    {b.occupant_name ||
+                      t('accommodation.bookings.unnamed_occupant', {
+                        defaultValue: '(unnamed)',
+                      })}
+                  </div>
+                  <div className="mt-0.5 text-xs text-content-tertiary tabular-nums">
+                    {b.check_in} → {b.check_out ?? '∞'}
+                  </div>
+                </div>
+                <BookingActionMenu booking={b} onAction={handleAction} />
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <ConfirmDialog
+        open={!!confirm}
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => {
+          if (!confirm) return;
+          mutation.mutate({
+            bookingId: confirm.booking.id,
+            target: confirm.target,
+          });
+          setConfirm(null);
+        }}
+        title={
+          confirm?.target === 'cancelled'
+            ? t('accommodation.confirm.cancel_booking_title', {
+                defaultValue: 'Cancel this booking?',
+              })
+            : t('accommodation.confirm.checkout_title', {
+                defaultValue: 'Check out this booking?',
+              })
+        }
+        message={
+          confirm?.target === 'cancelled'
+            ? t('accommodation.confirm.cancel_booking_message', {
+                defaultValue:
+                  'Cancelling locks the booking — no further status changes are possible.',
+              })
+            : t('accommodation.confirm.checkout_message', {
+                defaultValue:
+                  'Checking out closes the stay. The booking moves to a terminal state and the room returns to "available".',
+              })
+        }
+        confirmLabel={
+          confirm?.target === 'cancelled'
+            ? t('accommodation.booking.actions.cancel', {
+                defaultValue: 'Cancel booking',
+              })
+            : t('accommodation.booking.actions.check_out', {
+                defaultValue: 'Check out',
+              })
+        }
+        variant={confirm?.target === 'cancelled' ? 'danger' : 'warning'}
+        loading={mutation.isPending}
+      />
+    </>
+  );
+}
+
+/** 3-dot popover menu — drives state-machine actions per booking. */
+function BookingActionMenu({
+  booking,
+  onAction,
+}: {
+  booking: Booking;
+  onAction: (booking: Booking, target: BookingStatus) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // Click-outside + Escape dismiss.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onClick = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const actions = nextBookingActions(booking);
+  const disabled = actions.length === 0 || isBookingTerminal(booking.status);
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('accommodation.bookings.row_menu_aria', {
+          defaultValue: 'Booking actions',
+        })}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        data-testid={`booking-actions-${booking.id}`}
+        className={clsx(
+          'inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent transition focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue',
+          disabled
+            ? 'cursor-not-allowed text-content-tertiary opacity-40'
+            : 'text-content-secondary hover:bg-surface-secondary hover:text-content-primary',
+        )}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && actions.length > 0 && (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-lg border border-border bg-surface-elevated shadow-lg"
+          data-testid={`booking-actions-menu-${booking.id}`}
+        >
+          {actions.map((target) => (
+            <button
+              key={target}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAction(booking, target);
+              }}
+              data-testid={`booking-action-${target}-${booking.id}`}
+              className={clsx(
+                'block w-full px-3 py-2 text-left text-xs hover:bg-surface-secondary focus:bg-surface-secondary focus:outline-none',
+                target === 'cancelled' && 'text-semantic-error',
+              )}
+            >
+              {t(`accommodation.booking.actions.${target}`, {
+                defaultValue:
+                  target === 'checked_in'
+                    ? 'Check in'
+                    : target === 'checked_out'
+                      ? 'Check out'
+                      : target === 'cancelled'
+                        ? 'Cancel booking'
+                        : target,
+              })}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

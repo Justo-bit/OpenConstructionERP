@@ -74,6 +74,13 @@ export interface AccommodationDetail extends Accommodation {
 export interface Booking {
   id: string;
   room_id: string;
+  /**
+   * Server-decorated convenience field — only populated by list
+   * endpoints (`GET /accommodation/{id}/bookings`,
+   * `GET /accommodation/rooms/{id}/bookings`). Single-booking GETs
+   * leave this `null` because the caller already has the room id.
+   */
+  room_label?: string | null;
   occupant_contact_id: string | null;
   occupant_name: string | null;
   /** ISO date (YYYY-MM-DD). */
@@ -85,6 +92,24 @@ export interface Booking {
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown>;
+}
+
+export interface BookingListResponse {
+  items: Booking[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface BookingListQuery {
+  /** Multi-value: `?status=reserved&status=checked_in`. */
+  status?: BookingStatus[];
+  /** ISO date — booking ends strictly after this. */
+  from_date?: string;
+  /** ISO date — booking starts on or before this. */
+  to_date?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface Charge {
@@ -285,6 +310,39 @@ export function updateRoom(
 }
 
 /* ── Bookings ────────────────────────────────────────────────────────── */
+
+function bookingQueryToSearch(query?: BookingListQuery): string {
+  if (!query) return '';
+  const qs = new URLSearchParams();
+  if (query.status) {
+    // FastAPI accepts repeated query params for list values.
+    for (const s of query.status) qs.append('status', s);
+  }
+  if (query.from_date) qs.set('from_date', query.from_date);
+  if (query.to_date) qs.set('to_date', query.to_date);
+  if (query.limit !== undefined) qs.set('limit', String(query.limit));
+  if (query.offset !== undefined) qs.set('offset', String(query.offset));
+  const q = qs.toString();
+  return q ? `?${q}` : '';
+}
+
+export function listAccommodationBookings(
+  accommodationId: string,
+  query?: BookingListQuery,
+): Promise<BookingListResponse> {
+  return apiGet<BookingListResponse>(
+    `/v1/accommodation/${accommodationId}/bookings${bookingQueryToSearch(query)}`,
+  );
+}
+
+export function listRoomBookings(
+  roomId: string,
+  query?: BookingListQuery,
+): Promise<BookingListResponse> {
+  return apiGet<BookingListResponse>(
+    `/v1/accommodation/rooms/${roomId}/bookings${bookingQueryToSearch(query)}`,
+  );
+}
 
 export function createBooking(
   roomId: string,
