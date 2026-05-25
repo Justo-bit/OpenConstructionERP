@@ -996,7 +996,7 @@ const TABS: readonly TabDef[] = [
   { id: 'dashboard',    labelKey: 'settings.tab_dashboard',    defaultLabel: 'Dashboard',    icon: LayoutGrid, descKey: 'settings.tab_dashboard_desc',  descDefault: 'Reorder, show or hide dashboard sections' },
   { id: 'account',      labelKey: 'settings.tab_account',      defaultLabel: 'Account',      icon: User,     descKey: 'settings.tab_account_desc',      descDefault: 'Password and sign out' },
   { id: 'regional',     labelKey: 'settings.tab_regional',     defaultLabel: 'Regional',     icon: Globe,    descKey: 'settings.tab_regional_desc',     descDefault: 'Language, timezone, and formats' },
-  { id: 'converters',   labelKey: 'settings.tab_converters',   defaultLabel: 'Converters',  icon: Layers,   descKey: 'settings.tab_converters_desc',   descDefault: 'DDC CAD/BIM converters — installed versions and GitHub sources' },
+  { id: 'converters',   labelKey: 'settings.tab_converters',   defaultLabel: 'Converters',  icon: Layers,   descKey: 'settings.tab_converters_desc',   descDefault: 'DDC converters — installed versions and GitHub sources' },
   { id: 'ai',           labelKey: 'settings.tab_ai',           defaultLabel: 'AI',           icon: Sparkles, descKey: 'settings.tab_ai_desc',           descDefault: 'AI provider and semantic search' },
   { id: 'integrations', labelKey: 'settings.tab_integrations', defaultLabel: 'Integrations', icon: Plug,     descKey: 'settings.tab_integrations_desc', descDefault: 'Slack, Teams, Telegram, webhooks' },
   { id: 'advanced',     labelKey: 'settings.tab_advanced',     defaultLabel: 'Advanced',     icon: Wrench,   descKey: 'settings.tab_advanced_desc',     descDefault: 'Backup, databases, setup wizard' },
@@ -1620,7 +1620,7 @@ function ConverterStatusPanel() {
   return (
     <Card>
       <CardHeader
-        title={t('settings.converters_title', { defaultValue: 'CAD / BIM converters' })}
+        title={t('settings.converters_title', { defaultValue: 'Converters' })}
         subtitle={t('settings.converters_subtitle', {
           defaultValue:
             'DDC cad2data pipeline — installed bridges and the latest source available on GitHub.',
