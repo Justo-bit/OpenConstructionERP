@@ -529,11 +529,6 @@ export default function BIMFilterPanel({
       ).toLowerCase();
       return hay.includes(search);
     };
-    const matchesStoreyFilter = (el: BIMElementData): boolean => {
-      if (state.storeys.size === 0) return true;
-      if (!el.storey) return true; // mirror applyFilters(): no-storey passes
-      return state.storeys.has(el.storey);
-    };
     const matchesTypeFilter = (el: BIMElementData): boolean => {
       if (state.types.size === 0) return true;
       const tpe = getTypeKey(el, format);
@@ -561,49 +556,52 @@ export default function BIMFilterPanel({
         byStorey.set(el.storey, (byStorey.get(el.storey) ?? 0) + 1);
       }
 
-      // Type / bucket / category-with-types chip counts: skip the type
-      // filter so other categories remain selectable (and visible) even
-      // after one category is active, but DO respect the active storey
-      // filter so picking "L02" reduces every category chip to its
-      // L02-only count. We do NOT short-circuit on `buildingsOnly` here
-      // — ALL categories go into byType / buckets / categoriesWithTypes
-      // regardless of the toggle, because the building-vs-noise split
-      // happens in the render layer (CategoryFlatList shows the "Other"
-      // section, BUCKETS view filters via `BUCKETS[bucket].noise`).
-      if (matchesStoreyFilter(el)) {
-        byType.set(tpe, (byType.get(tpe) ?? 0) + 1);
+      // Type / bucket / category-with-types population: NOT gated by any
+      // filter. The Category sidebar, Category → Type Name tree and
+      // Buckets view must show every category that exists in the model
+      // so the user can navigate to it — even after they pick a storey
+      // or type chip. Gating these on storey (the prior ba1887cb attempt
+      // at facet UI) caused the entire tree to shrink to e.g. L02-only
+      // categories when the user picked storey L02, which the user
+      // reported as "грузировка опять не работает" (2026-05-25).
+      //
+      // Storey chip counts above DO respect facet semantics
+      // (matchesTypeFilter) because that is the chip the user is
+      // actively choosing among — collapsing the storey chip's own
+      // count to zero on pick would defeat the chip. The category /
+      // bucket tree is structural, not a chip set, so it stays stable.
+      byType.set(tpe, (byType.get(tpe) ?? 0) + 1);
 
-        // Accumulate quantities per type for the summary display
-        const q = el.quantities as Record<string, number> | undefined;
-        if (q) {
-          let agg = typeQty.get(tpe);
-          if (!agg) {
-            agg = { volume: 0, area: 0, length: 0 };
-            typeQty.set(tpe, agg);
-          }
-          agg.volume += q.Volume ?? q.volume_m3 ?? q['Gross Volume'] ?? 0;
-          agg.area += q.Area ?? q.area_m2 ?? q['Gross Area'] ?? q['Surface Area'] ?? 0;
-          agg.length += q.Length ?? q.length_m ?? 0;
+      // Accumulate quantities per type for the summary display
+      const q = el.quantities as Record<string, number> | undefined;
+      if (q) {
+        let agg = typeQty.get(tpe);
+        if (!agg) {
+          agg = { volume: 0, area: 0, length: 0 };
+          typeQty.set(tpe, agg);
         }
-
-        // Hierarchical Category → Type Name (Revit Browser style)
-        const typeName = getTypeNameKey(el);
-        let perCat = byCategoryThenType.get(tpe);
-        if (!perCat) {
-          perCat = new Map();
-          byCategoryThenType.set(tpe, perCat);
-        }
-        perCat.set(typeName, (perCat.get(typeName) ?? 0) + 1);
-
-        const bucket = bucketOf(tpe);
-        let perBucket = byBucket.get(bucket);
-        if (!perBucket) {
-          perBucket = new Map();
-          byBucket.set(bucket, perBucket);
-        }
-        perBucket.set(tpe, (perBucket.get(tpe) ?? 0) + 1);
-        bucketTotals.set(bucket, (bucketTotals.get(bucket) ?? 0) + 1);
+        agg.volume += q.Volume ?? q.volume_m3 ?? q['Gross Volume'] ?? 0;
+        agg.area += q.Area ?? q.area_m2 ?? q['Gross Area'] ?? q['Surface Area'] ?? 0;
+        agg.length += q.Length ?? q.length_m ?? 0;
       }
+
+      // Hierarchical Category → Type Name (Revit Browser style)
+      const typeName = getTypeNameKey(el);
+      let perCat = byCategoryThenType.get(tpe);
+      if (!perCat) {
+        perCat = new Map();
+        byCategoryThenType.set(tpe, perCat);
+      }
+      perCat.set(typeName, (perCat.get(typeName) ?? 0) + 1);
+
+      const bucket = bucketOf(tpe);
+      let perBucket = byBucket.get(bucket);
+      if (!perBucket) {
+        perBucket = new Map();
+        byBucket.set(bucket, perBucket);
+      }
+      perBucket.set(tpe, (perBucket.get(tpe) ?? 0) + 1);
+      bucketTotals.set(bucket, (bucketTotals.get(bucket) ?? 0) + 1);
     }
 
     // Sort buckets by their semantic order, then build the ordered
@@ -665,7 +663,6 @@ export default function BIMFilterPanel({
     elements,
     format,
     state.buildingsOnly,
-    state.storeys,
     state.types,
     state.search,
     isolationSet,
