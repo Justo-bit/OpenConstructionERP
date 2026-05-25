@@ -165,6 +165,31 @@ const ROUTES: RouteSpec[] = [
   { section: '10_admin', slug: 'validation_rules', path: '/admin/validation-rules' },
 ];
 
+// QA_ROUTE_LIMIT=N → pick N routes spread across all sections (round-robin
+// by section) so trimmed parametrised sweeps (locale/theme/viewport) still
+// exercise core/bim/estimation/takeoff/commercial/field/planning/ai/admin.
+const _routeLimit = parseInt(process.env.QA_ROUTE_LIMIT ?? '', 10);
+function _pickRoundRobin(all: RouteSpec[], n: number): RouteSpec[] {
+  const bySection = new Map<string, RouteSpec[]>();
+  for (const r of all) {
+    if (!bySection.has(r.section)) bySection.set(r.section, []);
+    bySection.get(r.section)!.push(r);
+  }
+  const buckets = [...bySection.values()];
+  const out: RouteSpec[] = [];
+  for (let i = 0; out.length < n; i++) {
+    let added = false;
+    for (const b of buckets) {
+      if (i < b.length && out.length < n) { out.push(b[i]); added = true; }
+    }
+    if (!added) break;
+  }
+  return out;
+}
+const ROUTES_EFFECTIVE = Number.isFinite(_routeLimit) && _routeLimit > 0
+  ? _pickRoundRobin(ROUTES, _routeLimit)
+  : ROUTES;
+
 // ── Helpers ──────────────────────────────────────────────────────────
 interface DemoFixtures {
   accessToken: string;
@@ -392,7 +417,7 @@ test.describe('Full-app screenshot grid', () => {
 
     const results: RouteResult[] = [];
 
-    for (const route of ROUTES) {
+    for (const route of ROUTES_EFFECTIVE) {
       const resolvedPath = resolveRoute(route.path, fixtures);
       const sectionDir = join(SCREENSHOT_ROOT, route.section);
       mkdirSync(sectionDir, { recursive: true });
