@@ -45,18 +45,8 @@ import BIMCoverageCard from './BIMCoverageCard';
 import { CompactProjectCard } from './components/CompactProjectCard';
 import { DashboardProjectsMap } from './components/DashboardProjectsMap';
 import { ShowAllProjectsCard } from './components/ShowAllProjectsCard';
-import {
-  BOQSummaryWidget,
-  CriticalPathWidget,
-  TopRisksWidget,
-  HSEScoreCardWidget,
-  ProcurementPipelineWidget,
-  BudgetVarianceWidget,
-  ChangeOrdersWidget,
-  ClashHealthWidget,
-  ValidationHealthWidget,
-  WeatherSiteWidget,
-} from './components/NewWidgets';
+import { WeatherSiteWidget } from './components/NewWidgets';
+import { OperationsSnapshotCard } from './components/OperationsSnapshotCard';
 import { DateDisplay } from '@/shared/ui/DateDisplay';
 import { DashboardLayoutManager } from './DashboardLayoutManager';
 import { DASHBOARD_WIDGET_IDS } from './widgetRegistry';
@@ -2048,16 +2038,12 @@ function DashboardPageInner() {
       </div>
     ),
 
-    // ── Wave 2 widgets (2026-05-23) — definitions in components/NewWidgets.tsx ──
-    boq_summary: <BOQSummaryWidget projects={projects} />,
-    validation_score: <ValidationHealthWidget />,
-    clash_health: <ClashHealthWidget />,
-    schedule_critical: <CriticalPathWidget projects={projects} />,
-    risk_top: <TopRisksWidget />,
-    hse_scorecard: <HSEScoreCardWidget />,
-    procurement_pipeline: <ProcurementPipelineWidget />,
-    budget_variance: <BudgetVarianceWidget projects={projects} />,
-    change_orders: <ChangeOrdersWidget projects={projects} />,
+    // ── Wave 2 operations widgets (2026-05-23) — consolidated 2026-05-25
+    //    into a single OperationsSnapshotCard. The 9 individual widgets
+    //    still exist in NewWidgets.tsx (importable for projects that
+    //    want to embed them elsewhere) but no longer have IDs in the
+    //    registry, so the dashboard never renders them inline.
+    operations_snapshot: <OperationsSnapshotCard projects={projects} />,
     weather_site: <WeatherSiteWidget projects={projects} />,
   };
 
