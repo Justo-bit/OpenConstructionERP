@@ -101,6 +101,98 @@ export const PRIORITY_VALUES: readonly RFIPriority[] = [
 
 const LS_INFO_DISMISSED = 'oe_rfi_info_dismissed';
 
+/**
+ * Decode the ``sub`` claim from the JWT so we can compute the
+ * ball-in-court "side" badge ("With you" vs "With them") and the
+ * "Awaiting my response" quick-filter chip. Same shape as the helper in
+ * ChangeOrdersPage / file-manager hooks — kept local so the RFI module
+ * does not couple to another feature's internals.
+ */
+function decodeUserIdFromToken(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = parts[1]!.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+    const json = JSON.parse(atob(padded)) as { sub?: string };
+    return typeof json.sub === 'string' ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ball-in-court "side" — which party currently owes the next move.
+ *
+ *   - ``you``     — the RFI is in the current viewer's court (assigned_to /
+ *                   ball_in_court matches the viewer's user id) and still
+ *                   in an actionable status (draft/open).
+ *   - ``them``    — someone else owes the response.
+ *   - ``answered``— a response has landed but the RFI is not yet closed.
+ *   - ``closed``  — terminal (closed / void).
+ *
+ * This is the headline collaboration signal — contractors scanning a
+ * project dashboard need to spot "what's on my plate" in one glance.
+ */
+export type BallInCourtSide = 'you' | 'them' | 'answered' | 'closed';
+
+export function ballInCourtSide(rfi: RFI, viewerId: string | null): BallInCourtSide {
+  if (rfi.status === 'closed' || rfi.status === 'void') return 'closed';
+  if (rfi.status === 'answered') return 'answered';
+  // draft / open — somebody owes a response.
+  if (!viewerId) return 'them';
+  const court = rfi.ball_in_court || rfi.assigned_to;
+  if (court && court === viewerId) return 'you';
+  return 'them';
+}
+
+/** Visual config for the ball-in-court badge. */
+export const BIC_SIDE_CFG: Record<
+  BallInCourtSide,
+  { cls: string; key: string; fallback: string }
+> = {
+  you: {
+    cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+    key: 'rfi.bic_with_you',
+    fallback: 'With you',
+  },
+  them: {
+    cls: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border border-blue-200 dark:border-blue-800',
+    key: 'rfi.bic_with_them',
+    fallback: 'With them',
+  },
+  answered: {
+    cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
+    key: 'rfi.bic_answered',
+    fallback: 'Answered',
+  },
+  closed: {
+    cls: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border border-border-light',
+    key: 'rfi.bic_closed',
+    fallback: 'Closed',
+  },
+};
+
+/**
+ * Calendar-days elapsed since the response_due_date. Positive = overdue,
+ * negative = still has time, ``null`` if no due date is set.
+ *
+ * Calendar days (not business days) — matches the days_open counter the
+ * row already shows so the operator can compare them apples-to-apples.
+ */
+export function daysOverdue(responseDueDate: string | null): number | null {
+  if (!responseDueDate) return null;
+  const due = new Date(responseDueDate);
+  if (Number.isNaN(due.getTime())) return null;
+  const now = new Date();
+  // Round to midnight on both sides so a 4 PM due date doesn't read as
+  // "1 day overdue" the moment the clock crosses midnight.
+  const midnight = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.floor((midnight(now) - midnight(due)) / 86_400_000);
+}
+
 const inputCls =
   'h-10 w-full rounded-lg border border-border bg-surface-primary px-3 text-sm focus:outline-none focus:ring-2 focus:ring-oe-blue/30 focus:border-oe-blue';
 const textareaCls =
@@ -1053,11 +1145,13 @@ function RespondModal({
 
 const RFIRow = React.memo(function RFIRow({
   rfi,
+  viewerId,
   onRespond,
   onClose,
   onCreateVariation,
 }: {
   rfi: RFI;
+  viewerId: string | null;
   onRespond: (rfi: RFI) => void;
   onClose: (id: string) => void;
   onCreateVariation: (id: string) => void;
@@ -1067,6 +1161,13 @@ const RFIRow = React.memo(function RFIRow({
   const days = rfi.days_open ?? daysOpen(rfi.created_at, null);
   const isOverdue = rfi.is_overdue ?? (rfi.response_due_date && rfi.status === 'open' && new Date(rfi.response_due_date) < new Date());
   const statusCfg = STATUS_CONFIG[rfi.status] ?? STATUS_CONFIG.draft;
+  const bicSide = ballInCourtSide(rfi, viewerId);
+  const bicCfg = BIC_SIDE_CFG[bicSide];
+  // ``daysOverdue`` returns positive when past-due. Only render the pill
+  // when both flags agree (so a stale ``is_overdue=true`` on a row with
+  // no due date does not flash an empty "0d overdue" chip).
+  const overdueDelta = daysOverdue(rfi.response_due_date);
+  const showOverduePill = isOverdue && overdueDelta !== null && overdueDelta > 0;
 
   return (
     <div className="border-b border-border-light last:border-b-0">
@@ -1078,8 +1179,12 @@ const RFIRow = React.memo(function RFIRow({
         )}
         onClick={() => setExpanded((prev) => !prev)}
       >
-        {/* Priority dot — colour-coded at the very left of the row */}
+        {/* Priority dot — colour-coded at the very left of the row.
+            Uses role="img" so the aria-label is permitted (axe-core's
+            ``aria-prohibited-attr`` rule forbids aria-label on a bare
+            span). */}
         <span
+          role="img"
           className={clsx(
             'inline-block h-2 w-2 rounded-full shrink-0',
             rfi.priority ? PRIORITY_DOT[rfi.priority] : 'bg-transparent border border-border',
@@ -1147,19 +1252,41 @@ const RFIRow = React.memo(function RFIRow({
           </span>
         )}
 
-        {/* Ball in Court */}
-        <span className="text-xs text-content-tertiary w-28 truncate shrink-0 hidden md:block">
-          {rfi.ball_in_court || '-'}
-        </span>
-
-        {/* Days Open */}
+        {/* Ball in Court — visual side badge */}
         <span
           className={clsx(
-            'text-xs w-16 text-right shrink-0 tabular-nums hidden sm:block',
+            'hidden md:inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-semibold w-28 justify-center shrink-0',
+            bicCfg.cls,
+          )}
+          title={t(bicCfg.key, { defaultValue: bicCfg.fallback })}
+        >
+          {t(bicCfg.key, { defaultValue: bicCfg.fallback })}
+        </span>
+
+        {/* Days Open + overdue pill */}
+        <span
+          className={clsx(
+            'flex items-center justify-end gap-1 w-20 shrink-0 tabular-nums hidden sm:flex text-xs',
             isOverdue ? 'text-semantic-error font-semibold' : 'text-content-tertiary',
           )}
         >
           {days}d
+          {showOverduePill && (
+            <span
+              role="status"
+              className="inline-flex items-center rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-1.5 py-0.5 text-2xs font-bold"
+              aria-label={t('rfi.overdue_by_days', {
+                defaultValue: 'Overdue by {{count}} days',
+                count: overdueDelta!,
+              })}
+              title={t('rfi.overdue_by_days', {
+                defaultValue: 'Overdue by {{count}} days',
+                count: overdueDelta!,
+              })}
+            >
+              +{overdueDelta}
+            </span>
+          )}
         </span>
 
         {/* Due Date */}
@@ -1345,9 +1472,28 @@ export function RFIPage() {
   const [statusFilter, setStatusFilter] = useState<RFIStatus | ''>('');
   const [priorityFilter, setPriorityFilter] = useState<RFIPriority | ''>('');
   const [disciplineFilter, setDisciplineFilter] = useState<string>('');
+  /**
+   * Saved-view chip. ``all`` is the no-op baseline; the other three are
+   * the most-requested ball-in-court slices construction users mentioned
+   * during validation interviews:
+   *   - ``mine``     — RFIs the current viewer raised
+   *   - ``awaiting`` — RFIs whose ball is in the viewer's court (assignee
+   *                    or BIC field matches their user id) and still
+   *                    open/draft
+   *   - ``overdue``  — open RFIs past their response_due_date
+   * Chips are mutually exclusive with each other but cumulative with the
+   * status / priority / discipline dropdowns above.
+   */
+  const [quickView, setQuickView] = useState<'all' | 'mine' | 'awaiting' | 'overdue'>('all');
   const [infoDismissed, setInfoDismissed] = useState(
     () => localStorage.getItem(LS_INFO_DISMISSED) === '1',
   );
+
+  // Decode JWT once per token rotation. Falls back to ``null`` for
+  // anonymous viewers — quick-filter "Awaiting me" simply matches nothing
+  // in that case rather than throwing.
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const viewerId = useMemo(() => decodeUserIdFromToken(accessToken), [accessToken]);
 
   // "n" shortcut → open new RFI form
   useCreateShortcut(
@@ -1389,13 +1535,31 @@ export function RFIPage() {
      dropdown state means the toolbar reacts instantly when the user picks
      a chip. */
   const filtered = useMemo(() => {
-    if (!priorityFilter && !disciplineFilter) return rfis;
+    if (!priorityFilter && !disciplineFilter && quickView === 'all') return rfis;
     return rfis.filter((r) => {
       if (priorityFilter && r.priority !== priorityFilter) return false;
       if (disciplineFilter && r.discipline !== disciplineFilter) return false;
+      if (quickView === 'mine') {
+        if (!viewerId || r.raised_by !== viewerId) return false;
+      } else if (quickView === 'awaiting') {
+        // Ball-in-court is in the viewer's lap AND the RFI is still
+        // actionable. Using the shared helper keeps this in lockstep
+        // with the row badge — if the badge says "With you" the chip
+        // counts it.
+        if (ballInCourtSide(r, viewerId) !== 'you') return false;
+      } else if (quickView === 'overdue') {
+        if (!r.is_overdue) return false;
+      }
       return true;
     });
-  }, [rfis, priorityFilter, disciplineFilter]);
+  }, [rfis, priorityFilter, disciplineFilter, quickView, viewerId]);
+
+  // "Awaiting me" counter — derived directly from the loaded page so the
+  // chip badge stays in sync with what the user sees if they switch to it.
+  const awaitingMeCount = useMemo(() => {
+    if (!viewerId) return 0;
+    return rfis.filter((r) => ballInCourtSide(r, viewerId) === 'you').length;
+  }, [rfis, viewerId]);
 
   /* Real stats come from the dedicated /stats/ endpoint, which scans the
      full RFI table for the project — not just the loaded page. The
@@ -1790,6 +1954,61 @@ export function RFIPage() {
         </Card>
       </div>
 
+      {/* Quick-view chips — saved-view shortcuts for the most common
+          "what's on my plate?" slices. Mutually exclusive, kept above
+          the dropdown toolbar so the eye can land on them first. */}
+      <div className="mb-3 flex flex-wrap gap-1.5" role="tablist" aria-label={t('rfi.quick_views_aria', { defaultValue: 'Quick views' })}>
+        {(
+          [
+            { key: 'all', label: t('rfi.quick_all', { defaultValue: 'All' }) },
+            {
+              key: 'awaiting',
+              label: t('rfi.quick_awaiting', { defaultValue: 'Awaiting me' }),
+              count: awaitingMeCount,
+            },
+            { key: 'mine', label: t('rfi.quick_mine', { defaultValue: 'Raised by me' }) },
+            {
+              key: 'overdue',
+              label: t('rfi.quick_overdue', { defaultValue: 'Overdue' }),
+              count: stats.overdue,
+            },
+          ] as const
+        ).map((chip) => {
+          const active = quickView === chip.key;
+          return (
+            <button
+              key={chip.key}
+              role="tab"
+              type="button"
+              aria-selected={active}
+              onClick={() => setQuickView(chip.key)}
+              className={clsx(
+                'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                active
+                  ? 'border-oe-blue bg-oe-blue/10 text-oe-blue'
+                  : 'border-border bg-surface-primary text-content-secondary hover:bg-surface-secondary',
+              )}
+            >
+              {chip.label}
+              {'count' in chip && chip.count !== undefined && chip.count > 0 && (
+                <span
+                  className={clsx(
+                    'inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-2xs font-semibold tabular-nums',
+                    active
+                      ? 'bg-oe-blue text-white'
+                      : chip.key === 'overdue'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                        : 'bg-surface-tertiary text-content-secondary',
+                  )}
+                >
+                  {chip.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Toolbar */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
         {/* Search */}
@@ -1894,26 +2113,44 @@ export function RFIPage() {
           <EmptyState
             icon={<HelpCircle size={28} strokeWidth={1.5} />}
             title={
-              searchQuery || statusFilter
-                ? t('rfi.no_results', { defaultValue: 'No matching RFIs' })
-                : t('rfi.no_rfis', { defaultValue: 'No RFIs yet' })
+              quickView !== 'all'
+                ? t(`rfi.no_quick_${quickView}`, {
+                    defaultValue:
+                      quickView === 'awaiting'
+                        ? 'No RFIs in your court'
+                        : quickView === 'mine'
+                          ? 'You have not raised any RFIs yet'
+                          : 'No overdue RFIs',
+                  })
+                : searchQuery || statusFilter
+                  ? t('rfi.no_results', { defaultValue: 'No matching RFIs' })
+                  : t('rfi.no_rfis', { defaultValue: 'No RFIs yet' })
             }
             description={
-              searchQuery || statusFilter
-                ? t('rfi.no_results_hint', {
-                    defaultValue: 'Try adjusting your search or filters to find what you are looking for.',
+              quickView !== 'all'
+                ? t('rfi.no_quick_hint', {
+                    defaultValue: 'Clear the quick filter to see all RFIs for this project.',
                   })
-                : t('rfi.no_rfis_hint', {
-                    defaultValue: 'Create your first RFI to track design queries, clarifications, and responses between project stakeholders.',
-                  })
+                : searchQuery || statusFilter
+                  ? t('rfi.no_results_hint', {
+                      defaultValue: 'Try adjusting your search or filters to find what you are looking for.',
+                    })
+                  : t('rfi.no_rfis_hint', {
+                      defaultValue: 'Create your first RFI to track design queries, clarifications, and responses between project stakeholders.',
+                    })
             }
             action={
-              !searchQuery && !statusFilter
+              quickView !== 'all'
                 ? {
-                    label: t('rfi.new_rfi', { defaultValue: 'New RFI' }),
-                    onClick: () => setShowCreateModal(true),
+                    label: t('rfi.quick_clear', { defaultValue: 'Show all RFIs' }),
+                    onClick: () => setQuickView('all'),
                   }
-                : undefined
+                : !searchQuery && !statusFilter
+                  ? {
+                      label: t('rfi.new_rfi', { defaultValue: 'New RFI' }),
+                      onClick: () => setShowCreateModal(true),
+                    }
+                  : undefined
             }
           />
         ) : (
@@ -1938,10 +2175,10 @@ export function RFIPage() {
                   <span className="w-20 text-center">
                     {t('rfi.col_status', { defaultValue: 'Status' })}
                   </span>
-                  <span className="w-28">
+                  <span className="w-28 text-center">
                     {t('rfi.col_bic', { defaultValue: 'Ball in Court' })}
                   </span>
-                  <span className="w-16 text-right">
+                  <span className="w-20 text-right">
                     {t('rfi.col_days', { defaultValue: 'Days' })}
                   </span>
                   <span className="w-20">
@@ -1957,6 +2194,7 @@ export function RFIPage() {
                   <RFIRow
                     key={rfi.id}
                     rfi={rfi}
+                    viewerId={viewerId}
                     onRespond={handleRespond}
                     onClose={handleClose}
                     onCreateVariation={handleCreateVariation}
@@ -1971,6 +2209,9 @@ export function RFIPage() {
                 const days = rfi.days_open ?? daysOpen(rfi.created_at, null);
                 const isOverdue = rfi.is_overdue ?? (rfi.response_due_date && rfi.status === 'open' && new Date(rfi.response_due_date) < new Date());
                 const statusCfg = STATUS_CONFIG[rfi.status] ?? STATUS_CONFIG.draft;
+                const bicSide = ballInCourtSide(rfi, viewerId);
+                const bicCfg = BIC_SIDE_CFG[bicSide];
+                const overdueDelta = daysOverdue(rfi.response_due_date);
                 return (
                   <Card key={rfi.id} className="p-4">
                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -1982,9 +2223,24 @@ export function RFIPage() {
                         {t(`rfi.status_${rfi.status}`, { defaultValue: rfi.status.charAt(0).toUpperCase() + rfi.status.slice(1) })}
                       </Badge>
                     </div>
+                    <div className="mb-2">
+                      <span
+                        className={clsx(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-semibold',
+                          bicCfg.cls,
+                        )}
+                      >
+                        {t(bicCfg.key, { defaultValue: bicCfg.fallback })}
+                      </span>
+                    </div>
                     <div className="text-xs text-content-tertiary space-y-1">
                       {(rfi.ball_in_court) && (
                         <div>{t('rfi.col_bic', { defaultValue: 'Ball in Court' })}: {rfi.ball_in_court}</div>
+                      )}
+                      {isOverdue && overdueDelta !== null && overdueDelta > 0 && (
+                        <div className="inline-flex items-center rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-1.5 py-0.5 text-2xs font-bold">
+                          {t('rfi.overdue_by_days', { defaultValue: 'Overdue by {{count}} days', count: overdueDelta })}
+                        </div>
                       )}
                       <div className="flex items-center gap-3">
                         <span className={isOverdue ? 'text-semantic-error font-semibold' : ''}>{days}d {t('rfi.col_days', { defaultValue: 'open' })}</span>
