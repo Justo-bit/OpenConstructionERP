@@ -170,6 +170,12 @@ export function OverlayLayer({
     if (!cesium || !viewer) return;
     const c: any = cesium;
     const v: any = viewer;
+    // ``viewer`` may legitimately be defined but already torn down —
+    // Cesium nulls ``.scene`` synchronously inside ``viewer.destroy()``.
+    // Guard explicitly so a stale prop never blows up this effect mid
+    // mount/unmount race (BUG: "Cannot read properties of undefined
+    // (reading 'scene')" on /projects/:id/geo).
+    if (!v.scene && !v.imageryLayers) return;
     const imageryLayers = v.scene?.imageryLayers ?? v.imageryLayers;
     if (!imageryLayers) return;
 
@@ -264,7 +270,14 @@ export function OverlayLayer({
     return () => {
       if (!cesium || !viewer) return;
       const v: any = viewer;
+      // Skip cleanly when the viewer was destroyed before this cleanup
+      // fires (Cesium nulls ``scene`` on destroy and there's no point in
+      // trying to remove layers from a torn-down imagery collection).
       const imageryLayers = v.scene?.imageryLayers ?? v.imageryLayers;
+      if (!imageryLayers) {
+        layerMapRef.current.clear();
+        return;
+      }
       for (const layer of layerMapRef.current.values()) {
         try {
           imageryLayers?.remove(layer, false);
@@ -286,6 +299,13 @@ export function OverlayLayer({
     if (!cesium || !viewer) return;
     const c: any = cesium;
     const v: any = viewer;
+    // Bail if the viewer is mid-destroy — both ``scene`` and
+    // ``entities`` are nulled synchronously inside ``viewer.destroy()``
+    // and downstream code (``v.scene.canvas``, ``v.scene.pick``,
+    // ``v.scene.screenSpaceCameraController``) would crash without a
+    // safe path. See bug "Cannot read properties of undefined
+    // (reading 'scene')" on /projects/:id/geo.
+    if (!v.scene || !v.entities) return;
     // Always clear previous handles first.
     for (const e of cornerEntitiesRef.current) {
       try {
@@ -327,7 +347,11 @@ export function OverlayLayer({
     try {
       handler = new c.ScreenSpaceEventHandler(v.scene.canvas);
       const screenToCartographic = (pos: any) => {
-        const ray = v.camera.getPickRay?.(pos);
+        // Viewer may have been destroyed between handler creation and
+        // a deferred event firing — every ``v.scene`` access inside the
+        // closure has to be defensive.
+        if (!v.scene) return null;
+        const ray = v.camera?.getPickRay?.(pos);
         const hit = ray
           ? v.scene.globe?.pick?.(ray, v.scene)
           : v.scene.pickPosition?.(pos);
@@ -336,11 +360,13 @@ export function OverlayLayer({
       };
 
       handler.setInputAction((m: any) => {
+        if (!v.scene) return;
         const picked = v.scene.pick?.(m.position);
         const idx = picked?.id?.properties?._oeCornerIndex?.getValue?.();
         if (typeof idx === 'number') {
           dragIndex = idx;
-          v.scene.screenSpaceCameraController.enableInputs = false;
+          const ssc = v.scene.screenSpaceCameraController;
+          if (ssc) ssc.enableInputs = false;
         }
       }, c.ScreenSpaceEventType.LEFT_DOWN);
 
@@ -372,7 +398,8 @@ export function OverlayLayer({
           },
         );
         dragIndex = null;
-        v.scene.screenSpaceCameraController.enableInputs = true;
+        const ssc = v.scene?.screenSpaceCameraController;
+        if (ssc) ssc.enableInputs = true;
         patchMutation.mutate({
           id: active.id,
           body: { corners_geojson: nextCorners },
@@ -389,8 +416,11 @@ export function OverlayLayer({
       } catch {
         /* gone */
       }
+      // ``v.scene`` may have been nulled by ``viewer.destroy()`` between
+      // this effect mounting and its cleanup running — read defensively.
       try {
-        v.scene.screenSpaceCameraController.enableInputs = true;
+        const ssc = v.scene?.screenSpaceCameraController;
+        if (ssc) ssc.enableInputs = true;
       } catch {
         /* gone */
       }
@@ -428,9 +458,19 @@ export function OverlayLayer({
 
     const c: any = cesium;
     const v: any = viewer;
+    // Bail out cleanly if the viewer is mid-destroy — both ``scene``
+    // and ``entities`` are nulled inside ``viewer.destroy()`` and every
+    // downstream access (``v.scene.canvas`` for the handler ctor,
+    // ``v.entities.add`` for the preview entity) would crash without a
+    // safe path. See bug "Cannot read properties of undefined
+    // (reading 'scene')" on /projects/:id/geo.
+    if (!v.scene || !v.entities) return;
     let handler: any = null;
 
     const refreshPreview = (pts: [number, number][]) => {
+      // ``v.entities`` may be null by the time this fires (Cesium
+      // teardown nulled it). Guard so the closure doesn't crash.
+      if (!v.entities) return;
       if (cropEntityRef.current) {
         try {
           v.entities.remove(cropEntityRef.current);
@@ -455,7 +495,8 @@ export function OverlayLayer({
     try {
       handler = new c.ScreenSpaceEventHandler(v.scene.canvas);
       handler.setInputAction((m: any) => {
-        const ray = v.camera.getPickRay?.(m.position);
+        if (!v.scene) return;
+        const ray = v.camera?.getPickRay?.(m.position);
         const hit = ray
           ? v.scene.globe?.pick?.(ray, v.scene)
           : v.scene.pickPosition?.(m.position);
@@ -525,7 +566,9 @@ export function OverlayLayer({
       }
       if (cropEntityRef.current) {
         try {
-          v.entities.remove(cropEntityRef.current);
+          // ``v.entities`` may be null after viewer.destroy() — skip the
+          // remove call entirely in that case to avoid TypeError.
+          v.entities?.remove(cropEntityRef.current);
         } catch {
           /* gone */
         }
