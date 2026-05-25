@@ -44,7 +44,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 <tr>
 <td valign="top">
 
-**🚀 Get Started**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/rocket-dark.svg"><img src="docs/readme-icons/rocket-light.svg" width="14" align="center" alt=""></picture> **Get Started**
 - [Why OpenConstructionERP?](#why-openconstructionerp)
 - [See It In Action](#see-it-in-action)
 - [Quick Start](#quick-start)
@@ -53,7 +53,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**💰 Estimating & Costs**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/credit-card-dark.svg"><img src="docs/readme-icons/credit-card-light.svg" width="14" align="center" alt=""></picture> **Estimating & Costs**
 - [Bill of Quantities](#-bill-of-quantities-boq-management)
 - [Cost Databases & Catalog](#%EF%B8%8F-cost-databases--resource-catalog)
 - [CAD/BIM Takeoff & AI](#%EF%B8%8F-cadbim-takeoff--ai-estimation)
@@ -61,7 +61,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**📆 Project Lifecycle**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/project-dark.svg"><img src="docs/readme-icons/project-light.svg" width="14" align="center" alt=""></picture> **Project Lifecycle**
 - [4D Scheduling & 5D Cost](#-4d-scheduling--5d-cost-model)
 - [Tendering, Risk & Reports](#-tendering-risk--reporting)
 - [Requirements & Quality](#-requirements--quality-gates)
@@ -72,7 +72,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 <tr>
 <td valign="top">
 
-**🌐 Visualization & Coordination**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> **Visualization & Coordination**
 - [Geo Hub (3D Globe)](#-geo-hub-3d-globe)
 - [Coordination Hub & Clash AI](#-coordination-hub--clash-ai)
 - [PDF Markups & Annotations](#%EF%B8%8F-pdf-markups--annotations)
@@ -80,7 +80,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**🦺 Field & Quality**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/shield-check-dark.svg"><img src="docs/readme-icons/shield-check-light.svg" width="14" align="center" alt=""></picture> **Field & Quality**
 - [Daily Diary & HSE](#-daily-diary--hse)
 - [Punch List](#-punch-list)
 - [Validation Engine](#%EF%B8%8F-validation--compliance-engine)
@@ -88,7 +88,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**⚙️ Setup & Standards**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/gear-dark.svg"><img src="docs/readme-icons/gear-light.svg" width="14" align="center" alt=""></picture> **Setup & Standards**
 - [30+ Regional Standards](#-30-regional-standards)
 - [Guided Onboarding](#-guided-onboarding)
 - [All Key Features](#key-features)
@@ -98,7 +98,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 <tr>
 <td valign="top">
 
-**🔧 Technical**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/code-dark.svg"><img src="docs/readme-icons/code-light.svg" width="14" align="center" alt=""></picture> **Technical**
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
 - [Security](#security)
@@ -106,7 +106,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**🤝 Community**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/people-dark.svg"><img src="docs/readme-icons/people-light.svg" width="14" align="center" alt=""></picture> **Community**
 - [Support the Project](#support-the-project)
 - [AI Disclaimer](#ai-disclaimer)
 - [Trademarks](#trademarks)
@@ -114,7 +114,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
 </td>
 <td valign="top">
 
-**📜 Legal & Privacy**
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/law-dark.svg"><img src="docs/readme-icons/law-light.svg" width="14" align="center" alt=""></picture> **Legal & Privacy**
 - [Export Control](#export-control)
 - [License](#license)
 - [Privacy and Terms](#privacy-and-terms)
