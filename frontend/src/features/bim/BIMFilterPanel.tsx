@@ -469,6 +469,29 @@ export default function BIMFilterPanel({
     length: number;
   }
 
+  // Active isolation set — declared up here (not next to `visibleElements`
+  // below) because `counts` also needs it as a dependency: chip counts must
+  // narrow to the isolated subset when isolation is active, otherwise the
+  // panel still reports model-total counts while the viewport only shows a
+  // handful of elements (e.g. property-search isolate → 5 elements visible
+  // but chips claim 64 Walls).
+  const isolationSet = useMemo(
+    () => (isolatedIds && isolatedIds.length > 0 ? new Set(isolatedIds) : null),
+    [isolatedIds],
+  );
+
+  // Facet-counts pattern: each chip's count reflects "what you'd see if
+  // you ADDED this chip to the currently active filters" — i.e. counts on
+  // every axis are computed against elements that pass all OTHER axes but
+  // NOT this axis. Storey counts respect the active category/type/search
+  // filter; category & bucket counts respect the active storey/search
+  // filter. Without this, selecting "Walls" leaves every level chip
+  // showing its full unfiltered total (e.g. "L01: 64" while the viewport
+  // really has 11 walls on L01), and the typename grouping still lists
+  // every category with its original total — making the user think the
+  // filter "broke" because the panel counts contradict the 3D viewport
+  // and the "Showing 64 Walls" summary. Reported repeatedly by Artem
+  // ("группировка на виде опять не работает").
   const counts = useMemo(() => {
     const byStorey = new Map<string, number>();
     const byType = new Map<string, number>();
@@ -480,53 +503,107 @@ export default function BIMFilterPanel({
     /** Category → (TypeName → count) — Revit Browser hierarchy */
     const byCategoryThenType = new Map<string, Map<string, number>>();
 
+    const search = state.search.trim().toLowerCase();
+
+    // Per-axis predicates: each tests whether an element passes the
+    // filters OTHER than the named axis. We deliberately reuse the same
+    // axis-membership rules as `applyFilters()` so the chip counts match
+    // what would actually appear in the viewport if the user toggled the
+    // corresponding chip on. Isolation is treated like a baseline filter
+    // (it constrains the visible universe for every axis).
+    const matchesSearch = (el: BIMElementData): boolean => {
+      if (!search) return true;
+      const elProps = (el.properties || {}) as Record<string, unknown>;
+      const propCat =
+        typeof elProps.category === 'string' ? elProps.category : '';
+      const hay = (
+        (el.name || '') +
+        ' ' +
+        (el.element_type || '') +
+        ' ' +
+        (el.category || '') +
+        ' ' +
+        propCat +
+        ' ' +
+        (el.storey || '')
+      ).toLowerCase();
+      return hay.includes(search);
+    };
+    const matchesStoreyFilter = (el: BIMElementData): boolean => {
+      if (state.storeys.size === 0) return true;
+      if (!el.storey) return true; // mirror applyFilters(): no-storey passes
+      return state.storeys.has(el.storey);
+    };
+    const matchesTypeFilter = (el: BIMElementData): boolean => {
+      if (state.types.size === 0) return true;
+      const tpe = getTypeKey(el, format);
+      const typeName = getTypeNameKey(el);
+      return state.types.has(tpe) || state.types.has(typeName);
+    };
+
     for (const el of elements) {
+      if (isolationSet && !isolationSet.has(el.id)) continue;
       const tpe = getTypeKey(el, format);
       const isNoise = isNoiseCategory(tpe);
+      if (!matchesSearch(el)) continue;
 
-      // Storey counts skip noise when buildingsOnly is on, AND skip
-      // null storeys entirely (an annotation row with no level isn't
-      // a useful "—" filter target).
-      if (!(state.buildingsOnly && isNoise) && el.storey) {
+      // Storey chip counts: skip the storey filter so toggling levels
+      // doesn't make their own counts collapse to zero, but DO respect
+      // the active type filter so picking "Walls" updates every level
+      // chip to show wall-on-this-level counts. Noise categories are
+      // dropped from storey counts when buildingsOnly is on so the
+      // annotation rows don't dominate the level chip badges.
+      if (
+        !(state.buildingsOnly && isNoise) &&
+        el.storey &&
+        matchesTypeFilter(el)
+      ) {
         byStorey.set(el.storey, (byStorey.get(el.storey) ?? 0) + 1);
       }
 
-      // ALL categories go into the byType map regardless of the
-      // buildingsOnly toggle — the split into "building" vs "other" now
-      // happens in the render layer (CategoryFlatList) so the user always
-      // sees what's available, with annotations collapsed by default.
-      byType.set(tpe, (byType.get(tpe) ?? 0) + 1);
+      // Type / bucket / category-with-types chip counts: skip the type
+      // filter so other categories remain selectable (and visible) even
+      // after one category is active, but DO respect the active storey
+      // filter so picking "L02" reduces every category chip to its
+      // L02-only count. We do NOT short-circuit on `buildingsOnly` here
+      // — ALL categories go into byType / buckets / categoriesWithTypes
+      // regardless of the toggle, because the building-vs-noise split
+      // happens in the render layer (CategoryFlatList shows the "Other"
+      // section, BUCKETS view filters via `BUCKETS[bucket].noise`).
+      if (matchesStoreyFilter(el)) {
+        byType.set(tpe, (byType.get(tpe) ?? 0) + 1);
 
-      // Accumulate quantities per type for the summary display
-      const q = el.quantities as Record<string, number> | undefined;
-      if (q) {
-        let agg = typeQty.get(tpe);
-        if (!agg) {
-          agg = { volume: 0, area: 0, length: 0 };
-          typeQty.set(tpe, agg);
+        // Accumulate quantities per type for the summary display
+        const q = el.quantities as Record<string, number> | undefined;
+        if (q) {
+          let agg = typeQty.get(tpe);
+          if (!agg) {
+            agg = { volume: 0, area: 0, length: 0 };
+            typeQty.set(tpe, agg);
+          }
+          agg.volume += q.Volume ?? q.volume_m3 ?? q['Gross Volume'] ?? 0;
+          agg.area += q.Area ?? q.area_m2 ?? q['Gross Area'] ?? q['Surface Area'] ?? 0;
+          agg.length += q.Length ?? q.length_m ?? 0;
         }
-        agg.volume += q.Volume ?? q.volume_m3 ?? q['Gross Volume'] ?? 0;
-        agg.area += q.Area ?? q.area_m2 ?? q['Gross Area'] ?? q['Surface Area'] ?? 0;
-        agg.length += q.Length ?? q.length_m ?? 0;
-      }
 
-      // Hierarchical Category → Type Name (Revit Browser style)
-      const typeName = getTypeNameKey(el);
-      let perCat = byCategoryThenType.get(tpe);
-      if (!perCat) {
-        perCat = new Map();
-        byCategoryThenType.set(tpe, perCat);
-      }
-      perCat.set(typeName, (perCat.get(typeName) ?? 0) + 1);
+        // Hierarchical Category → Type Name (Revit Browser style)
+        const typeName = getTypeNameKey(el);
+        let perCat = byCategoryThenType.get(tpe);
+        if (!perCat) {
+          perCat = new Map();
+          byCategoryThenType.set(tpe, perCat);
+        }
+        perCat.set(typeName, (perCat.get(typeName) ?? 0) + 1);
 
-      const bucket = bucketOf(tpe);
-      let perBucket = byBucket.get(bucket);
-      if (!perBucket) {
-        perBucket = new Map();
-        byBucket.set(bucket, perBucket);
+        const bucket = bucketOf(tpe);
+        let perBucket = byBucket.get(bucket);
+        if (!perBucket) {
+          perBucket = new Map();
+          byBucket.set(bucket, perBucket);
+        }
+        perBucket.set(tpe, (perBucket.get(tpe) ?? 0) + 1);
+        bucketTotals.set(bucket, (bucketTotals.get(bucket) ?? 0) + 1);
       }
-      perBucket.set(tpe, (perBucket.get(tpe) ?? 0) + 1);
-      bucketTotals.set(bucket, (bucketTotals.get(bucket) ?? 0) + 1);
     }
 
     // Sort buckets by their semantic order, then build the ordered
@@ -584,7 +661,15 @@ export default function BIMFilterPanel({
       buckets: orderedBuckets,
       categoriesWithTypes,
     };
-  }, [elements, format, state.buildingsOnly]);
+  }, [
+    elements,
+    format,
+    state.buildingsOnly,
+    state.storeys,
+    state.types,
+    state.search,
+    isolationSet,
+  ]);
 
   // ── Filter predicate ───────────────────────────────────────────────
   const applyFilters = useCallback(
@@ -706,10 +791,8 @@ export default function BIMFilterPanel({
   // counts, Link-to-BOQ button and CSV export aligned with what the
   // user actually sees on screen — otherwise they'd link 109 elements
   // expecting "those few I isolated" and quietly link the whole filter.
-  const isolationSet = useMemo(
-    () => (isolatedIds && isolatedIds.length > 0 ? new Set(isolatedIds) : null),
-    [isolatedIds],
-  );
+  // (`isolationSet` itself is declared above, next to the `counts` memo,
+  // because chip counts also need it.)
   const visibleElements = useMemo(() => {
     const search = state.search.trim().toLowerCase();
     return elements.filter((el) => {
