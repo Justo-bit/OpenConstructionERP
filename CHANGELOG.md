@@ -5,6 +5,20 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.1] - 2026-05-25
+
+Same-day patch on top of v4.9.0 — four follow-up fixes after VPS deploy verification.
+
+### Fixed
+- `accommodation` booking-overlap guard re-applied — `POST /api/v1/accommodation/rooms/{id}/bookings` + `PATCH /api/v1/accommodation/bookings/{id}` were silently double-booking the same room on overlapping dates after the V6 verification wave lost the source fix to an NTFS junction race. New `assert_no_booking_overlap()` helper uses the same half-open interval semantics as the existing list filter, checked only against live statuses (`reserved`, `checked_in`), self-excluded on PATCH. 6 xfailed tests un-xfailed, all pass. (eadc6ff8)
+- `BIMFilterPanel` Category / TypeName / Buckets tree no longer shrinks when filtering by storey. Commit ba1887cb had gated `byType` / `byCategoryThenType` / `byBucket` population behind `matchesStoreyFilter(el)` as part of an attempted facet-UI sweep — side-effect: picking storey L02 collapsed the entire Category sidebar to L02-only categories. The structural navigation panels must stay stable regardless of which axis is filtered. Verified via Playwright probe: 12 category rows before storey pick, 12 after. (756df401)
+
+### Added
+- Three workshop attendee testimonials on the marketing site DDC section: Kai Schmitt (Dimexcon), Philip Becker (Herbert Gruppe), Lukas Fuchs (D&S). CSS grid bumped from a fixed 2-col to a responsive 3/2/1 (≥1080px / ≥720px / mobile) so 5 cards land as 3+2 on desktop. Quotes verbatim, LinkedIn avatars base64-embedded. Generator script committed at `website-marketing/pro/breeze/_screenshots/add_workshop_testimonials.py`, idempotent. (c8c3ba62)
+
+### Changed
+- i18n: 247 new keys present in `en.ts` but missing from `de.ts` backfilled to all 26 other locale files as EN placeholders (project convention). Groups: project layout / widgets (102), audit (18), procurement (18), schedule_advanced (16), bim / rfi / submittals (15 each), tendering (14), geo_hub (11), sidebar (7), queue (6), geo (4), reports (3), property_dev (3). 6,416 key insertions total. (715d9de8)
+
 ## [4.9.0] - 2026-05-25
 
 Dashboard / settings / docs / converters wave on top of v4.8.0 — every
