@@ -3642,7 +3642,11 @@ async def _verify_takeoff_doc_access(
     owner = str(
         getattr(doc, "owner_id", None) or getattr(doc, "user_id", "") or ""
     )
-    if owner and owner != str(user_id):
+    # R7 deep-improve: a document with NO owner (NULL on both columns)
+    # must block everyone — otherwise the empty-owner branch silently
+    # opens orphaned rows to any caller. Match by string after trimming
+    # both sides so UUID-vs-str drift doesn't bypass the gate.
+    if owner != str(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=translate("errors.document_not_found", locale=get_locale()),

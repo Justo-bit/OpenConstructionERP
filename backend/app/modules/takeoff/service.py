@@ -526,6 +526,38 @@ def _extract_pdf_pages(content: bytes, *, filename: str | None = None) -> list[d
     return pages
 
 
+def validate_page_for_document(doc: Any, page: int) -> None:
+    """Reject ``page`` if it is outside the 1-indexed range for ``doc``.
+
+    Pages are 1-indexed; ``doc.pages`` is the total page count. Valid
+    range is therefore ``[1, doc.pages]``. Raises :class:`HTTPException`
+    (422) when ``page < 1`` or ``page > doc.pages``. A document with
+    ``pages == 0`` (parse failure) rejects any page request.
+
+    This is the service-level guard for direct callers; Pydantic schema
+    validation (``ge=1``) catches the negative-page case earlier on the
+    request edge.
+    """
+    from fastapi import HTTPException  # local import — avoid cycle
+
+    pages = int(getattr(doc, "pages", 0) or 0)
+    if page < 1:
+        raise HTTPException(
+            status_code=422,
+            detail=f"page must be >= 1 (got {page})",
+        )
+    if pages < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="page out of range — document has 0 pages",
+        )
+    if page > pages:
+        raise HTTPException(
+            status_code=422,
+            detail=f"page {page} is out of range (document has {pages} pages)",
+        )
+
+
 def _count_pdf_pages(content: bytes, *, filename: str | None = None) -> int:
     """Count the number of pages in a PDF.
 

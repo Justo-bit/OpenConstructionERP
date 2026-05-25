@@ -45,6 +45,46 @@ async def _safe_publish(name: str, data: dict, source_module: str = "") -> None:
 logger = logging.getLogger(__name__)
 
 
+# ── Recursion / cycle guard (R7 deep-improve) ──────────────────────────────
+# Assemblies can reference other assemblies as components ("composite
+# recipes"). A self-reference or a long A→B→C→…→A loop would otherwise
+# explode the recursion stack and the response size. We cap depth and
+# raise a 400 with a translatable message when the cap is hit or a cycle
+# is detected.
+MAX_ASSEMBLY_DEPTH: int = 8
+
+
+class AssemblyCycleError(HTTPException):
+    """Raised when assembly nesting cycles or exceeds MAX_ASSEMBLY_DEPTH."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=400, detail=detail)
+
+
+def _check_assembly_depth(
+    assembly_id: uuid.UUID,
+    visited: frozenset[uuid.UUID] | None = None,
+    depth: int = 0,
+) -> frozenset[uuid.UUID]:
+    """Guard against cyclic / over-deep assembly composition.
+
+    Raises ``AssemblyCycleError`` (HTTP 400) if ``assembly_id`` is already
+    in ``visited`` (cycle), or if ``depth >= MAX_ASSEMBLY_DEPTH`` (nesting
+    too deep). Returns the new ``visited`` set on success.
+    """
+    if visited is None:
+        visited = frozenset()
+    if assembly_id in visited:
+        raise AssemblyCycleError(
+            f"Assembly cycle detected involving {assembly_id}",
+        )
+    if depth >= MAX_ASSEMBLY_DEPTH:
+        raise AssemblyCycleError(
+            f"Assembly nesting depth exceeds {MAX_ASSEMBLY_DEPTH} levels",
+        )
+    return visited | {assembly_id}
+
+
 def _compute_component_total(factor: float, quantity: float, unit_cost: float) -> str:
     """‌⁠‍Compute component total as string: factor * quantity * unit_cost.
 

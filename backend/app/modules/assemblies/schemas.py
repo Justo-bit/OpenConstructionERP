@@ -191,7 +191,10 @@ class ComponentResponse(BaseModel):
     quantity: float
     unit: str
     unit_cost: Decimal = Decimal("0")
-    total: float
+    # Decimal (not float) so JSON serialises an exact string like "90.0"
+    # rather than 89.9999... — money/quantity totals must never be float
+    # in the response payload (R7 deep-improve).
+    total: Decimal = Decimal("0")
     sort_order: int
     # FastAPI defaults `response_model_by_alias=True`, so if we aliased
     # this to "metadata_" the wire payload would carry the trailing

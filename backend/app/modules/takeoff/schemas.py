@@ -45,7 +45,10 @@ class ExtractedElement(BaseModel):
     description: str
     quantity: float
     unit: str
-    confidence: float
+    # R7 deep-improve: confidence must be a probability in [0, 1]. Out-of-
+    # range values from an AI model indicate a bug — fail loudly instead
+    # of silently allowing 1.5 or -3 to propagate through the UI.
+    confidence: float = Field(..., ge=0.0, le=1.0)
 
 
 class AnalysisResultResponse(BaseModel):
