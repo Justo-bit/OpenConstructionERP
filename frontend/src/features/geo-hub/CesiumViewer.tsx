@@ -257,14 +257,18 @@ async function loadCesium(): Promise<CesiumLike | null> {
       console.warn('[geo_hub] cesium import resolved but Viewer constructor is missing', Object.keys(mod || {}).slice(0, 10));
       return null;
     }
-    // Silence the "Cesium ion default access token" credit banner / popup.
+    // Silence the "Cesium ion default access token" warning + watermark.
     // We don't use any Ion-hosted services (base imagery is OSM, terrain is
-    // ellipsoid). Setting the token to an empty string disables Ion calls
-    // outright and stops Cesium from rendering its default-token watermark.
+    // ellipsoid). Cesium >= 1.107 treats a falsy token (including ``''``) as
+    // "still on the bundled default" and keeps logging the nag and showing
+    // the credit popup. Setting a non-empty sentinel passes the "is set"
+    // check so the warning stays quiet; any code path that *does* request
+    // an Ion asset will still fail loudly with a 401 rather than silently
+    // borrowing our anonymous quota.
     // Enterprise tenants who *do* want Ion assets override this via the
     // Terrain admin page after viewer boot.
     try {
-      if (mod.Ion) mod.Ion.defaultAccessToken = '';
+      if (mod.Ion) mod.Ion.defaultAccessToken = 'disabled-by-openconstructionerp';
     } catch {
       // Ion namespace shape changed between major versions — never block boot.
     }
