@@ -15,6 +15,7 @@ import {
   Loader2,
   Trash2,
   Pencil,
+  Send,
 } from 'lucide-react';
 import {
   Button,
@@ -36,6 +37,8 @@ import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { getPOMatchStatus, type POLineMatchTag } from './api';
 import { SupplierScorecardModal } from './SupplierScorecardModal';
+import { POStatusPipeline } from './POStatusPipeline';
+import { DeliveryCountdownBadge } from './DeliveryCountdownBadge';
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -514,6 +517,32 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
       addToast({ type: 'error', title: t('common.error', { defaultValue: 'Error' }), message: e.message }),
   });
 
+  /* ── PO issue ──
+     Transitions a draft PO to `issued`. The backend enforces the FSM
+     (only draft→issued; see _PO_STATUS_TRANSITIONS in service.py) and
+     audit-logs the transition. After success we re-run the PO list query
+     so the status pipeline and Issue/Invoice button visibility update
+     in place. */
+  const issuePOMut = useMutation({
+    mutationFn: (poId: string) =>
+      apiPost(`/v1/procurement/${poId}/issue/`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['procurement-po', projectId] });
+      addToast({
+        type: 'success',
+        title: t('procurement.po_issued_toast', {
+          defaultValue: 'Purchase order issued',
+        }),
+      });
+    },
+    onError: (e: Error) =>
+      addToast({
+        type: 'error',
+        title: t('common.error', { defaultValue: 'Error' }),
+        message: e.message,
+      }),
+  });
+
   const createInvoiceMut = useMutation({
     mutationFn: (poId: string) =>
       apiPost<{ invoice_id: string; invoice_number: string; po_number: string }>(
@@ -979,30 +1008,43 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
                   <DateDisplay value={po.issue_date} />
                 </td>
                 <td className="px-4 py-3 text-content-secondary">
-                  <DateDisplay value={po.delivery_date} />
+                  <div className="flex flex-col items-start gap-1">
+                    <DateDisplay value={po.delivery_date} />
+                    <DeliveryCountdownBadge
+                      deliveryDate={po.delivery_date}
+                      status={po.status}
+                    />
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <MoneyDisplay amount={po.total_amount} currency={po.currency} />
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <Badge
-                      variant={PO_STATUS_COLORS[po.status] ?? 'neutral'}
-                      size="sm"
-                    >
-                      {t(`procurement.po_status_${po.status}`, {
-                        defaultValue: po.status,
-                      })}
-                    </Badge>
-                    <MatchStatusBadge
-                      poId={po.id}
-                      active={Boolean(matchActive[po.id])}
-                    />
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <Badge
+                        variant={PO_STATUS_COLORS[po.status] ?? 'neutral'}
+                        size="sm"
+                      >
+                        {t(`procurement.po_status_${po.status}`, {
+                          defaultValue: po.status,
+                        })}
+                      </Badge>
+                      <MatchStatusBadge
+                        poId={po.id}
+                        active={Boolean(matchActive[po.id])}
+                      />
+                    </div>
+                    {/* Visual life-cycle pipeline — collapses to a red bar
+                        when cancelled, otherwise shows the four-stage dot
+                        progression (draft → issued → partial → completed).
+                        Mirrors backend _PO_STATUS_TRANSITIONS in service.py. */}
+                    <POStatusPipeline status={po.status} />
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right">
                   {isManager && (
-                  <div className="flex items-center justify-end gap-1">
+                  <div className="flex items-center justify-end gap-1 flex-wrap">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1017,6 +1059,26 @@ function PurchaseOrdersTab({ projectId }: { projectId: string }) {
                         <Pencil size={14} />
                       )}
                     </Button>
+                    {/* Mobile-friendly Issue button — only shown while the PO
+                        is in draft (matches backend FSM allowlist). On phones
+                        the row stacks; the Issue chip stays tappable at 44x32. */}
+                    {po.status === 'draft' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => issuePOMut.mutate(po.id)}
+                        disabled={issuePOMut.isPending}
+                        title={t('procurement.action_issue', { defaultValue: 'Issue PO' })}
+                        aria-label={t('procurement.action_issue', { defaultValue: 'Issue PO' })}
+                      >
+                        {issuePOMut.isPending && issuePOMut.variables === po.id ? (
+                          <Loader2 size={14} className="animate-spin mr-1" />
+                        ) : (
+                          <Send size={14} className="mr-1" />
+                        )}
+                        {t('procurement.action_issue_short', { defaultValue: 'Issue' })}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1083,9 +1145,20 @@ function MatchStatusBadge({ poId, active }: { poId: string; active: boolean }) {
   }
 
   const tag = data.overall_status;
+  // Explicit defaults keep the badge readable when a brand-new locale
+  // ships before its `procurement.match_*` entries land.
+  const MATCH_LABEL_DEFAULTS: Record<POLineMatchTag, string> = {
+    ok: 'Matched',
+    partial: 'Partial match',
+    unmatched: 'Not matched',
+    over_received: 'Over-received',
+    over_invoiced: 'Over-invoiced',
+  };
   return (
     <Badge variant={MATCH_BADGE_VARIANT[tag] ?? 'neutral'} size="sm" dot>
-      {t(`procurement.match_${tag}`, { defaultValue: tag.replace('_', ' ') })}
+      {t(`procurement.match_${tag}`, {
+        defaultValue: MATCH_LABEL_DEFAULTS[tag] ?? tag.replace('_', ' '),
+      })}
     </Badge>
   );
 }
