@@ -230,7 +230,90 @@ async function hydrateAuth(page: Page, accessToken: string): Promise<void> {
     localStorage.setItem('oe.tour_completed', 'true');
     sessionStorage.setItem('oe_access_token', token);
     sessionStorage.setItem('oe_refresh_token', token);
+    // Dismiss the public-demo modal on the hosted demo VPS
+    // (see frontend/src/shared/ui/DemoBanner.tsx — gated by
+    // sessionStorage key `oe_demo_modal_dismissed`). On local-dev runs
+    // demo_mode is false and the key is simply ignored.
+    sessionStorage.setItem('oe_demo_modal_dismissed', '1');
   }, accessToken);
+}
+
+/**
+ * Inject CSS that hides the public-demo modal in case the React app
+ * opens it before our sessionStorage seed is read (race condition: the
+ * `useEffect` reads `sessionStorage` AFTER /api/system/status resolves
+ * and AFTER the addInitScript has run, so this should be redundant — but
+ * we keep it as defence in depth). The selector matches the modal's
+ * outermost backdrop (`fixed inset-0 z-[200]`), which Tailwind compiles
+ * to `.z-\[200\]` in the production stylesheet. We hide the whole
+ * stacking layer so the modal contents don't bleed through.
+ *
+ * No-op on local dev (where the modal is never rendered) and on the
+ * marketing landing page (which doesn't load the React bundle).
+ */
+async function injectDemoModalHiderCSS(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const css = `
+      /* Hide the public-demo modal overlay (DemoBanner.tsx). */
+      div.fixed.inset-0[class*="z-\\[200\\]"] {
+        display: none !important;
+      }
+    `;
+    const inject = () => {
+      if (document.getElementById('__qa_demo_modal_hider')) return;
+      const style = document.createElement('style');
+      style.id = '__qa_demo_modal_hider';
+      style.textContent = css;
+      (document.head || document.documentElement).appendChild(style);
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', inject, { once: true });
+    } else {
+      inject();
+    }
+  });
+}
+
+/**
+ * Best-effort dismissal of the public-demo modal (see
+ * frontend/src/shared/ui/DemoBanner.tsx). The addInitScript sessionStorage
+ * seed (`oe_demo_modal_dismissed=1`) suppresses it on initial mount, but
+ * the modal is opened from a useEffect that runs only AFTER the
+ * /api/system/status query resolves — which on the hosted demo VPS can
+ * happen after our `networkidle` + settle window. So we also click the
+ * modal away if it appears. On local-dev runs `demo_mode=false` and the
+ * modal never mounts, so this is a no-op.
+ *
+ * Additionally seeds sessionStorage on the live page after dismissal so
+ * the modal does not re-appear if the next navigation somehow misses the
+ * init script (defence in depth).
+ */
+async function dismissDemoModalIfPresent(page: Page): Promise<void> {
+  try {
+    // Re-assert sessionStorage on the live document. This is cheap and
+    // covers the (theoretical) case where addInitScript ran in an early
+    // origin context but the React app reads from a fresher one.
+    await page
+      .evaluate(() => {
+        try {
+          sessionStorage.setItem('oe_demo_modal_dismissed', '1');
+        } catch {
+          /* sandboxed about:blank — ignore */
+        }
+      })
+      .catch(() => {});
+
+    const btn = page.getByRole('button', { name: /I understand, continue/i });
+    // Give the modal up to 1.5s to materialise after the demo-mode query
+    // resolves. If it never appears (local dev, demo_mode=false), this
+    // simply times out cheaply.
+    if (await btn.isVisible({ timeout: 1_500 }).catch(() => false)) {
+      await btn.click({ timeout: 2_000, force: true }).catch(() => {});
+      await btn.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => {});
+    }
+  } catch {
+    /* swallow — best-effort dismissal */
+  }
 }
 
 interface RouteResult {
@@ -262,6 +345,7 @@ test.describe('Full-app screenshot grid', () => {
       console.warn('[qa-screenshots] No BIM model found — :modelId routes will show empty state.');
     }
     await hydrateAuth(page, fixtures.accessToken);
+    await injectDemoModalHiderCSS(page);
 
     // Ensure output dir exists up-front; per-section subdirs created
     // lazily inside the loop.
@@ -296,6 +380,12 @@ test.describe('Full-app screenshot grid', () => {
           });
         const settleMs = route.waitMs ?? ANIMATION_SETTLE_MS;
         await page.waitForTimeout(settleMs);
+        // Best-effort modal dismissal AFTER settle: the DemoBanner modal
+        // opens from a useEffect that runs only after /api/system/status
+        // resolves, which on the hosted demo VPS can land after our
+        // initial networkidle gate. Running this after settle gives the
+        // modal time to mount before we try to dismiss it.
+        await dismissDemoModalIfPresent(page);
         const buf = await page.screenshot({ path: outFile, fullPage: true });
         result.ok = true;
         result.fileBytes = buf.byteLength;
