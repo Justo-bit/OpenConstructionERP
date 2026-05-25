@@ -24,7 +24,7 @@ Professional BOQ, 4D/5D planning, AI-powered estimation, CAD/BIM takeoff — all
   <a href="https://github.com/datadrivenconstruction/OpenConstructionERP/releases/download/v2.0.0/oce_full_demo.mp4">▶ 1-minute teaser (your browser can't inline this — click for full 12-min walkthrough)</a>
 </video>
 
-<sub>🎬 <b>1-minute teaser above</b> · for the full 12-minute walkthrough → <a href="https://www.youtube.com/watch?v=X06cIaroAeI"><b>watch on YouTube</b></a> · onboarding → BoQ → BIM → DWG → PDF → AI → dashboard</sub>
+<sub><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/device-camera-video-dark.svg"><img src="docs/readme-icons/device-camera-video-light.svg" width="14" align="center" alt=""></picture> <b>1-minute teaser above</b> · for the full 12-minute walkthrough → <a href="https://www.youtube.com/watch?v=X06cIaroAeI"><b>watch on YouTube</b></a> · onboarding → BoQ → BIM → DWG → PDF → AI → dashboard</sub>
 
 *100% open source · 55,000+ cost items · AI estimation · 27 languages · 111 modules · Self-hosted*
 
@@ -137,7 +137,7 @@ Star OpenConstructionERP on GitHub and be instantly notified of new releases.
 
 ---
 
-## ✨ What's New in v4.6.0 — Floating chat + Accommodation + Geo overlay + 10 dashboard widgets
+## <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/sparkle-fill-dark.svg"><img src="docs/readme-icons/sparkle-fill-light.svg" width="14" align="center" alt=""></picture> What's New in v4.6.0 — Floating chat + Accommodation + Geo overlay + 10 dashboard widgets
 
 The **v4.6.0** wave adds a floating ERP-aware chat on every page, a new **Accommodation** module that unifies worker camps / rentals / hotels, **10 new dashboard widgets** with server-synced layout, **DWG/PDF raster overlay** in the Geo Hub globe, and **6 per-module guided tours**. **111 modules** ship in the box; the `/api/v1/*` surface remains the public contract.
 
@@ -145,10 +145,10 @@ The **v4.6.0** wave adds a floating ERP-aware chat on every page, a new **Accomm
 <tr>
 <td width="50%" valign="top">
 
-**💬 Floating chat — every page, talks to your ERP DB**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/comment-discussion-dark.svg"><img src="docs/readme-icons/comment-discussion-light.svg" width="14" align="center" alt=""></picture> Floating chat — every page, talks to your ERP DB**
 Bottom-right FAB on every screen opens a panel backed by 17 database tools (projects, BOQ, schedule, validation, risks, CWICR search, BIM elements, semantic search across all modules). Streamed responses with tool-call cards rendered inline.
 
-**🏨 Accommodation module — worker camps + rentals + hotels**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/home-dark.svg"><img src="docs/readme-icons/home-light.svg" width="14" align="center" alt=""></picture> Accommodation module — worker camps + rentals + hotels**
 - One module for three lodging kinds (`worker_camp` / `rental` / `hotel`) with kind-filter tabs and per-card capacity.
 - **Rooms** with status (available · occupied · maintenance · blocked) and BIM element id linkage.
 - **Bookings** state machine: `reserved → checked_in → checked_out` (or `cancelled` from any non-final state), 409 on bookings into maintenance/blocked rooms.
@@ -157,31 +157,31 @@ Bottom-right FAB on every screen opens a panel backed by 17 database tools (proj
 - **HR autobook** — suggest lowest-labelled available `worker_camp` room for an employee contact, human-confirmed.
 - BIM `bim_element_id` + Geo `lat/lon` integration; cards show a "Geo" deeplink when coords are set.
 
-**📊 10 new dashboard widgets + server-synced customizer**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/graph-dark.svg"><img src="docs/readme-icons/graph-light.svg" width="14" align="center" alt=""></picture> 10 new dashboard widgets + server-synced customizer**
 BOQ Summary · Critical Path · Top Risks · HSE Scorecard · Procurement Pipeline · Budget Variance · Change Orders · Clash Health · Validation Score · Weather Site. Layout persists server-side via `UserPreference` (no more device-local drift).
 
 </td>
 <td width="50%" valign="top">
 
-**🌍 Geo Hub raster overlay (DWG/PDF on the globe)**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> Geo Hub raster overlay (DWG/PDF on the globe)**
 - Upload a PDF or image, drag four corners onto the globe → raster appears as a draped overlay.
 - **Polygon crop** with vertex drag; degenerate-bbox guard + "Needs corners" CTA when pixel→geo math under-determines the placement.
 - Infinite-loop guard removed (component now stable under repeated re-mounts).
 
-**🎓 6 per-module guided tours**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/mortar-board-dark.svg"><img src="docs/readme-icons/mortar-board-light.svg" width="14" align="center" alt=""></picture> 6 per-module guided tours**
 BOQ · BIM · Geo · PropDev · Dashboard · Accommodation each ship a hand-written tour wired through `ModuleHelpButton tourId="…"`. 192 i18n strings translated EN/DE/RU at native quality.
 
-**🐛 Reliability fixes**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/bug-dark.svg"><img src="docs/readme-icons/bug-light.svg" width="14" align="center" alt=""></picture> Reliability fixes**
 - Dashboard widget endpoints: **12 4xx → 0** (URL paths were drifting from router prefixes).
 - Marketing-site SMTP: port 465 now correctly uses `SMTP_SSL` (port 587 stays STARTTLS).
 - Geo overlay: fix infinite re-render loop on initial open; degenerate bbox now shows actionable CTA instead of a blank globe.
 
-**🔒 Cumulative since v4.0.0**
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/lock-dark.svg"><img src="docs/readme-icons/lock-light.svg" width="14" align="center" alt=""></picture> Cumulative since v4.0.0**
 - v4.1–v4.3 Round 4 + Round 5 security: ~73 IDOR closures across 11 modules.
 - BIM Requirements (IDS/COBie), Coordination Hub, Smart Views, Clash AI Triage, BCF 3.0/OpenCDE.
 - PropDev complete Lead → SPA → Handover → Warranty clickflow + Geo Hub Cesium 3D Tiles.
 
-**📡 Latest alembic head**: `v3121` (Accommodation + Geo raster overlay) · single-head invariant maintained across every wave.
+**<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/broadcast-dark.svg"><img src="docs/readme-icons/broadcast-light.svg" width="14" align="center" alt=""></picture> Latest alembic head**: `v3121` (Accommodation + Geo raster overlay) · single-head invariant maintained across every wave.
 
 </td>
 </tr>
@@ -258,72 +258,72 @@ Each block below is a short GIF cut from the full walkthrough above — same ord
 <table>
 <tr>
 <td align="center" width="50%">
-<strong>👤 1 · Role-Based Onboarding</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/person-dark.svg"><img src="docs/readme-icons/person-light.svg" width="14" align="center" alt=""></picture> 1 · Role-Based Onboarding</strong><br/>
 <em>Sign in as Admin / Estimator / Manager — the wizard pre-selects the right 17 of 46 modules for your role</em><br/><br/>
 <img src="docs/gifs/07_Role_Based_Onboarding.gif" alt="Role-Based Onboarding" width="400" />
 </td>
 <td align="center" width="50%">
-<strong>🌍 2 · New Project, Any Region</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> 2 · New Project, Any Region</strong><br/>
 <em>Pick currency, classification standard, regional factor — live map & weather come along for free</em><br/><br/>
 <img src="docs/gifs/08_New_Project_Global.gif" alt="New Project Global" width="400" />
 </td>
 </tr>
 <tr>
 <td align="center">
-<strong>⚡ 3 · Build the Bill of Quantities</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/zap-dark.svg"><img src="docs/readme-icons/zap-light.svg" width="14" align="center" alt=""></picture> 3 · Build the Bill of Quantities</strong><br/>
 <em>Keyboard-first editor, 55K+ priced items, AI cost finder & Smart AI — quality score updates live</em><br/><br/>
 <img src="docs/gifs/15_BoQ_Editor.gif" alt="BoQ Editor" width="400" />
 </td>
 <td align="center">
-<strong>🏗️ 4 · BIM → BOQ Bulk Link</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/tools-dark.svg"><img src="docs/readme-icons/tools-light.svg" width="14" align="center" alt=""></picture> 4 · BIM → BOQ Bulk Link</strong><br/>
 <em>Link 100 Revit walls → one BOQ line with aggregated area / volume / length — no IfcOpenShell</em><br/><br/>
 <img src="docs/gifs/09_Bulk_Link_BIM_Group.gif" alt="Bulk Link BIM Group" width="400" />
 </td>
 </tr>
 <tr>
 <td align="center">
-<strong>📐 5 · DWG Drawings & Layers</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/workflow-dark.svg"><img src="docs/readme-icons/workflow-light.svg" width="14" align="center" alt=""></picture> 5 · DWG Drawings & Layers</strong><br/>
 <em>636 wall entities across 10 DWG layers — every one linkable to the BOQ, measured in place</em><br/><br/>
 <img src="docs/gifs/10_DWG_Layers.gif" alt="DWG Layers" width="400" />
 </td>
 <td align="center">
-<strong>🖊️ 6 · PDF Takeoff</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/pencil-dark.svg"><img src="docs/readme-icons/pencil-light.svg" width="14" align="center" alt=""></picture> 6 · PDF Takeoff</strong><br/>
 <em>Drop a floorplan, measure distance / area / count, push the numbers straight into the BOQ</em><br/><br/>
 <img src="docs/gifs/16_PDF_Takeoff_v2.gif" alt="PDF Takeoff" width="400" />
 </td>
 </tr>
 <tr>
 <td align="center">
-<strong>💵 7 · Complete Estimate — $6.26M</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/credit-card-dark.svg"><img src="docs/readme-icons/credit-card-light.svg" width="14" align="center" alt=""></picture> 7 · Complete Estimate — $6.26M</strong><br/>
 <em>Real Revit project → 215 positions, 88 sections, CWICR-priced, quality score 99</em><br/><br/>
 <img src="docs/gifs/11_Complete_Estimate_6M.gif" alt="Complete Estimate" width="400" />
 </td>
 <td align="center">
-<strong>✅ 8 · Every Module — BIM-Linked Tasks</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/check-circle-fill-dark.svg"><img src="docs/readme-icons/check-circle-fill-light.svg" width="14" align="center" alt=""></picture> 8 · Every Module — BIM-Linked Tasks</strong><br/>
 <em>Issues tied to exact model elements, tracked on a Kanban board alongside schedule, docs & requirements</em><br/><br/>
 <img src="docs/gifs/12_Tasks_Linked_To_BIM.gif" alt="Tasks Linked To BIM" width="400" />
 </td>
 </tr>
 <tr>
 <td align="center">
-<strong>📊 9 · Data Explorer — Pivot → BOQ</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/graph-dark.svg"><img src="docs/readme-icons/graph-light.svg" width="14" align="center" alt=""></picture> 9 · Data Explorer — Pivot → BOQ</strong><br/>
 <em>CAD-BIM Explorer pivot becomes 10 BOQ positions in one click — charts, data bars & drill-down included</em><br/><br/>
 <img src="docs/gifs/13_Data_Explorer_Pivot.gif" alt="Data Explorer Pivot" width="400" />
 </td>
 <td align="center">
-<strong>📸 10 · AI Estimate from a Photo</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/device-camera-dark.svg"><img src="docs/readme-icons/device-camera-light.svg" width="14" align="center" alt=""></picture> 10 · AI Estimate from a Photo</strong><br/>
 <em>Upload a construction photo → GPT-4o + YOLO return a scoped BOQ in seconds, confidence-scored</em><br/><br/>
 <img src="docs/gifs/02_AI_Photo_to_Estimate.gif" alt="AI Photo to Estimate" width="400" />
 </td>
 </tr>
 <tr>
 <td align="center">
-<strong>🗺️ 11 · Global Portfolio Dashboard</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> 11 · Global Portfolio Dashboard</strong><br/>
 <em>7 projects, 4 continents, $28.3M in active estimates — one workspace, one map</em><br/><br/>
 <img src="docs/gifs/14_Projects_Dashboard.gif" alt="Projects Dashboard" width="400" />
 </td>
 <td align="center">
-<strong>🔍 Bonus · Instant Search</strong><br/>
+<strong><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/search-dark.svg"><img src="docs/readme-icons/search-light.svg" width="14" align="center" alt=""></picture> Bonus · Instant Search</strong><br/>
 <em>Find any of 55K+ cost items across 11 regional databases by keyword, unit or classification</em><br/><br/>
 <img src="docs/gifs/05_Instant_Search.gif" alt="Instant Search" width="400" />
 </td>
@@ -334,7 +334,7 @@ Each block below is a short GIF cut from the full walkthrough above — same ord
 
 ## Key Features
 
-### 📊 Bill of Quantities (BOQ) Management
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/graph-dark.svg"><img src="docs/readme-icons/graph-light.svg" width="14" align="center" alt=""></picture> Bill of Quantities (BOQ) Management
 
 <img src="docs/screenshots/feature-boq.jpg" alt="BOQ Editor — Create, manage and analyze Bills of Quantities" width="800" />
 
@@ -364,7 +364,7 @@ Build professional cost estimates with a powerful BOQ editor. The full lifecycle
 - **Validation** — 42 built-in rules check for missing quantities, zero prices, duplicate items, and compliance with DIN 276, NRM, MasterFormat
 - **Export** — Download as Excel, CSV, PDF report, or GAEB XML (X83)
 
-### 🗄️ Cost Databases & Resource Catalog
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/database-dark.svg"><img src="docs/readme-icons/database-light.svg" width="14" align="center" alt=""></picture> Cost Databases & Resource Catalog
 
 <img src="docs/screenshots/feature-databases.jpg" alt="Cost Database — 55,000+ items across 11 regions" width="800" />
 
@@ -376,7 +376,7 @@ Access the world's construction pricing data:
 - **Regional pricing** — Automatic price adjustment based on project location. Compare rates across regions
 - **Import your data** — Upload your own cost database from Excel, CSV, or connect via API
 
-### 🏗️ CAD/BIM Takeoff & AI Estimation
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/tools-dark.svg"><img src="docs/readme-icons/tools-light.svg" width="14" align="center" alt=""></picture> CAD/BIM Takeoff & AI Estimation
 
 <img src="docs/screenshots/feature-takeoff-ai.jpg" alt="CAD/BIM Takeoff and AI-powered estimation" width="800" />
 
@@ -408,7 +408,7 @@ Extract quantities from any source — drawings, models, text, or photos:
 - **AI Cost Advisor** — Ask questions about pricing, materials, or estimation methodology. AI answers using your cost database as context
 - **Cost matching** — After AI generates an estimate, match each item against your CWICR database to replace AI-guessed rates with real market prices
 
-### 🌍 Geo Hub (3D Globe)
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> Geo Hub (3D Globe)
 
 Anchor every project on a real spherical earth — Cesium 3D Tiles 1.1 with live HUD and pin layers:
 
@@ -438,7 +438,7 @@ Anchor every project on a real spherical earth — Cesium 3D Tiles 1.1 with live
 
 *Example: open a Berlin masterplan in Geo Hub, switch to Development mode, see all 12 plots colored by sale status, click one → reservation pipeline opens with that buyer pre-filtered.*
 
-### 🏢 Property Development
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/organization-dark.svg"><img src="docs/readme-icons/organization-light.svg" width="14" align="center" alt=""></picture> Property Development
 
 End-to-end real-estate developer workflow — from first lead to handover snags to warranty close-out:
 
@@ -472,7 +472,7 @@ End-to-end real-estate developer workflow — from first lead to handover snags 
 
 *Example: import a 240-unit residential masterplan, generate price matrix from house-type × view, push to globe, accept 18 reservations across 3 brokers, convert 11 to SPA, hand over 4, track 7 open snags in the warranty period — all in one app.*
 
-### 🏨 Accommodation
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/home-dark.svg"><img src="docs/readme-icons/home-light.svg" width="14" align="center" alt=""></picture> Accommodation
 
 <img src="docs/screenshots/feature-accommodation.jpg" alt="Accommodation module — worker camps, rentals and hotels in one place" width="800" />
 
@@ -507,7 +507,7 @@ One module for three lodging kinds — worker camps for site crews, rentals for 
 
 *Example: 240-plot worker camp on a remote site — bootstrap from the PropDev block, HR autobooks 187 crew members from the Contacts directory over three weeks, base-rent charges roll up to the project P&L automatically.*
 
-### 💬 Floating Chat with the ERP Database
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/comment-discussion-dark.svg"><img src="docs/readme-icons/comment-discussion-light.svg" width="14" align="center" alt=""></picture> Floating Chat with the ERP Database
 
 Bottom-right floating chat on every page — talks to the entire ERP database through 17 typed tools (projects, BOQ items, schedule, validation, risks, CWICR search, BIM elements, full semantic search):
 
@@ -525,7 +525,7 @@ Bottom-right floating chat on every page — talks to the entire ERP database th
 - **Streamed responses** — Tool-call cards (risk register table, BOQ summary, etc.) render inline as the model produces them
 - **Provider-agnostic** — Anthropic / OpenAI / Gemini / Mistral / Groq / DeepSeek behind the same tool interface
 
-### 🤝 Coordination Hub & Clash AI
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/heart-dark.svg"><img src="docs/readme-icons/heart-light.svg" width="14" align="center" alt=""></picture> Coordination Hub & Clash AI
 
 Multi-disciplinary BIM coordination with AI-assisted issue triage:
 
@@ -554,7 +554,7 @@ Multi-disciplinary BIM coordination with AI-assisted issue triage:
 - **BCF 3.0 / OpenCDE export** — Round-trip with Solibri, Navisworks, BIMcollab via the open BIM standard
 - **BIM Requirements** — IDS (Information Delivery Specification) and COBie import / export for owner-side data drops
 
-### 📅 4D Scheduling & 5D Cost Model
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/calendar-dark.svg"><img src="docs/readme-icons/calendar-light.svg" width="14" align="center" alt=""></picture> 4D Scheduling & 5D Cost Model
 
 Plan your project timeline and track costs over time:
 
@@ -564,7 +564,7 @@ Plan your project timeline and track costs over time:
 - **Budget tracking** — Set baselines, compare snapshots, run what-if scenarios
 - **Monte Carlo simulation** — Risk-adjusted schedule analysis with probability distributions
 
-### 📋 Tendering, Risk & Reporting
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/paste-dark.svg"><img src="docs/readme-icons/paste-light.svg" width="14" align="center" alt=""></picture> Tendering, Risk & Reporting
 
 Complete your estimation workflow:
 
@@ -590,7 +590,7 @@ Complete your estimation workflow:
 - **Reports** — Generate professional PDF reports, Excel exports, GAEB XML. 12 built-in templates
 - **Documents** — Centralized file management with version tracking and drag-and-drop upload
 
-### 📝 Requirements & Quality Gates
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/note-dark.svg"><img src="docs/readme-icons/note-light.svg" width="14" align="center" alt=""></picture> Requirements & Quality Gates
 
 Track and validate construction requirements with the EAC (Entity-Attribute-Constraint) system:
 
@@ -600,7 +600,7 @@ Track and validate construction requirements with the EAC (Entity-Attribute-Cons
 - **Bulk Import** — Import requirements from structured text (pipe-delimited format)
 - **Categories** — Structural, fire safety, thermal, acoustic, waterproofing, electrical, mechanical, architectural
 
-### ✏️ PDF Markups & Annotations
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/pencil-dark.svg"><img src="docs/readme-icons/pencil-light.svg" width="14" align="center" alt=""></picture> PDF Markups & Annotations
 
 Annotate construction drawings and documents directly in the browser:
 
@@ -610,7 +610,7 @@ Annotate construction drawings and documents directly in the browser:
 - **Markups List** — Table view of all annotations with filters, search, and CSV export
 - **BOQ Integration** — Link measurements directly to BOQ positions (quantity = measured value)
 
-### ✅ Punch List
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/check-circle-fill-dark.svg"><img src="docs/readme-icons/check-circle-fill-light.svg" width="14" align="center" alt=""></picture> Punch List
 
 Track construction deficiencies from discovery to resolution:
 
@@ -622,7 +622,7 @@ Track construction deficiencies from discovery to resolution:
 - **PDF Export** — Generate punch list reports for stakeholder review
 - **Verification control** — Different user must verify (not the resolver)
 
-### 📓 Daily Diary & HSE
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/book-dark.svg"><img src="docs/readme-icons/book-light.svg" width="14" align="center" alt=""></picture> Daily Diary & HSE
 
 Field-level reporting and safety tracking that holds up in court:
 
@@ -632,7 +632,7 @@ Field-level reporting and safety tracking that holds up in court:
 - **Photo capture with EXIF / GPS** — Field photos preserve location and timestamp metadata; magic-byte upload validation for defence-in-depth
 - **Geo-anchored pins** — Daily Diary and HSE pins surface on the Geo Hub globe layer for portfolio-level safety dashboards
 
-### 🌍 30+ Regional Standards
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/globe-dark.svg"><img src="docs/readme-icons/globe-light.svg" width="14" align="center" alt=""></picture> 30+ Regional Standards
 
 | Standard | Region | Format |
 |----------|--------|--------|
@@ -657,7 +657,7 @@ Field-level reporting and safety tracking that holds up in court:
 | FIDIC | UAE / GCC | Excel, CSV |
 | PBC / Base de Precios | Spain | Excel, CSV |
 
-### 🛡️ Validation & Compliance Engine
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/shield-dark.svg"><img src="docs/readme-icons/shield-light.svg" width="14" align="center" alt=""></picture> Validation & Compliance Engine
 
 Ensure your estimates meet regulatory standards before submission:
 
@@ -667,7 +667,7 @@ Ensure your estimates meet regulatory standards before submission:
 - **Drill-down** — Click any finding to jump directly to the affected BOQ position and fix it
 - **Custom rules** — Define project-specific validation rules via the rule builder or Python scripting
 
-### 🚀 Guided Onboarding
+### <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/rocket-dark.svg"><img src="docs/readme-icons/rocket-light.svg" width="14" align="center" alt=""></picture> Guided Onboarding
 
 Get productive in under 10 minutes:
 
@@ -682,7 +682,7 @@ Get productive in under 10 minutes:
 
 ## Quick Start
 
-> 👀 **Prefer to see it first?** [▶ Watch the 12-minute walkthrough on YouTube](https://www.youtube.com/watch?v=X06cIaroAeI) — onboarding → BoQ → BIM → DWG → PDF → AI → dashboard.
+> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/eye-dark.svg"><img src="docs/readme-icons/eye-light.svg" width="14" align="center" alt=""></picture> **Prefer to see it first?** [▶ Watch the 12-minute walkthrough on YouTube](https://www.youtube.com/watch?v=X06cIaroAeI) — onboarding → BoQ → BIM → DWG → PDF → AI → dashboard.
 
 > **Requires Python 3.12+** (any path below). Check with `python --version`.
 
@@ -811,7 +811,7 @@ OpenConstructionERP is built around **seven cooperating pipelines** that turn cl
 6. **Project-specific data (4D/5D/6D)** — derive scheduling, cost, hours, ordering and environmental footprint per group. Handled by `scheduling`, `advanced_schedule`, `5d_planner`, `risk`, `carbon`, `hse`.
 7. **Saving data & Machine Learning** — persist project history into the database, data lake and ML models so each new project starts further ahead. Handled by `analytics`, `bi_dashboards`, `ai_chat`, `cost_intelligence`, and the rule-learning loop in `clash` (Wave A4) and `match-elements`.
 
-The right-hand side of the diagram is the **automatic data retrieval** layer that every UI surface (Dashboard, BOQ editor, /clash, /match-elements, /files, /scheduling) consumes: dashboards, calculations, reports, tables, charts, geometries, and ERP-ready exports — all driven from the same canonical store. The Machine-Learning column on the far right is where the platform progressively automates classification, parameterisation, recognition and marking, replacing manual steps (🔧) with automatic steps (⚡) over time.
+The right-hand side of the diagram is the **automatic data retrieval** layer that every UI surface (Dashboard, BOQ editor, /clash, /match-elements, /files, /scheduling) consumes: dashboards, calculations, reports, tables, charts, geometries, and ERP-ready exports — all driven from the same canonical store. The Machine-Learning column on the far right is where the platform progressively automates classification, parameterisation, recognition and marking, replacing manual steps (<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/tools-dark.svg"><img src="docs/readme-icons/tools-light.svg" width="14" align="center" alt=""></picture>) with automatic steps (<picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/zap-dark.svg"><img src="docs/readme-icons/zap-light.svg" width="14" align="center" alt=""></picture>) over time.
 
 This pipeline is the reason OpenConstructionERP can replace several commercial point-solutions with a single self-hosted stack — every module reads from and writes to the same canonical data layer.
 
@@ -898,9 +898,9 @@ flowchart TB
 OpenConstructionERP is built and maintained by the community. If you find it useful:
 
 - ⭐ **[Star this repo](https://github.com/datadrivenconstruction/OpenConstructionERP)** — helps others discover the project
-- 💬 **[Join Discussions](https://t.me/datadrivenconstruction)** — ask questions, share ideas, help others
-- 🐛 **[Report issues](https://github.com/datadrivenconstruction/OpenConstructionERP/issues)** — help us improve
-- 💼 **[Professional consulting](https://datadrivenconstruction.io/contact-support/)** — custom deployment, training, enterprise support
+- <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/comment-discussion-dark.svg"><img src="docs/readme-icons/comment-discussion-light.svg" width="14" align="center" alt=""></picture> **[Join Discussions](https://t.me/datadrivenconstruction)** — ask questions, share ideas, help others
+- <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/bug-dark.svg"><img src="docs/readme-icons/bug-light.svg" width="14" align="center" alt=""></picture> **[Report issues](https://github.com/datadrivenconstruction/OpenConstructionERP/issues)** — help us improve
+- <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/briefcase-dark.svg"><img src="docs/readme-icons/briefcase-light.svg" width="14" align="center" alt=""></picture> **[Professional consulting](https://datadrivenconstruction.io/contact-support/)** — custom deployment, training, enterprise support
 
 ## Security
 
@@ -993,5 +993,5 @@ For **commercial licensing** without AGPL obligations, see
   <br>
    <b>   Unlock the Power of Data in Construction</b>
    <br>
-     🚀 Move to full-cycle data management  where only unified <br /> structured data & processes remain and where  🔓 your data is yours
+     <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/rocket-dark.svg"><img src="docs/readme-icons/rocket-light.svg" width="14" align="center" alt=""></picture> Move to full-cycle data management  where only unified <br /> structured data & processes remain and where  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/unlock-dark.svg"><img src="docs/readme-icons/unlock-light.svg" width="14" align="center" alt=""></picture> your data is yours
 </p>
