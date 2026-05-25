@@ -201,21 +201,46 @@ function getTypeKey(el: BIMElementData, _format: BIMModelFormat): string {
  * Source preference order:
  *   1. `properties.type_name` (promoted alias from upload pipeline)
  *   2. `properties.family` (promoted alias from upload pipeline)
- *   3. `el.name` (always populated by the parquet ingestion path)
+ *   3. `el.name` *if* it carries real Family/Type information
  *   4. `properties["Family"]` / `properties["family and type"]` / `properties["Type"]`
  *   5. fallback to "Unspecified"
- */
+ *
+ * The showcase seed and the converted-DAE fast path both populate
+ * `el.name` with a generic sequential placeholder like `"Walls 1"`,
+ * `"Walls 2"`, ... when no real Revit Family/Type can be resolved from
+ * the source file. Returning that verbatim would explode the
+ * Category → Type Name hierarchy: a model with 64 walls would render 64
+ * unique single-element TypeName rows under the Walls category instead
+ * of collapsing into the 2–3 actual family/types. Detect that pattern
+ * (`<element_type>\s+\d+`) and treat it as no-real-name so the row falls
+ * through to the "Unspecified" bucket like other unlabeled elements. */
+const GENERIC_NAME_RE = /^(?:[A-Za-z][\w&/+\- ]*?)\s+\d+$/;
+
+function isGenericPlaceholderName(name: string, elementType: string | null | undefined): boolean {
+  if (!GENERIC_NAME_RE.test(name)) return false;
+  // Strip the trailing digits and compare to element_type — a
+  // placeholder is specifically a repeat of the category + index, not a
+  // legitimate type like "L Mullion 1" or "Roof 2:3.5m parapet".
+  const prefix = name.replace(/\s+\d+$/, '').trim();
+  return !!elementType && prefix.toLowerCase() === elementType.toLowerCase();
+}
+
 function getTypeNameKey(el: BIMElementData): string {
   const props = (el.properties || {}) as Record<string, unknown>;
-  // Prefer explicit type_name from the promoted alias, then fall back
-  // to family, then el.name, then generic property lookup.
   const typeName =
     typeof props.type_name === 'string' && props.type_name ? props.type_name : null;
   const family = typeof props.family === 'string' && props.family ? props.family : null;
 
   if (typeName) return typeName;
   if (family) return family;
-  if (el.name && el.name !== 'None' && el.name !== '') return el.name;
+  if (
+    el.name &&
+    el.name !== 'None' &&
+    el.name !== '' &&
+    !isGenericPlaceholderName(el.name, el.element_type)
+  ) {
+    return el.name;
+  }
 
   const cand =
     props['Family'] ?? props['family and type'] ?? props['Type'] ?? props['type'];

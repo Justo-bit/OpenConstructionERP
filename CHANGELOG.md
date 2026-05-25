@@ -5,6 +5,24 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.2] - 2026-05-25
+
+Same-day patch on top of v4.9.1 — BIM Category→TypeName tree no longer explodes
+on showcase / fast-path-converted models with sequential placeholder names.
+
+### Fixed
+- `BIMFilterPanel.getTypeNameKey` now detects the `<element_type> <integer>`
+  placeholder pattern (`"Walls 1"`, `"Walls 2"`, ..., `"Walls 64"`) that the
+  showcase seed and the converted-DAE fast path emit when no real Revit
+  Family/Type can be resolved. Previously those names flowed through to the
+  Category → Type Name hierarchy verbatim — a model with 64 walls rendered
+  64 single-element TypeName rows under the Walls category instead of
+  collapsing into a few real family/types. The placeholder pattern is now
+  treated as no-real-name and routes through to the "Unspecified" bucket like
+  any other unlabeled element. Verified on the showcase model
+  `c8acb9a5-3fff-5719-a2b0-fe7d62a8a21f` (380 elements across 15 Revit
+  categories): zero `"Walls N"` rows left in the tree.
+
 ## [4.9.1] - 2026-05-25
 
 Same-day patch on top of v4.9.0 — four follow-up fixes after VPS deploy verification.
