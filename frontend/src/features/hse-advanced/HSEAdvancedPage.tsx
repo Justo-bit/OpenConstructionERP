@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ShieldAlert,
@@ -207,6 +207,8 @@ export function HSEAdvancedPage() {
         })}
       </SectionIntro>
 
+      {projectId && <HSEKpiStrip projectId={projectId} />}
+
       <RequiresProject
         emptyHint={t('hse_advanced.no_project_desc', {
           defaultValue:
@@ -407,6 +409,212 @@ function Osha300Download({ projectId }: { projectId: string }) {
           defaultValue: 'Download OSHA 300 (CSV)',
         })}
       </Button>
+    </div>
+  );
+}
+
+/* ── HSE KPI Strip ────────────────────────────────────────────────────── */
+
+/**
+ * Top-of-page KPI strip — four mini-cards giving HSE managers instant
+ * site-health context before they pick a tab. All counts come from the
+ * existing module endpoints; no new backend needed. ``useQueries``
+ * deliberately runs the fetches in parallel — hook-rule-safe per the
+ * v4.5.0 propdev decision (memory: useQueries for hook safety).
+ *
+ *  - Open Investigations: status != completed/abandoned
+ *  - Overdue CAPAs:       due_date < today AND not closed
+ *  - Active Permits:      status === 'active'
+ *  - Days Since LTI:      proxy = today - latest investigation incident_date
+ *                         (no LTI flag exists yet on investigations; we
+ *                         approximate via "last severe/major/critical
+ *                         incident" which is what RIDDOR / OSHA flag).
+ *
+ * Severity-tinted backgrounds drive at-a-glance reading:
+ *  - red       when overdue CAPAs > 0 or days-since-LTI < 7
+ *  - amber     when days-since-LTI < 30
+ *  - emerald   when ≥ 30 days
+ *  - neutral   when no data
+ */
+function HSEKpiStrip({ projectId }: { projectId: string }) {
+  const { t } = useTranslation();
+  const results = useQueries({
+    queries: [
+      {
+        queryKey: ['hse-kpi-investigations', projectId],
+        queryFn: () => fetchInvestigations(projectId),
+        select: (d: unknown) => normalizeListResponse<IncidentInvestigation>(d),
+        staleTime: 30_000,
+      },
+      {
+        queryKey: ['hse-kpi-capas', projectId],
+        queryFn: () => fetchCAPAs(projectId),
+        select: (d: unknown) => normalizeListResponse<CorrectiveAction>(d),
+        staleTime: 30_000,
+      },
+      {
+        queryKey: ['hse-kpi-permits', projectId],
+        queryFn: () => fetchPermits(projectId),
+        select: (d: unknown) => normalizeListResponse<PermitToWork>(d),
+        staleTime: 30_000,
+      },
+    ],
+  });
+
+  const [invQ, capaQ, permQ] = results;
+  const isLoading = results.some((r) => r.isLoading);
+  const isError = results.some((r) => r.isError);
+
+  const stats = useMemo(() => {
+    const investigations = (invQ.data ?? []) as IncidentInvestigation[];
+    const capas = (capaQ.data ?? []) as CorrectiveAction[];
+    const permits = (permQ.data ?? []) as PermitToWork[];
+
+    const openInvestigations = investigations.filter(
+      (it) => it.status !== 'completed' && it.status !== 'cancelled',
+    ).length;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const overdueCapas = capas.filter((c) => {
+      if (c.status === 'closed' || c.status === 'verified' || c.status === 'completed') {
+        return false;
+      }
+      if (!c.due_date) return false;
+      const due = new Date(c.due_date);
+      if (Number.isNaN(due.getTime())) return false;
+      due.setHours(0, 0, 0, 0);
+      return due.getTime() < today.getTime();
+    }).length;
+
+    const activePermits = permits.filter((p) => p.status === 'active').length;
+
+    // Days-since-LTI proxy: most-recent severe/major/critical incident
+    // among the formal investigations. The investigation record is what
+    // RIDDOR / OSHA actually cares about (not the lightweight Safety log).
+    let mostRecentSevere: Date | null = null;
+    for (const inv of investigations) {
+      if (
+        inv.severity !== 'major' &&
+        inv.severity !== 'severe' &&
+        inv.severity !== 'critical'
+      ) {
+        continue;
+      }
+      if (!inv.incident_date) continue;
+      const d = new Date(inv.incident_date);
+      if (Number.isNaN(d.getTime())) continue;
+      if (mostRecentSevere === null || d > mostRecentSevere) {
+        mostRecentSevere = d;
+      }
+    }
+    const daysSinceLti: number | null =
+      mostRecentSevere === null
+        ? null
+        : Math.max(0, Math.floor((today.getTime() - mostRecentSevere.getTime()) / 86_400_000));
+
+    return { openInvestigations, overdueCapas, activePermits, daysSinceLti };
+  }, [invQ.data, capaQ.data, permQ.data]);
+
+  if (isError) {
+    // Don't block the page on KPI failure — just hide the strip silently
+    // and let the user fall back to the tabs.
+    return null;
+  }
+
+  const ltiTone: KpiTone =
+    stats.daysSinceLti === null
+      ? 'neutral'
+      : stats.daysSinceLti < 7
+        ? 'error'
+        : stats.daysSinceLti < 30
+          ? 'warning'
+          : 'success';
+
+  const capaTone: KpiTone = stats.overdueCapas === 0 ? 'success' : 'error';
+
+  return (
+    <div
+      className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"
+      data-testid="hse-kpi-strip"
+      aria-label={t('hse_advanced.kpi_aria', { defaultValue: 'HSE key indicators' })}
+    >
+      <KpiCard
+        label={t('hse_advanced.kpi_open_investigations', {
+          defaultValue: 'Open investigations',
+        })}
+        value={isLoading ? '—' : stats.openInvestigations}
+        icon={<ShieldAlert size={16} />}
+        tone={stats.openInvestigations > 0 ? 'warning' : 'neutral'}
+        testId="hse-kpi-open-investigations"
+      />
+      <KpiCard
+        label={t('hse_advanced.kpi_overdue_capas', { defaultValue: 'Overdue CAPAs' })}
+        value={isLoading ? '—' : stats.overdueCapas}
+        icon={<Wrench size={16} />}
+        tone={capaTone}
+        testId="hse-kpi-overdue-capas"
+      />
+      <KpiCard
+        label={t('hse_advanced.kpi_active_permits', { defaultValue: 'Active permits' })}
+        value={isLoading ? '—' : stats.activePermits}
+        icon={<FileCheck size={16} />}
+        tone={stats.activePermits > 0 ? 'blue' : 'neutral'}
+        testId="hse-kpi-active-permits"
+      />
+      <KpiCard
+        label={t('hse_advanced.kpi_days_since_lti', {
+          defaultValue: 'Days since LTI',
+        })}
+        value={
+          isLoading
+            ? '—'
+            : stats.daysSinceLti === null
+              ? t('hse_advanced.kpi_no_lti', { defaultValue: 'No record' })
+              : stats.daysSinceLti
+        }
+        icon={<Clock size={16} />}
+        tone={ltiTone}
+        testId="hse-kpi-days-since-lti"
+      />
+    </div>
+  );
+}
+
+type KpiTone = 'success' | 'warning' | 'error' | 'blue' | 'neutral';
+
+function KpiCard({
+  label,
+  value,
+  icon,
+  tone,
+  testId,
+}: {
+  label: string;
+  value: number | string;
+  icon: React.ReactNode;
+  tone: KpiTone;
+  testId: string;
+}) {
+  // Soft tints — match the project's badge palette so the cards never
+  // overpower the table data they sit above.
+  const toneCls: Record<KpiTone, string> = {
+    success: 'border-semantic-success/30 bg-semantic-success/5 text-semantic-success',
+    warning: 'border-amber-500/30 bg-amber-50 text-amber-700',
+    error: 'border-semantic-error/30 bg-semantic-error/5 text-semantic-error',
+    blue: 'border-oe-blue/30 bg-oe-blue-subtle text-oe-blue',
+    neutral: 'border-border bg-surface-secondary text-content-tertiary',
+  };
+  return (
+    <div
+      className={`rounded-xl border px-4 py-3 transition-colors ${toneCls[tone]}`}
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium opacity-80">{label}</span>
+        <span className="opacity-70">{icon}</span>
+      </div>
+      <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
     </div>
   );
 }
@@ -1422,6 +1630,8 @@ function PermitDetailDrawer({ item, onClose }: { item: PermitToWork; onClose: ()
         </div>
       </div>
 
+      <PermitPrereqChecklist item={item} />
+
       <div>
         <div className="text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-1">
           {t('hse_advanced.signatures', { defaultValue: 'Signatures' })}
@@ -1475,6 +1685,99 @@ function PermitDetailDrawer({ item, onClose }: { item: PermitToWork; onClose: ()
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+/**
+ * Pre-activation safety prerequisites for a Permit-to-Work.
+ *
+ * The backend stores 5 booleans (jsa_approved, supervisor_present,
+ * fire_watch_assigned, extinguisher_present, atmospheric_test_passed)
+ * that gate the requested → active FSM transition. The legacy UI
+ * showed only the post-issue signatures, leaving the actual permit-issue
+ * gate invisible to the supervisor reading the record.
+ *
+ * We render the list read-only here (mutating a checklist live would
+ * change the audit trail underneath an active permit). When the permit
+ * isn't yet active the section is still shown so reviewers can see what
+ * still needs to be ticked off; once active or closed it doubles as the
+ * historical "everything was checked" record.
+ */
+function PermitPrereqChecklist({ item }: { item: PermitToWork }) {
+  const { t } = useTranslation();
+  const items: { key: string; label: string; checked: boolean }[] = [
+    {
+      key: 'jsa',
+      label: t('hse_advanced.prereq_jsa', { defaultValue: 'JSA approved' }),
+      checked: item.prereq_jsa_approved === true,
+    },
+    {
+      key: 'supervisor',
+      label: t('hse_advanced.prereq_supervisor', {
+        defaultValue: 'Supervisor present',
+      }),
+      checked: item.prereq_supervisor_present === true,
+    },
+    {
+      key: 'fire_watch',
+      label: t('hse_advanced.prereq_fire_watch', {
+        defaultValue: 'Fire watch assigned',
+      }),
+      checked: item.prereq_fire_watch_assigned === true,
+    },
+    {
+      key: 'extinguisher',
+      label: t('hse_advanced.prereq_extinguisher', {
+        defaultValue: 'Extinguisher on hand',
+      }),
+      checked: item.prereq_extinguisher_present === true,
+    },
+    {
+      key: 'atmospheric',
+      label: t('hse_advanced.prereq_atmospheric', {
+        defaultValue: 'Atmospheric test passed',
+      }),
+      checked: item.prereq_atmospheric_test_passed === true,
+    },
+  ];
+  const passed = items.filter((i) => i.checked).length;
+  return (
+    <div data-testid="permit-prereq-checklist">
+      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-content-tertiary mb-1">
+        <span>
+          {t('hse_advanced.prereq_title', {
+            defaultValue: 'Pre-activation checks',
+          })}
+        </span>
+        <span className="text-content-tertiary tabular-nums">
+          {passed}/{items.length}
+        </span>
+      </div>
+      <ul className="text-sm space-y-1">
+        {items.map((row) => (
+          <li
+            key={row.key}
+            className="flex items-center gap-2"
+            data-testid={`permit-prereq-${row.key}`}
+          >
+            <CheckCircle2
+              size={14}
+              className={
+                row.checked ? 'text-semantic-success' : 'text-content-tertiary opacity-40'
+              }
+              aria-hidden
+            />
+            <span
+              className={
+                row.checked ? 'text-content-secondary' : 'text-content-tertiary line-through'
+              }
+            >
+              {row.label}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
