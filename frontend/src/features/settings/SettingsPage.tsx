@@ -46,6 +46,7 @@ import { useThemeStore } from '@/stores/useThemeStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useViewModeStore } from '@/stores/useViewModeStore';
 import { aiApi, type AIProvider, type AIConnectionStatus, type AISettings } from '@/features/ai/api';
+import { BIMConverterStatusBanner } from '@/features/bim/BIMConverterStatusBanner';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -1618,7 +1619,16 @@ function ConverterStatusPanel() {
   });
 
   return (
-    <Card>
+    <div className="space-y-4">
+      {/* Live health banner — same component used on /bim. Surfaces smoke
+       *  tests (verify=true), one-click install / update / re-check actions
+       *  with live progress, and a top-level "{{ok}}/{{total}} working"
+       *  pill. This is what the user wanted parity with: "проверки версий
+       *  и показа какие версии используются в платформе - похожи на ту что
+       *  есть в БИМ разделе". */}
+      <BIMConverterStatusBanner />
+
+      <Card>
       <CardHeader
         title={t('settings.converters_title', { defaultValue: 'Converters' })}
         subtitle={t('settings.converters_subtitle', {
@@ -1826,5 +1836,6 @@ function ConverterStatusPanel() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }
