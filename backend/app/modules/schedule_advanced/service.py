@@ -189,6 +189,11 @@ def compute_baseline_delta(
                 "planned_finish_baseline": b_finish,
                 "planned_finish_current": c_finish,
                 "schedule_variance_days": variance,
+                # Carry-through display name from snapshot (or current row
+                # as fallback) so the UI doesn't render bare UUIDs. The
+                # whole field is optional in the response schema, so this
+                # is purely additive.
+                "name": (b.get("name") or (cur.get("name") if cur else None)),
             }
         )
     return out
