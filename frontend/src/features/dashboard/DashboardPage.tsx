@@ -675,7 +675,14 @@ function KpiRibbon({
 
   const totalValue = useMemo(() => {
     if (!boqs || boqs.length === 0) return 0;
-    return boqs.reduce((sum, b) => sum + (b.grand_total ?? 0), 0);
+    // Backend serialises money as a Decimal-string ("1234.56") per the
+    // project-wide contract. Coerce every leg before summing so a stray
+    // string doesn't trigger JS string concatenation ("01234.565678") +
+    // a downstream `.toFixed is not a function` crash in formatMoney.
+    return boqs.reduce((sum, b) => {
+      const n = Number(b.grand_total);
+      return sum + (Number.isFinite(n) ? n : 0);
+    }, 0);
   }, [boqs]);
 
   const activeEstimates = useMemo(() => {
@@ -709,7 +716,11 @@ function KpiRibbon({
   // 4217 code natively (BRL, INR, JPY, etc.). For values \u2265 1M we use the
   // built-in compact notation; below that, two decimals. Previously this
   // had an ad-hoc switch covering only EUR/GBP/USD/AED.
-  const formatMoney = (value: number) => {
+  const formatMoney = (raw: number | string | null | undefined) => {
+    // Harden against backend Decimal-strings sneaking past TypeScript: any
+    // string that can't be parsed degrades to 0 rather than crashing.
+    const value = typeof raw === 'number' ? raw : Number(raw ?? 0);
+    if (!Number.isFinite(value)) return `0 ${currency}`;
     try {
       const compact = value >= 1_000;
       return new Intl.NumberFormat(getIntlLocale(), {
@@ -853,11 +864,12 @@ function PortfolioOverview({ projects: _projects }: { projects: ProjectSummary[]
   if (!analytics) return null;
 
   const hasWarnings = analytics.over_budget_count > 0;
-  const totalBudgetFormatted = analytics.total_planned >= 1_000_000
-    ? `${(analytics.total_planned / 1_000_000).toFixed(1)}M`
-    : analytics.total_planned >= 1_000
-      ? `${(analytics.total_planned / 1_000).toFixed(0)}K`
-      : analytics.total_planned.toLocaleString();
+  const totalPlannedNum = Number(analytics.total_planned ?? 0);
+  const totalBudgetFormatted = totalPlannedNum >= 1_000_000
+    ? `${(totalPlannedNum / 1_000_000).toFixed(1)}M`
+    : totalPlannedNum >= 1_000
+      ? `${(totalPlannedNum / 1_000).toFixed(0)}K`
+      : totalPlannedNum.toLocaleString();
 
   const overBudgetProjects = (analytics.projects || []).filter(
     (p) => p.status === 'over_budget',
