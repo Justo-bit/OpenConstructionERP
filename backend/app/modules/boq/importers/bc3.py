@@ -293,6 +293,9 @@ class BC3Importer:
             elif hdr == _HDR_MEASUREMENT:
                 # ``~M|PARENT\CHILD|POSITIONS|TOTAL_QTY|COMMENT|``
                 # ``PARENT\CHILD`` lives in the first field, backslash-split.
+                # ``POSITIONS`` (count of measurement entries) is field[1],
+                # ``TOTAL_QTY`` is field[2]. We prefer field[2] when present
+                # to avoid misreading the POSITIONS counter as the qty.
                 if not fields:
                     continue
                 parent_child = fields[0].split("\\")
@@ -301,14 +304,21 @@ class BC3Importer:
                 child = parent_child[1].strip()
                 if not child:
                     continue
-                # Total measured qty is in fields[2] typically — the
-                # second non-empty numeric field.
+                # FIEBDC-3 spec: TOTAL_QTY is field[2]. Some exporters
+                # (especially partial / pre-computed measurements) skip
+                # the POSITIONS counter and ship only the qty; we then
+                # fall back to the first positive numeric field.
                 qty = 0.0
-                for f in fields[1:]:
-                    parsed = safe_float(f, default=float("nan"))
-                    if parsed == parsed and parsed > 0:  # not NaN, positive
+                if len(fields) >= 3:
+                    parsed = safe_float(fields[2], default=float("nan"))
+                    if parsed == parsed and parsed > 0:
                         qty = parsed
-                        break
+                if qty == 0.0:
+                    for f in fields[1:]:
+                        parsed = safe_float(f, default=float("nan"))
+                        if parsed == parsed and parsed > 0:
+                            qty = parsed
+                            break
                 # Attach to the concept (overrides any previous measurement
                 # — last writer wins, matching FIEBDC reference behaviour).
                 if child in concepts:

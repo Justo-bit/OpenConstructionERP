@@ -61,7 +61,11 @@ _COLUMN_ALIASES: dict[str, frozenset[str]] = {
             "item",
             "item no",
             "ref",
-            "code",
+            # Note: ``"code"`` lives in the ``"classification"`` alias
+            # set, not here. Spreadsheets that name their classification
+            # column "Code" (NRM / MasterFormat exports) need that header
+            # to map to ``classification`` so the I9 / I10 heuristics can
+            # infer ``nrm`` / ``masterformat``.
         }
     ),
     "description": frozenset(
