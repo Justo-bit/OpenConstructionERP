@@ -80,11 +80,19 @@ jobs:
           python -m build --wheel --outdir ../dist/
 
       - name: Sanity check wheel
+        shell: bash
         run: |
           ls -lh dist/
-          python -c "import zipfile, sys; z=zipfile.ZipFile([f for f in __import__('os').listdir('dist') if f.endswith('.whl')][0]); files=z.namelist(); has_dist = any('_frontend_dist' in f for f in files); assert has_dist, 'wheel missing _frontend_dist payload'; print(f'wheel OK ({len(files)} files, _frontend_dist present)')"
-          working-directory: ${{ github.workspace }}
-        shell: bash
+          python - <<'PY'
+          import os, zipfile
+          whl = next(f for f in os.listdir('dist') if f.endswith('.whl'))
+          path = os.path.join('dist', whl)
+          with zipfile.ZipFile(path) as z:
+              files = z.namelist()
+          has_dist = any('_frontend_dist' in f for f in files)
+          assert has_dist, f'wheel {whl} missing _frontend_dist payload'
+          print(f'wheel OK: {whl} — {len(files)} files, _frontend_dist present')
+          PY
 
       - name: Publish to PyPI (Trusted Publishing — no token)
         uses: pypa/gh-action-pypi-publish@release/v1
