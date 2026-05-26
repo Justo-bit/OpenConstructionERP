@@ -334,5 +334,8 @@ def register_core_permissions() -> None:
             # accident, and "audit.delete" was completely unreachable.
             "audit.view": Role.MANAGER,
             "audit.delete": Role.ADMIN,
+            # Epic H §H9 — GDPR right-to-erasure on activity-log rows.
+            # ADMIN-only by design: a redact mutates compliance records.
+            "audit.redact": Role.ADMIN,
         },
     )
