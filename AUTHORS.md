@@ -20,6 +20,13 @@ OpenConstructionERP is built together with the community.
   COLLADA namespace-prefix serialisation in `ifc_processor`, defence-in-depth
   regex tolerance in `ElementManager`, and `degraded` model status surfacing
   in the viewer UI.
+- **rjohny** ([@rjohny55](https://github.com/rjohny55)) — multi-area patch set
+  ([#161](https://github.com/datadrivenconstruction/OpenConstructionERP/pull/161)):
+  defensive guards for the slow-query SQLAlchemy listener and module-presence
+  probe under concurrency, FieldReport activity-rollup column fix, Qdrant
+  multipart snapshot upload (so app-container snapshots reach a separate
+  Qdrant container), and three new AI providers — Kimi (Moonshot AI),
+  Ollama, vLLM — with custom base URL support for the two local backends.
 
 See the full list of everyone who has contributed:
 
