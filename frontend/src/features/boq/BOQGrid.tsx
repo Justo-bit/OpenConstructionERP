@@ -1113,6 +1113,17 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
    * stay frozen at the previous currency. That was the regression
    * reported on multi-currency BOQs (Spanish video, nested HIJO_*
    * sections showing 0.00 in ARS while the grand total updated).
+   *
+   * Bug #220 follow-up: the same caching trap fires when a resource's
+   * currency is edited inline. The `rowData` memo recomputes the new
+   * `_subtotal` (via `resourceAwareTotalInBase`), but AG Grid keeps the
+   * previously-rendered section banner mounted — its React instance
+   * isn't told to re-read `data._subtotal` until the section row is
+   * collapsed/re-expanded. The section subtotal therefore stays stale
+   * (in the old currency / wrong base value) after an inline currency
+   * swap. A second effect (further down, once `rowData` is in scope)
+   * fingerprints the section subtotals and redraws the banners whenever
+   * any of them actually changes.
    */
   useEffect(() => {
     const api = gridApiRef.current;
@@ -1421,6 +1432,41 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
     for (const root of sortSiblings(childrenOf.get(null) ?? [])) emit(root, 0);
     return rows;
   }, [positions, collapsedSections, insertResourceRows, currencyCode, fxRates]);
+
+  /* ── Bug #220: redraw section banners when subtotals change ───────────
+   * Mirror of the displayCurrency effect above, but keyed on the actual
+   * section subtotals so an inline resource-currency swap (which leaves
+   * the position's stored `unit_rate`/`total` untouched and only updates
+   * `metadata.resources[i].currency`) repaints the full-width section
+   * row. Without this, `rowData` carries the freshly rebased subtotal
+   * but the previously-mounted `SectionFullWidthRenderer` instance keeps
+   * the old value on screen until the user collapses + re-expands the
+   * section — the "close + reopen → updates" smoking gun from #220.
+   */
+  const sectionSubtotalFingerprint = useMemo(
+    () =>
+      rowData
+        .filter((r) => Boolean((r as { _isSection?: boolean })._isSection))
+        .map(
+          (r) =>
+            `${(r as { id: string }).id}:${(r as { _subtotal?: number })._subtotal ?? 0}`,
+        )
+        .join('|'),
+    [rowData],
+  );
+
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    const sectionNodes: unknown[] = [];
+    api.forEachNode((node: unknown) => {
+      const data = (node as { data?: { _isSection?: boolean } } | null)?.data;
+      if (data?._isSection) sectionNodes.push(node);
+    });
+    if (sectionNodes.length > 0) {
+      api.redrawRows({ rowNodes: sectionNodes as never[] });
+    }
+  }, [sectionSubtotalFingerprint]);
 
   /* ── Pinned bottom rows (footer) ──────────────────────────────── */
   const pinnedBottomRowData = useMemo(() => footerRows, [footerRows]);

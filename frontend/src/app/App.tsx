@@ -697,7 +697,18 @@ export default function App() {
         } />
 
         {/* App — all protected, all real pages */}
-        <Route path="/" element={<P title="Dashboard"><DashboardPage /></P>} />
+        {/* BUG-215 — authenticated users hitting `/` land on /projects.
+            Unauthenticated users fall through to <P>, which calls
+            RequireAuth and bounces them to /login (preserving the
+            marketing-flavoured public landing path). */}
+        <Route
+          path="/"
+          element={
+            isAuthenticated
+              ? <Navigate to="/projects" replace />
+              : <P title="Dashboard"><DashboardPage /></P>
+          }
+        />
 
         <Route path="/ai-estimate" element={<P title="AI Quick Estimate"><QuickEstimatePage /></P>} />
         <Route path="/ai-agents" element={<P title="AI Agents"><AgentsPage /></P>} />

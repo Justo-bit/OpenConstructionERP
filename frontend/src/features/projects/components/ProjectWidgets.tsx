@@ -275,13 +275,38 @@ export function ChangeOrdersPulseWidget({
 
 /* ── 3. Daily Diary card ─────────────────────────────────────────────── */
 
+// ``weather_summary`` is a JSONB column on the backend (see
+// backend/app/modules/daily_diary/schemas.py:90 — ``dict[str, Any]``),
+// not a string. Typing it loosely and rendering through a string-coercer
+// stops the React "Objects are not valid as a React child" crash that
+// otherwise unmounts the entire ProjectDetailPage.
+type DiaryWeatherSummary =
+  | string
+  | { conditions?: string; temp_c?: number; summary?: string }
+  | Record<string, unknown>
+  | null;
+
 interface DiaryItem {
   id: string;
   diary_date?: string;
   status?: string;
-  weather_summary?: string | null;
+  weather_summary?: DiaryWeatherSummary;
   manpower_total?: number | null;
   narrative?: string | null;
+}
+
+function formatWeatherSummary(w: DiaryWeatherSummary | undefined): string | null {
+  if (w == null) return null;
+  if (typeof w === 'string') return w.length > 0 ? w : null;
+  if (typeof w !== 'object') return String(w);
+  const obj = w as Record<string, unknown>;
+  if (typeof obj.summary === 'string' && obj.summary.length > 0) {
+    return obj.summary;
+  }
+  const parts: string[] = [];
+  if (typeof obj.conditions === 'string') parts.push(obj.conditions);
+  if (typeof obj.temp_c === 'number') parts.push(`${obj.temp_c}°C`);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 export function DailyDiaryWidget({ projectId }: { projectId: string }) {
@@ -327,11 +352,12 @@ export function DailyDiaryWidget({ projectId }: { projectId: string }) {
               </Badge>
             )}
           </div>
-          {latest.weather_summary && (
-            <p className="text-xs text-content-tertiary truncate">
-              {latest.weather_summary}
-            </p>
-          )}
+          {(() => {
+            const w = formatWeatherSummary(latest.weather_summary);
+            return w ? (
+              <p className="text-xs text-content-tertiary truncate">{w}</p>
+            ) : null;
+          })()}
           {latest.narrative && (
             <p className="text-sm text-content-primary line-clamp-2">
               {latest.narrative}

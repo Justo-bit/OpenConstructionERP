@@ -259,10 +259,16 @@ export function InlinePdfAnnotator({
       pageDimensionsRef.current = { width: viewport.width, height: viewport.height };
       viewportRef.current = viewport;
 
-      // Also size the overlay canvas
+      // Also size the overlay canvas. Assigning width/height resets the
+      // bitmap, but we additionally clearRect() to be defensive against
+      // browsers that skip the reset when the new size equals the old one,
+      // and so the overlay is visibly blank during the awaited PDF render
+      // (otherwise the previous page's strokes can flash through).
       if (overlayRef.current) {
         overlayRef.current.width = viewport.width;
         overlayRef.current.height = viewport.height;
+        const overlayCtx = overlayRef.current.getContext('2d');
+        overlayCtx?.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
       }
 
       activeTask = page.render({ canvasContext: ctx, viewport });
@@ -274,6 +280,9 @@ export function InlinePdfAnnotator({
         if (err && (err as { name?: string }).name !== 'RenderingCancelledException') {
           if (import.meta.env.DEV) console.warn('PDF page render failed', err);
         }
+        // Even on cancellation, repaint the overlay so stale strokes from
+        // the previous page can't linger if the redraw effect races us.
+        if (!cancelled) drawAnnotations();
         return;
       }
       if (!cancelled) {
@@ -472,6 +481,16 @@ export function InlinePdfAnnotator({
   useEffect(() => {
     drawAnnotations();
   }, [drawAnnotations]);
+
+  // On page change, drop any in-flight drag so a half-drawn stroke from
+  // page N can't bleed onto page N+1 (the drag state is shared across pages).
+  useEffect(() => {
+    setIsDrawing(false);
+    setDrawStart(null);
+    setDrawEnd(null);
+    setShowTextInput(false);
+    setTextPosition(null);
+  }, [currentPage]);
 
   /* ── Mouse handlers ───────────────────────────────────────────────── */
 

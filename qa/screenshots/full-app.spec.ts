@@ -68,7 +68,7 @@ interface RouteSpec {
 
 const ROUTES: RouteSpec[] = [
   // ── Core ──
-  { section: '01_core', slug: 'dashboard', path: '/' },
+  { section: '01_core', slug: 'dashboard', path: '/dashboard' },
   { section: '01_core', slug: 'projects', path: '/projects' },
   { section: '01_core', slug: 'project_detail', path: '/projects/:projectId' },
   { section: '01_core', slug: 'files', path: '/files' },

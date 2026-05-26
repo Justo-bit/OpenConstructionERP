@@ -487,7 +487,12 @@ export function CesiumViewer({
                 }
                 return;
               }
-              const picked = viewer.scene.pickPosition?.(pos);
+              // Cesium nulls ``viewer.scene`` synchronously inside
+              // ``viewer.destroy()``. A rAF can still fire after the
+              // viewer was torn down by navigation; without the optional
+              // chain we'd throw "Cannot read properties of undefined
+              // (reading 'pickPosition')" and surface the ErrorBoundary.
+              const picked = viewer.scene?.pickPosition?.(pos);
               if (!picked) {
                 if (!lastMouseEmitWasNull) {
                   lastMouseEmitWasNull = true;

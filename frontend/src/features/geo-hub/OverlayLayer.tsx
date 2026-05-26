@@ -52,6 +52,26 @@ const FALLBACK_HALF_SIZE_M = 100;
 const METERS_PER_DEGREE = 111_320;
 
 /**
+ * Cesium's ``Viewer.scene`` getter does NOT just return ``undefined`` once
+ * the viewer is destroyed — it dereferences ``this._cesiumWidget.scene``
+ * where ``_cesiumWidget`` has been nulled, so reading ``viewer.scene``
+ * itself THROWS "Cannot read properties of undefined (reading 'scene')".
+ * That blows past any optional-chain guard (``v.scene?.x``) because the
+ * exception fires before the ``?.`` short-circuit can see the undefined.
+ *
+ * Wrap every viewer-scene access in a try/catch so unmount/teardown
+ * races during navigation never surface the React ErrorBoundary.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function safeScene(viewer: any): any | null {
+  try {
+    return viewer?.scene ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Validate that an overlay's four corners can produce a non-degenerate
  * Cesium ``Rectangle``. Exposed so OverlayPanel can surface a soft
  * "Needs corners" badge without trying to render the layer.
@@ -170,13 +190,14 @@ export function OverlayLayer({
     if (!cesium || !viewer) return;
     const c: any = cesium;
     const v: any = viewer;
-    // ``viewer`` may legitimately be defined but already torn down —
-    // Cesium nulls ``.scene`` synchronously inside ``viewer.destroy()``.
-    // Guard explicitly so a stale prop never blows up this effect mid
-    // mount/unmount race (BUG: "Cannot read properties of undefined
-    // (reading 'scene')" on /projects/:id/geo).
-    if (!v.scene && !v.imageryLayers) return;
-    const imageryLayers = v.scene?.imageryLayers ?? v.imageryLayers;
+    // ``viewer.scene`` is a Cesium getter that THROWS once the viewer is
+    // destroyed (it dereferences a nulled ``_cesiumWidget`` internally) —
+    // optional chaining is not enough. Route every access through
+    // ``safeScene`` so an unmount/teardown race during navigation never
+    // blows up into the React ErrorBoundary.
+    const scene = safeScene(v);
+    if (!scene && !v.imageryLayers) return;
+    const imageryLayers = scene?.imageryLayers ?? v.imageryLayers;
     if (!imageryLayers) return;
 
     const seen = new Set<string>();
@@ -270,10 +291,11 @@ export function OverlayLayer({
     return () => {
       if (!cesium || !viewer) return;
       const v: any = viewer;
-      // Skip cleanly when the viewer was destroyed before this cleanup
-      // fires (Cesium nulls ``scene`` on destroy and there's no point in
-      // trying to remove layers from a torn-down imagery collection).
-      const imageryLayers = v.scene?.imageryLayers ?? v.imageryLayers;
+      // ``v.scene`` is a getter that throws once Cesium has destroyed the
+      // viewer (typical when navigating away from /geo). Use ``safeScene``
+      // so the cleanup never re-throws into React's commitHookEffectListUnmount.
+      const scene = safeScene(v);
+      const imageryLayers = scene?.imageryLayers ?? v.imageryLayers;
       if (!imageryLayers) {
         layerMapRef.current.clear();
         return;
@@ -299,13 +321,17 @@ export function OverlayLayer({
     if (!cesium || !viewer) return;
     const c: any = cesium;
     const v: any = viewer;
-    // Bail if the viewer is mid-destroy — both ``scene`` and
-    // ``entities`` are nulled synchronously inside ``viewer.destroy()``
-    // and downstream code (``v.scene.canvas``, ``v.scene.pick``,
-    // ``v.scene.screenSpaceCameraController``) would crash without a
-    // safe path. See bug "Cannot read properties of undefined
-    // (reading 'scene')" on /projects/:id/geo.
-    if (!v.scene || !v.entities) return;
+    // ``v.scene`` throws on a destroyed viewer (Cesium getter dereferences
+    // a nulled ``_cesiumWidget``). Route through ``safeScene`` so the
+    // mount-time race never trips the ErrorBoundary.
+    const scene = safeScene(v);
+    let entities: any = null;
+    try {
+      entities = v.entities ?? null;
+    } catch {
+      entities = null;
+    }
+    if (!scene || !entities) return;
     // Always clear previous handles first.
     for (const e of cornerEntitiesRef.current) {
       try {
@@ -416,10 +442,13 @@ export function OverlayLayer({
       } catch {
         /* gone */
       }
-      // ``v.scene`` may have been nulled by ``viewer.destroy()`` between
-      // this effect mounting and its cleanup running — read defensively.
+      // ``v.scene`` is a getter that THROWS after ``viewer.destroy()`` —
+      // not just returns undefined. ``safeScene`` swallows that so React's
+      // ``commitHookEffectListUnmount`` never sees an exception during the
+      // post-navigation cleanup race.
       try {
-        const ssc = v.scene?.screenSpaceCameraController;
+        const sceneOnTeardown = safeScene(v);
+        const ssc = sceneOnTeardown?.screenSpaceCameraController;
         if (ssc) ssc.enableInputs = true;
       } catch {
         /* gone */
@@ -458,13 +487,17 @@ export function OverlayLayer({
 
     const c: any = cesium;
     const v: any = viewer;
-    // Bail out cleanly if the viewer is mid-destroy — both ``scene``
-    // and ``entities`` are nulled inside ``viewer.destroy()`` and every
-    // downstream access (``v.scene.canvas`` for the handler ctor,
-    // ``v.entities.add`` for the preview entity) would crash without a
-    // safe path. See bug "Cannot read properties of undefined
-    // (reading 'scene')" on /projects/:id/geo.
-    if (!v.scene || !v.entities) return;
+    // ``v.scene`` throws on a destroyed viewer (Cesium getter dereferences
+    // a nulled ``_cesiumWidget``). Route through ``safeScene`` so the
+    // mount-time race never trips the ErrorBoundary.
+    const scene = safeScene(v);
+    let entities: any = null;
+    try {
+      entities = v.entities ?? null;
+    } catch {
+      entities = null;
+    }
+    if (!scene || !entities) return;
     let handler: any = null;
 
     const refreshPreview = (pts: [number, number][]) => {
@@ -566,9 +599,18 @@ export function OverlayLayer({
       }
       if (cropEntityRef.current) {
         try {
-          // ``v.entities`` may be null after viewer.destroy() — skip the
-          // remove call entirely in that case to avoid TypeError.
-          v.entities?.remove(cropEntityRef.current);
+          // ``v.entities`` MAY also be a throwing getter post-destroy
+          // (Cesium internals null ``_cesiumWidget`` synchronously). The
+          // outer try/catch already covers it but the explicit guard
+          // makes the intent obvious to future readers.
+          const ents = (() => {
+            try {
+              return v.entities ?? null;
+            } catch {
+              return null;
+            }
+          })();
+          ents?.remove(cropEntityRef.current);
         } catch {
           /* gone */
         }

@@ -37,7 +37,7 @@ const OUT_PATH =
 // and produces a lot of redundant violations from shared chrome. This list
 // covers each section once.
 const AXE_ROUTES: Array<{ section: string; slug: string; path: string }> = [
-  { section: '01_core', slug: 'dashboard', path: '/' },
+  { section: '01_core', slug: 'dashboard', path: '/dashboard' },
   { section: '01_core', slug: 'projects', path: '/projects' },
   { section: '01_core', slug: 'files', path: '/files' },
   { section: '01_core', slug: 'notifications', path: '/notifications' },

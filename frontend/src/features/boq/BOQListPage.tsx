@@ -34,7 +34,10 @@ interface BOQ {
   status: string;
   created_at: string;
   position_count?: number;
-  grand_total?: number;
+  // Backend v3 §10 contract serializes money as Decimal-as-string. Keep
+  // the type honest so the boundary coercion below is type-safe and so
+  // future call-sites can't `b.grand_total - x` without thinking.
+  grand_total?: number | string | null;
 }
 
 interface BOQWithProject extends BOQ {
@@ -421,14 +424,25 @@ export function BOQListPage() {
       const fetches = scopedProjects.map(async (p) => {
         try {
           const boqs = await apiGet<BOQ[]>(`/v1/boq/boqs/?project_id=${p.id}`);
-          return boqs.map((b) => ({
-            ...b,
-            projectName: p.name,
-            currency: p.currency,
-            positionCount: b.position_count ?? 0,
-            grandTotal: b.grand_total ?? 0,
-            classificationStandard: p.classification_standard,
-          } as BOQWithProject));
+          return boqs.map((b) => {
+            // v3 §10 contract: money fields arrive as Decimal-as-string. The
+            // TypeScript `number` annotation lies — reducing across them
+            // string-concatenates ("634204086.52" + "528523" → "634…528…"),
+            // and `Number(multi-dot-string)` → NaN. Coerce once at the
+            // boundary so every downstream consumer (reduce, comparator,
+            // `currencyFmt.format`, threshold checks) sees a finite number.
+            const gtRaw = b.grand_total;
+            const gtNum =
+              typeof gtRaw === 'number' ? gtRaw : Number(gtRaw ?? 0);
+            return {
+              ...b,
+              projectName: p.name,
+              currency: p.currency,
+              positionCount: b.position_count ?? 0,
+              grandTotal: Number.isFinite(gtNum) ? gtNum : 0,
+              classificationStandard: p.classification_standard,
+            } as BOQWithProject;
+          });
         } catch (err) {
           if (import.meta.env.DEV) console.error(`Failed to fetch BOQs for project ${p.id}:`, err);
           return [] as BOQWithProject[];
@@ -674,6 +688,9 @@ export function BOQListPage() {
                 <select
                   value={projectFilter}
                   onChange={(e) => setProjectFilter(e.target.value)}
+                  aria-label={t('a11y.boq.project_filter', {
+                    defaultValue: 'Filter estimates by project',
+                  })}
                   className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-44"
                 >
                   <option value="">{t('boq.all_projects', { defaultValue: 'All projects' })}</option>
@@ -693,6 +710,9 @@ export function BOQListPage() {
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
+                  aria-label={t('a11y.boq.status_filter', {
+                    defaultValue: 'Filter estimates by status',
+                  })}
                   className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-32"
                 >
                   <option value="">{t('boq.all_statuses', { defaultValue: 'All statuses' })}</option>
