@@ -47,7 +47,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "v3144_audit_log_extend"
-down_revision: Union[str, None] = "v3141_ai_kimi_api_key"
+down_revision: Union[str, None] = "v3143_unified_file_versions"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

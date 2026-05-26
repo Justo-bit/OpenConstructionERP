@@ -42,7 +42,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "v3143_unified_file_versions"
-down_revision: Union[str, None] = "v3141_ai_kimi_api_key"
+down_revision: Union[str, None] = "v3142_notifications_dispatcher"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
