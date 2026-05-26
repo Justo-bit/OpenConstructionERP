@@ -10,7 +10,7 @@
 //
 // Epic I-B collapsed 20 near-duplicate country-specific exchange modules
 // into a single polymorphic RegionalExchangePage driven by regionalRegistry.
-// Deep-link back-compat is preserved — every old /modules/<country>
+// Deep-link back-compat is preserved — every old /<country>
 // route still mounts the page via manifest.tsx aliases.
 //
 // This spec walks the changed surfaces, takes screenshots, runs axe, and
@@ -75,10 +75,10 @@ test.describe('Wave 5 — Epic I international BOQ smoke', () => {
   test.setTimeout(60_000);
 
   // ── Frontend: RegionalExchangePage back-compat aliases ──────────────
-  test('I1: /modules/de-din276-exchange renders RegionalExchangePage', async ({ page }) => {
+  test('I1: /de-din276-exchange renders RegionalExchangePage', async ({ page }) => {
     const errs = attachWhiteScreenProbe(page, 'I1');
     await login(page);
-    await page.goto('/modules/de-din276-exchange');
+    await page.goto('/de-din276-exchange');
     await page.waitForTimeout(2000);
     await shot(page, 'I1_de_din276_alias');
     const critical = await axeClean(page, 'I1_de_din276');
@@ -86,28 +86,28 @@ test.describe('Wave 5 — Epic I international BOQ smoke', () => {
     expect(critical, `axe critical: ${JSON.stringify(critical)}`).toHaveLength(0);
   });
 
-  test('I2: /modules/us-masterformat-exchange renders RegionalExchangePage', async ({ page }) => {
+  test('I2: /us-masterformat-exchange renders RegionalExchangePage', async ({ page }) => {
     const errs = attachWhiteScreenProbe(page, 'I2');
     await login(page);
-    await page.goto('/modules/us-masterformat-exchange');
+    await page.goto('/us-masterformat-exchange');
     await page.waitForTimeout(2000);
     await shot(page, 'I2_us_masterformat_alias');
     expect(errs, `pageerrors: ${errs.join(' | ')}`).toHaveLength(0);
   });
 
-  test('I3: /modules/es-pbc-exchange renders RegionalExchangePage', async ({ page }) => {
+  test('I3: /es-pbc-exchange renders RegionalExchangePage', async ({ page }) => {
     const errs = attachWhiteScreenProbe(page, 'I3');
     await login(page);
-    await page.goto('/modules/es-pbc-exchange');
+    await page.goto('/es-pbc-exchange');
     await page.waitForTimeout(2000);
     await shot(page, 'I3_es_pbc_alias');
     expect(errs, `pageerrors: ${errs.join(' | ')}`).toHaveLength(0);
   });
 
-  test('I4: /modules/uk-nrm-exchange renders RegionalExchangePage', async ({ page }) => {
+  test('I4: /uk-nrm-exchange renders RegionalExchangePage', async ({ page }) => {
     const errs = attachWhiteScreenProbe(page, 'I4');
     await login(page);
-    await page.goto('/modules/uk-nrm-exchange');
+    await page.goto('/uk-nrm-exchange');
     await page.waitForTimeout(2000);
     await shot(page, 'I4_uk_nrm_alias');
     expect(errs, `pageerrors: ${errs.join(' | ')}`).toHaveLength(0);
