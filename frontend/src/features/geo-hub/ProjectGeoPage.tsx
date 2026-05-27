@@ -282,7 +282,15 @@ export function ProjectGeoPage() {
     // Full-bleed layout — negate AppLayout's <main> padding (px-4 pt-6 pb-4 sm:px-7)
     // so the map fills the viewport, then claim exactly viewport-minus-header
     // height so the Cesium canvas never spills past the visible browser area.
-    <div className="-mx-4 -mt-6 -mb-4 flex h-[calc(100vh-var(--oe-header-height,52px))] w-[calc(100%+2rem)] flex-col sm:-mx-7 sm:w-[calc(100%+3.5rem)]">
+    // ``100dvh`` (not ``100vh``) so iOS Safari's collapsing URL bar
+    // doesn't paint the Cesium canvas behind the dynamic toolbar — the
+    // global Geo Hub already uses ``100dvh`` (since v4.7.2); the project-
+    // scoped view shipped with the legacy ``100vh`` and was clipped on
+    // first paint on every iOS phone. Fix is mechanical: prefer ``dvh``
+    // and rely on browsers without ``dvh`` support to fall back via the
+    // separate ``vh`` rule (Cesium target browsers — Safari >= 15.4 +
+    // Chrome >= 108 — all support ``dvh``, so no fallback chain needed).
+    <div className="-mx-4 -mt-6 -mb-4 flex h-[calc(100dvh-var(--oe-header-height,52px))] w-[calc(100%+2rem)] flex-col sm:-mx-7 sm:w-[calc(100%+3.5rem)]">
       <header
         className={[
           'flex items-center gap-4 border-b border-border bg-surface-primary',

@@ -62,7 +62,12 @@ class GeoAnchorCreate(BaseModel):
     epsg_code: int = Field(default=4326, gt=0, le=999999)
     region_code: str | None = Field(default=None, pattern=_REGION_CODE_PATTERN)
     address: str | None = Field(default=None, max_length=500)
-    accuracy_m: Decimal | None = Field(default=None, ge=0)
+    # Horizontal accuracy in metres. Hard upper bound at 10 km — anything
+    # coarser than that is "country-level" precision and should be
+    # represented via the precision metadata on the GeoAnchor, not a
+    # numeric uncertainty disc on the map (which Cesium would draw as
+    # the size of a small country).
+    accuracy_m: Decimal | None = Field(default=None, ge=0, le=10_000)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     _v_lat = field_validator("lat")(lambda cls, v: _check_lat(v))  # type: ignore[arg-type, misc]
@@ -80,7 +85,12 @@ class GeoAnchorUpdate(BaseModel):
     epsg_code: int | None = Field(default=None, gt=0, le=999999)
     region_code: str | None = Field(default=None, pattern=_REGION_CODE_PATTERN)
     address: str | None = Field(default=None, max_length=500)
-    accuracy_m: Decimal | None = Field(default=None, ge=0)
+    # Horizontal accuracy in metres. Hard upper bound at 10 km — anything
+    # coarser than that is "country-level" precision and should be
+    # represented via the precision metadata on the GeoAnchor, not a
+    # numeric uncertainty disc on the map (which Cesium would draw as
+    # the size of a small country).
+    accuracy_m: Decimal | None = Field(default=None, ge=0, le=10_000)
     metadata: dict[str, Any] | None = None
 
     @field_validator("lat")

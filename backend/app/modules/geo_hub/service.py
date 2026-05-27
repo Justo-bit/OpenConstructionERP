@@ -605,11 +605,52 @@ class GeoHubService:
         tileset_id: uuid.UUID,
         payload: dict[str, Any] | None = None,
     ) -> None:
+        """Delete a tileset row AND its storage artefacts.
+
+        Pre-v5.2.9 this only removed the DB row, leaving the
+        ``tilesets/{id}/tileset.json`` and ``…/tile_0.b3dm`` blobs orphaned
+        forever — a slow disk leak that broke the "delete frees storage"
+        contract surfaced to the user. We now sweep the per-tileset prefix
+        through the storage backend before removing the row. Failures are
+        logged but never abort the DB delete: a stuck blob is a sysadmin
+        problem, never a reason to keep dead metadata in the user's sidebar.
+        """
         obj = await self.get_tileset(tileset_id)
         await self._verify_project_owner(
             obj.project_id, payload, not_found_detail="Tileset not found",
         )
+        # Storage cleanup runs first because a successful DB delete with a
+        # failed blob delete leaves the user with a "lost" tileset they
+        # can't see but that's still consuming bytes. Doing storage first
+        # means a transient backend error surfaces as a 500 and the user
+        # can retry; the row stays visible for next attempt.
+        try:
+            from app.core.storage import get_storage_backend
+
+            backend = get_storage_backend()
+            # ``prefix`` is the canonical layout used by ``upload_artifacts``
+            # (``tilesets/{tileset_id}/*``) and ``package_canonical_as_tileset``
+            # (``prefix=tilesets/{tileset_id}``). Be defensive: fall back to
+            # the canonical layout when the row's ``prefix`` was never set
+            # (older rows pre-v5.0.0).
+            sweep_prefix = obj.prefix or f"tilesets/{tileset_id}"
+            await backend.delete_prefix(sweep_prefix)
+        except Exception as exc:  # noqa: BLE001 — log + continue
+            logger.warning(
+                "geo_hub: storage cleanup failed for tileset %s: %s",
+                tileset_id,
+                exc,
+            )
         await self.tilesets.delete(tileset_id)
+        await event_bus.publish(
+            "geo_hub.tileset.deleted",
+            {
+                "tileset_id": str(tileset_id),
+                "project_id": str(obj.project_id),
+                "source_kind": obj.source_kind,
+            },
+            source_module="geo_hub",
+        )
 
     # ── TileGenerationJob ────────────────────────────────────────────────
 
@@ -1123,8 +1164,79 @@ class GeoHubService:
         *,
         payload: dict[str, Any] | None = None,
     ) -> None:
+        """Soft-delete the overlay row.
+
+        Storage blobs are kept on the soft-delete path so a future
+        "Restore" feature can revive the overlay without re-uploading.
+        Hard cleanup of orphaned blobs is handled by
+        :meth:`sweep_deleted_raster_overlays` (call from a maintenance
+        job or admin endpoint after a grace period).
+        """
         obj = await self.get_raster_overlay(overlay_id, payload=payload)
         await self.raster_overlays.soft_delete(obj.id)
+
+    async def sweep_deleted_raster_overlays(
+        self,
+        *,
+        older_than_days: int = 30,
+    ) -> dict[str, int]:
+        """Hard-delete soft-deleted raster overlays older than the grace window.
+
+        Sweeps the storage blobs (source + rasterised PNG) before removing
+        the DB row so the disk is actually freed. Returns a summary dict
+        with ``swept`` (rows removed) and ``blob_errors`` (blob deletes
+        that failed — usually a "key not found" because the row was
+        already partially cleaned up).
+
+        Designed to be safe to call repeatedly: each pass picks up where
+        the last left off. The grace window defaults to 30 days, matching
+        the geocode cache TTL so operators have one mental model for
+        soft-deleted data lifetimes across the module.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import delete as sql_delete
+        from sqlalchemy import select as sql_select
+
+        from app.modules.geo_hub.models import GeoRasterOverlay
+
+        if older_than_days < 0:
+            return {"swept": 0, "blob_errors": 0}
+        cutoff = datetime.now(UTC) - timedelta(days=int(older_than_days))
+        rows = (
+            await self.session.execute(
+                sql_select(GeoRasterOverlay)
+                .where(GeoRasterOverlay.deleted_at.is_not(None))
+                .where(GeoRasterOverlay.deleted_at < cutoff)
+            )
+        ).scalars().all()
+        if not rows:
+            return {"swept": 0, "blob_errors": 0}
+        from app.core.storage import get_storage_backend
+
+        backend = get_storage_backend()
+        blob_errors = 0
+        ids: list[uuid.UUID] = []
+        for r in rows:
+            for key in (r.source_blob_url, r.raster_blob_url):
+                if not key:
+                    continue
+                try:
+                    await backend.delete(key)
+                except Exception:  # noqa: BLE001 — log + continue
+                    blob_errors += 1
+                    logger.debug(
+                        "geo_hub.sweeper: blob delete failed for key=%s", key,
+                    )
+            ids.append(r.id)
+        if ids:
+            await self.session.execute(
+                sql_delete(GeoRasterOverlay).where(
+                    GeoRasterOverlay.id.in_(ids),
+                )
+            )
+            await self.session.flush()
+        return {"swept": len(ids), "blob_errors": blob_errors}
 
     async def upload_pdf_overlay(
         self,
@@ -1740,8 +1852,18 @@ class GeoHubService:
         anchor = await self.anchors.get_by_project(project_id)
         imagery = await self.imagery.list_for_project(project_id)
         terrain = await self.terrain.get_default()
+        # Push dev_id filter into SQL on the tileset list so a PropDev
+        # customer with many tilesets per project doesn't load 50 only to
+        # throw 49 away. The overlay-side filter still happens in Python
+        # because GeoOverlay.metadata is opaque JSON — but that path is
+        # bounded by the 200-row hard cap and SQLite has no portable
+        # JSON-extract on arbitrary metadata.development_id.
         tilesets = await self.tilesets.list_for_project(
-            project_id, limit=50,
+            project_id,
+            limit=50,
+            development_id=(
+                str(development_id) if development_id is not None else None
+            ),
         )
         overlays = await self.overlays.list_for_project(
             project_id, limit=200,
@@ -1752,19 +1874,6 @@ class GeoHubService:
         if development_id is not None:
             dev_str = str(development_id)
 
-            def _ts_matches(t: Any) -> bool:
-                if (
-                    t.source_kind == "development"
-                    and str(t.source_id) == dev_str
-                ):
-                    return True
-                meta = t.metadata_ or {}
-                if isinstance(meta, dict):
-                    val = meta.get("development_id")
-                    if isinstance(val, str) and val == dev_str:
-                        return True
-                return False
-
             def _ov_matches(o: Any) -> bool:
                 meta = o.metadata_ or {}
                 if isinstance(meta, dict):
@@ -1773,7 +1882,6 @@ class GeoHubService:
                         return True
                 return False
 
-            tilesets = [t for t in tilesets if _ts_matches(t)]
             overlays = [o for o in overlays if _ov_matches(o)]
 
         return {
