@@ -10,17 +10,6 @@ Professional BOQ, 4D scheduling, 5D cost model, and tendering — all in one ope
 
 [▶ Watch the 12-min walkthrough](https://www.youtube.com/watch?v=X06cIaroAeI) · [Demo](https://openconstructionerp.com) · [Documentation](https://openconstructionerp.com/docs) · [Discussions](https://t.me/datadrivenconstruction) · [Report Bug](https://github.com/datadrivenconstruction/OpenConstructionERP/issues)
 
-<table>
-<tr>
-<td align="center" width="16.66%"><b>55K+</b><br/><sub>cost&nbsp;items</sub></td>
-<td align="center" width="16.66%"><b>24</b><br/><sub>languages</sub></td>
-<td align="center" width="16.66%"><b>48</b><br/><sub>regions</sub></td>
-<td align="center" width="16.66%"><b>6</b><br/><sub>CAD&nbsp;formats</sub></td>
-<td align="center" width="16.66%"><b>100+</b><br/><sub>modules</sub></td>
-<td align="center" width="16.66%"><b>12</b><br/><sub>sections</sub></td>
-</tr>
-</table>
-
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/datadrivenconstruction/OpenConstructionERP?label=version&color=green&v=5.2.7)](https://github.com/datadrivenconstruction/OpenConstructionERP/releases/latest)
 [![PyPI](https://img.shields.io/pypi/v/openconstructionerp?color=informational&label=pypi&v=5.2.7)](https://pypi.org/project/openconstructionerp/)
@@ -38,6 +27,17 @@ Professional BOQ, 4D scheduling, 5D cost model, and tendering — all in one ope
 </video>
 
 <sub><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme-icons/device-camera-video-dark.svg"><img src="docs/readme-icons/device-camera-video-light.svg" width="14" align="center" alt=""></picture> <b>1-minute teaser above</b> · for the full 12-minute walkthrough → <a href="https://www.youtube.com/watch?v=X06cIaroAeI"><b>watch on YouTube</b></a> · onboarding → BoQ → BIM → DWG → PDF → AI → dashboard</sub>
+
+<table>
+<tr>
+<td align="center" width="16.66%"><b>55K+</b><br/><sub>cost&nbsp;items</sub></td>
+<td align="center" width="16.66%"><b>24</b><br/><sub>languages</sub></td>
+<td align="center" width="16.66%"><b>48</b><br/><sub>regions</sub></td>
+<td align="center" width="16.66%"><b>6</b><br/><sub>CAD&nbsp;formats</sub></td>
+<td align="center" width="16.66%"><b>100+</b><br/><sub>modules</sub></td>
+<td align="center" width="16.66%"><b>12</b><br/><sub>sections</sub></td>
+</tr>
+</table>
 
 </div>
 
