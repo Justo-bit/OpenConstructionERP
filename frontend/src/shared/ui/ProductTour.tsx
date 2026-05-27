@@ -838,6 +838,23 @@ export function ProductTour({ steps, defaultTourId = 'global' }: ProductTourProp
   const [spotlight, setSpotlight] = useState<SpotlightRect | null>(null);
   const [tooltipCoords, setTooltipCoords] = useState<TooltipCoords>(() => centerOfViewport());
   const [confirmExitOpen, setConfirmExitOpen] = useState(false);
+  // Track current theme so we can swap inline colour values (box-shadow,
+  // accent-ring rgba) — Tailwind's `dark:` prefix only handles className
+  // styles, not the dynamic inline boxShadow we use for the cutout.
+  const [isDark, setIsDark] = useState<boolean>(() =>
+    typeof document !== 'undefined'
+      ? document.documentElement.classList.contains('dark')
+      : false,
+  );
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const sync = () => setIsDark(root.classList.contains('dark'));
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => mo.disconnect();
+  }, []);
   // Track which missing-target warnings we've already emitted so we don't
   // spam the console on resize/recompute.
   const warnedRef = useRef<Set<string>>(new Set());
@@ -1108,6 +1125,12 @@ export function ProductTour({ steps, defaultTourId = 'global' }: ProductTourProp
   if (!active || !step || !resolved) return null;
 
   const SHADOW_SPREAD = 9999; // px — large enough to dim the entire viewport.
+  // Dark-mode darker scrim + bright cyan accent ring around the cutout so
+  // the highlighted area is visually obvious against the dimmed background.
+  // Light mode keeps the historical slate tint that has worked for a year.
+  const scrimColor = isDark
+    ? 'rgba(2, 6, 23, 0.78)' /* slate-950 @ 78% — near-black, high contrast */
+    : 'rgba(15, 23, 42, 0.42)'; /* slate-900 @ 42% — historical light value  */
 
   return (
     <>
@@ -1119,26 +1142,60 @@ export function ProductTour({ steps, defaultTourId = 'global' }: ProductTourProp
         data-product-tour="overlay"
         className={clsx(
           'fixed inset-0 z-[9000]',
-          spotlight ? 'pointer-events-none' : 'pointer-events-auto bg-black/35',
+          spotlight
+            ? 'pointer-events-none'
+            : 'pointer-events-auto bg-black/35 dark:bg-black/75',
         )}
         aria-hidden="true"
       >
         {spotlight && (
-          <div
-            data-testid="product-tour-spotlight"
-            style={{
-              position: 'fixed',
-              top: spotlight.top,
-              left: spotlight.left,
-              width: spotlight.width,
-              height: spotlight.height,
-              boxShadow: `0 0 0 ${SHADOW_SPREAD}px rgba(15, 23, 42, 0.42)`,
-              borderRadius: 10,
-              zIndex: 9001,
-              pointerEvents: 'none',
-              transition: 'top 180ms ease, left 180ms ease, width 180ms ease, height 180ms ease',
-            }}
-          />
+          <>
+            {/* The dimming layer — uses an enormous box-shadow spread to
+                paint the entire viewport while leaving a rectangular cutout
+                over the spotlight element itself. */}
+            <div
+              data-testid="product-tour-spotlight"
+              style={{
+                position: 'fixed',
+                top: spotlight.top,
+                left: spotlight.left,
+                width: spotlight.width,
+                height: spotlight.height,
+                boxShadow: `0 0 0 ${SHADOW_SPREAD}px ${scrimColor}`,
+                borderRadius: 10,
+                zIndex: 9001,
+                pointerEvents: 'none',
+                transition: 'top 180ms ease, left 180ms ease, width 180ms ease, height 180ms ease',
+              }}
+            />
+            {/* Bright accent ring + glow around the highlighted area.
+                Sits on top of the dimming layer (z 9002) so it draws a
+                clear, unmistakable boundary between dimmed-background and
+                spotlit-content. Stronger in dark mode where the dimming
+                alone is hard to see against already-dark surfaces. */}
+            <div
+              aria-hidden="true"
+              data-testid="product-tour-spotlight-ring"
+              style={{
+                position: 'fixed',
+                top: spotlight.top,
+                left: spotlight.left,
+                width: spotlight.width,
+                height: spotlight.height,
+                borderRadius: 10,
+                zIndex: 9002,
+                pointerEvents: 'none',
+                border: isDark
+                  ? '2px solid rgba(125, 211, 252, 0.95)' /* sky-300, near-opaque */
+                  : '2px solid rgba(14, 165, 233, 0.85)', /* sky-500, vivid blue */
+                boxShadow: isDark
+                  ? '0 0 0 4px rgba(125, 211, 252, 0.25), 0 0 32px 6px rgba(56, 189, 248, 0.55)'
+                  : '0 0 0 4px rgba(14, 165, 233, 0.20), 0 0 18px 2px rgba(14, 165, 233, 0.35)',
+                transition:
+                  'top 180ms ease, left 180ms ease, width 180ms ease, height 180ms ease',
+              }}
+            />
+          </>
         )}
       </div>
 
@@ -1157,8 +1214,12 @@ export function ProductTour({ steps, defaultTourId = 'global' }: ProductTourProp
           zIndex: 9100,
         }}
         className={clsx(
-          'rounded-2xl border border-border-light',
+          'rounded-2xl border',
+          // Light: subtle hairline. Dark: bright sky tint + outer glow
+          // ring so the card stands away from the near-black scrim.
+          'border-border-light dark:border-sky-400/60',
           'bg-surface-elevated shadow-xl',
+          'dark:shadow-[0_8px_32px_rgba(2,6,23,0.6),0_0_0_1px_rgba(125,211,252,0.25)]',
           'p-5 pointer-events-auto animate-scale-in',
         )}
       >
