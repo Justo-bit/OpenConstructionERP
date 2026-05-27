@@ -17,14 +17,36 @@ import {
   ClipboardList,
   Activity,
 } from 'lucide-react';
-import { Breadcrumb, Card, CardContent, Skeleton } from '@/shared/ui';
+import { Breadcrumb, Button, Card, CardContent, EmptyState, Skeleton } from '@/shared/ui';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { apiGet, apiPost } from '@/shared/lib/api';
 import { projectsApi, type Project } from '@/features/projects/api';
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
 
-type DashboardTab = 'executive' | 'pm' | 'estimator' | 'site' | 'finance';
+type DashboardTab = 'executive' | 'pm' | 'estimator' | 'site' | 'finance' | 'reports';
+
+interface ReportTemplate {
+  id: string;
+  name: string;
+  report_type: string;
+  description: string | null;
+  is_system: boolean;
+  is_scheduled: boolean;
+  schedule_cron: string | null;
+  created_at: string;
+}
+
+interface GeneratedReport {
+  id: string;
+  project_id: string;
+  template_id: string | null;
+  report_type: string;
+  title: string;
+  format: string;
+  generated_at: string;
+  created_at: string;
+}
 
 interface KPISnapshot {
   id: string;
@@ -172,6 +194,7 @@ const TABS: { key: DashboardTab; labelKey: string; defaultLabel: string; icon: R
   { key: 'estimator', labelKey: 'reporting.tab_estimator', defaultLabel: 'Estimator', icon: Calculator },
   { key: 'site', labelKey: 'reporting.tab_site', defaultLabel: 'Site Engineer', icon: HardHat },
   { key: 'finance', labelKey: 'reporting.tab_finance', defaultLabel: 'Finance', icon: Wallet },
+  { key: 'reports', labelKey: 'reporting.tab_reports', defaultLabel: 'Reports', icon: FileText },
 ];
 
 /* ── Main component ────────────────────────────────────────────────────────── */
@@ -477,6 +500,9 @@ export function ReportingPage() {
           procurementStats={procurementStats}
         />
       )}
+      {!loading && !loadError && tab === 'reports' && (
+        <ReportsTab project={selectedProject} />
+      )}
     </div>
   );
 }
@@ -626,7 +652,7 @@ function PMDashboard({
 }) {
   const { t } = useTranslation();
   if (!project) {
-    return <EmptyState message={t('reporting.select_project_prompt', { defaultValue: 'Select a project to view PM dashboard' })} />;
+    return <PromptCard message={t('reporting.select_project_prompt', { defaultValue: 'Select a project to view PM dashboard' })} />;
   }
 
   const budgetPct = kpi?.budget_consumed_pct ? parseFloat(kpi.budget_consumed_pct) : null;
@@ -769,7 +795,7 @@ function EstimatorDashboard({
   }, [projectId]);
 
   if (!project) {
-    return <EmptyState message={t('reporting.select_project_prompt_estimator', { defaultValue: 'Select a project to view Estimator dashboard' })} />;
+    return <PromptCard message={t('reporting.select_project_prompt_estimator', { defaultValue: 'Select a project to view Estimator dashboard' })} />;
   }
 
   return (
@@ -856,7 +882,7 @@ function SiteDashboard({
   const { t } = useTranslation();
 
   if (!project) {
-    return <EmptyState message={t('reporting.select_project_prompt_site', { defaultValue: 'Select a project to view Site Engineer dashboard' })} />;
+    return <PromptCard message={t('reporting.select_project_prompt_site', { defaultValue: 'Select a project to view Site Engineer dashboard' })} />;
   }
 
   return (
@@ -946,7 +972,7 @@ function FinanceDashboardView({
   const { t } = useTranslation();
 
   if (!project) {
-    return <EmptyState message={t('reporting.select_project_prompt_finance', { defaultValue: 'Select a project to view Finance dashboard' })} />;
+    return <PromptCard message={t('reporting.select_project_prompt_finance', { defaultValue: 'Select a project to view Finance dashboard' })} />;
   }
 
   return (
@@ -1076,7 +1102,7 @@ function StatBlock({
   );
 }
 
-function EmptyState({ message }: { message: string }) {
+function PromptCard({ message }: { message: string }) {
   return (
     <Card>
       <CardContent>
@@ -1086,5 +1112,226 @@ function EmptyState({ message }: { message: string }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ── Reports tab — templates + generated reports list ─────────────────────── */
+
+function ReportsTab({ project }: { project?: Project }) {
+  const { t } = useTranslation();
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [reports, setReports] = useState<GeneratedReport[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [loadingReports, setLoadingReports] = useState(true);
+  const [templatesError, setTemplatesError] = useState(false);
+  const [reportsError, setReportsError] = useState(false);
+  const [creating, setCreating] = useState<string | null>(null);
+
+  const projectId = project?.id;
+
+  const fetchTemplates = useCallback(async () => {
+    setLoadingTemplates(true);
+    setTemplatesError(false);
+    try {
+      const data = await apiGet<ReportTemplate[]>('/v1/reporting/templates/');
+      setTemplates(data);
+    } catch {
+      setTemplates([]);
+      setTemplatesError(true);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
+
+  const fetchReports = useCallback(async () => {
+    if (!projectId) {
+      setReports([]);
+      setLoadingReports(false);
+      return;
+    }
+    setLoadingReports(true);
+    setReportsError(false);
+    try {
+      const data = await apiGet<GeneratedReport[]>(`/v1/reporting/reports/?project_id=${projectId}`);
+      setReports(data);
+    } catch {
+      setReports([]);
+      setReportsError(true);
+    } finally {
+      setLoadingReports(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
+
+  const handleGenerate = async (template: ReportTemplate) => {
+    if (!projectId) return;
+    setCreating(template.id);
+    try {
+      await apiPost('/v1/reporting/generate/', {
+        project_id: projectId,
+        template_id: template.id,
+        report_type: template.report_type,
+        title: `${template.name} — ${new Date().toLocaleDateString()}`,
+        format: 'pdf',
+      });
+      await fetchReports();
+    } catch {
+      setReportsError(true);
+    } finally {
+      setCreating(null);
+    }
+  };
+
+  if (!project) {
+    return <PromptCard message={t('reporting.select_project_prompt_reports', { defaultValue: 'Select a project to view reports' })} />;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Templates */}
+      <Card>
+        <CardContent>
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-content-primary">
+              {t('reporting.templates_title', { defaultValue: 'Report templates' })}
+            </h3>
+          </div>
+
+          {loadingTemplates ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+            </div>
+          ) : templatesError ? (
+            <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-400">
+              <AlertTriangle size={16} className="shrink-0" />
+              <span>{t('reporting.templates_load_failed', { defaultValue: 'Could not load report templates.' })}</span>
+              <button onClick={fetchTemplates} className="ml-2 underline">
+                {t('common.retry', { defaultValue: 'Retry' })}
+              </button>
+            </div>
+          ) : templates.length === 0 ? (
+            <EmptyState
+              icon={<FileText size={24} />}
+              title={t('reporting.no_templates_title', { defaultValue: 'No report templates yet' })}
+              description={t('reporting.no_templates_desc', { defaultValue: 'System templates will appear here as the platform seeds them, or your admin can add custom templates.' })}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border-light bg-surface-secondary text-left text-xs font-medium text-content-secondary">
+                    <th className="px-4 py-3">{t('reporting.template_name', { defaultValue: 'Name' })}</th>
+                    <th className="px-4 py-3">{t('reporting.template_type', { defaultValue: 'Type' })}</th>
+                    <th className="px-4 py-3">{t('reporting.template_scope', { defaultValue: 'Scope' })}</th>
+                    <th className="px-4 py-3">{t('reporting.template_schedule', { defaultValue: 'Schedule' })}</th>
+                    <th className="px-4 py-3 text-right">{t('reporting.actions', { defaultValue: 'Actions' })}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map((tpl) => (
+                    <tr key={tpl.id} className="border-b border-border-light last:border-0 hover:bg-surface-secondary/50">
+                      <td className="px-4 py-3 font-medium text-content-primary">{tpl.name}</td>
+                      <td className="px-4 py-3 text-content-secondary">{tpl.report_type}</td>
+                      <td className="px-4 py-3 text-content-secondary">
+                        {tpl.is_system
+                          ? t('reporting.scope_system', { defaultValue: 'System' })
+                          : t('reporting.scope_custom', { defaultValue: 'Custom' })}
+                      </td>
+                      <td className="px-4 py-3 text-content-secondary">
+                        {tpl.is_scheduled && tpl.schedule_cron
+                          ? tpl.schedule_cron
+                          : t('reporting.schedule_none', { defaultValue: '—' })}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleGenerate(tpl)}
+                          disabled={creating === tpl.id}
+                        >
+                          {creating === tpl.id ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            t('reporting.generate_now', { defaultValue: 'Generate' })
+                          )}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Generated reports */}
+      <Card>
+        <CardContent>
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-content-primary">
+              {t('reporting.generated_reports_title', { defaultValue: 'Generated reports' })}
+            </h3>
+          </div>
+
+          {loadingReports ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+            </div>
+          ) : reportsError ? (
+            <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-400">
+              <AlertTriangle size={16} className="shrink-0" />
+              <span>{t('reporting.reports_load_failed', { defaultValue: 'Could not load generated reports.' })}</span>
+              <button onClick={fetchReports} className="ml-2 underline">
+                {t('common.retry', { defaultValue: 'Retry' })}
+              </button>
+            </div>
+          ) : reports.length === 0 ? (
+            <EmptyState
+              icon={<FileText size={24} />}
+              title={t('reporting.no_reports_title', { defaultValue: 'No reports yet' })}
+              description={t('reporting.no_reports_desc', { defaultValue: 'Generate your first report from a template above to get started.' })}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border-light bg-surface-secondary text-left text-xs font-medium text-content-secondary">
+                    <th className="px-4 py-3">{t('reporting.report_title', { defaultValue: 'Title' })}</th>
+                    <th className="px-4 py-3">{t('reporting.report_type', { defaultValue: 'Type' })}</th>
+                    <th className="px-4 py-3">{t('reporting.report_format', { defaultValue: 'Format' })}</th>
+                    <th className="px-4 py-3">{t('reporting.report_generated_at', { defaultValue: 'Generated' })}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reports.map((r) => {
+                    const generated = r.generated_at || r.created_at;
+                    const ts = generated ? new Date(generated).toLocaleString() : '—';
+                    return (
+                      <tr key={r.id} className="border-b border-border-light last:border-0 hover:bg-surface-secondary/50">
+                        <td className="px-4 py-3 font-medium text-content-primary">{r.title}</td>
+                        <td className="px-4 py-3 text-content-secondary">{r.report_type}</td>
+                        <td className="px-4 py-3 text-content-secondary uppercase">{r.format}</td>
+                        <td className="px-4 py-3 text-content-secondary">{ts}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
