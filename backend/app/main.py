@@ -749,6 +749,8 @@ async def _seed_demo_account() -> None:
         logger.exception("Failed to seed demo account (non-fatal)")
 
 
+from api.conflict_agent import router as conflict_agent_router
+
 def create_app() -> FastAPI:
     """Application factory.
 
@@ -2536,5 +2538,7 @@ def create_app() -> FastAPI:
             mount_frontend(app)
         except Exception as exc:  # noqa: BLE001 — frontend is optional
             logger.warning("Frontend mount skipped: %s", exc)
+
+    app.include_router(conflict_agent_router)
 
     return app
