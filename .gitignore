@@ -213,6 +213,8 @@ qa-report/
 .claude/_pat.txt
 .claude/_pat
 .claude/token.txt
+.claude/pypi-api-token.txt
+.claude/pypi.token
 .claude/_three_cards_*.txt
 .claude/_three_ddc_cards.txt
 .claude/RELEASE_NOTES_*.md
