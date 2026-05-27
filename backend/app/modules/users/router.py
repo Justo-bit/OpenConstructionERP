@@ -989,5 +989,5 @@ async def set_user_module_access(
     metadata["module_preferences"] = module_prefs
     if data.custom_role_name is not None:
         metadata["custom_role_name"] = data.custom_role_name
-    await service.update_profile(user_id, metadata=metadata)
+    await service.update_profile(user_id, metadata_=metadata)
     return data
