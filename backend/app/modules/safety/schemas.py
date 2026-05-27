@@ -116,6 +116,12 @@ class IncidentResponse(BaseModel):
     geo_lon: float | None = None
     created_by: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
+    osha_recordable: bool = False
+    osha_case_number: str | None = None
+    days_away: int | None = None
+    days_restricted: int | None = None
+    root_cause_method: str | None = None
+    root_cause_tags: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

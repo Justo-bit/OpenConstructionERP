@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect, lazy, Suspense } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, useId, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -144,10 +144,19 @@ function SelectDropdown({
   options: { value: string; label: string }[];
   placeholder: string;
 }) {
+  // Stable, label-derived id so axe can match the <label> to the <select>.
+  const selectId = useId();
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-content-primary">{label}</label>
+      <label
+        htmlFor={selectId}
+        className="text-sm font-medium text-content-primary"
+      >
+        {label}
+      </label>
       <select
+        id={selectId}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={clsx(
@@ -621,6 +630,7 @@ function QuickMeasurementForm({
   const [description, setDescription] = useState('');
   const [value, setValue] = useState('');
   const [unit, setUnit] = useState<string>('m2');
+  const unitSelectId = useId();
 
   const handleSubmit = useCallback(() => {
     if (!description.trim() || !value.trim()) return;
@@ -665,10 +675,15 @@ function QuickMeasurementForm({
       </div>
       <div className="w-28">
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-content-primary">
+          <label
+            htmlFor={unitSelectId}
+            className="text-sm font-medium text-content-primary"
+          >
             {t('takeoff.unit', 'Unit')}
           </label>
           <select
+            id={unitSelectId}
+            aria-label={t('a11y.takeoff.unit_select', { defaultValue: 'Unit' })}
             value={unit}
             onChange={(e) => setUnit(e.target.value)}
             disabled={disabled}

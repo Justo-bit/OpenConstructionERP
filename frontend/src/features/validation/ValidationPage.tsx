@@ -830,7 +830,7 @@ export function ValidationPage() {
             </div>
 
             {/* All passed banner */}
-            {report.counts.errors === 0 && report.counts.warnings === 0 && (
+            {report.counts.total > 0 && report.counts.errors === 0 && report.counts.warnings === 0 && (
               <div className="mb-4 flex items-center gap-3 rounded-xl bg-semantic-success-bg px-5 py-4">
                 <CheckCircle2 size={20} className="shrink-0 text-semantic-success" />
                 <p className="text-sm font-medium text-semantic-success">

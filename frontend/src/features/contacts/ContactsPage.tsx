@@ -1288,6 +1288,9 @@ export function ContactsPage() {
             <select
               value={countryFilter}
               onChange={(e) => setCountryFilter(e.target.value)}
+              aria-label={t('a11y.contacts.country_filter', {
+                defaultValue: 'Filter contacts by country',
+              })}
               className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-36"
             >
               <option value="">

@@ -453,6 +453,9 @@ export function ProjectsPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                aria-label={t('a11y.projects.status_filter', {
+                  defaultValue: 'Filter projects by status',
+                })}
                 className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-36"
               >
                 <option value="all">
@@ -475,6 +478,9 @@ export function ProjectsPage() {
               <select
                 value={regionFilter}
                 onChange={(e) => setRegionFilter(e.target.value)}
+                aria-label={t('a11y.projects.region_filter', {
+                  defaultValue: 'Filter projects by region',
+                })}
                 className="h-10 appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary focus:outline-none focus:ring-2 focus:ring-oe-blue sm:w-40"
               >
                 {availableRegions.map((r) => (
@@ -901,11 +907,18 @@ function ProjectCard({
             )}
             <PinButton projectId={project.id} />
             <button
+              type="button"
               className="flex h-7 w-7 min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-content-tertiary hover:bg-surface-secondary transition-colors"
               onClick={(e) => {
                 e.stopPropagation();
                 setMenuOpen(!menuOpen);
               }}
+              aria-label={t('a11y.projects.card_actions', {
+                defaultValue: 'Project actions for {{name}}',
+                name: project.name,
+              })}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
             >
               <MoreHorizontal size={14} />
             </button>

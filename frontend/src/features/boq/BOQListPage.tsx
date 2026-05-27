@@ -588,13 +588,26 @@ export function BOQListPage() {
         <div>
           <h1 className="text-2xl font-bold text-content-primary">{t('boq.title')}</h1>
           <p className="mt-1 text-sm text-content-secondary">
-            {allBoqs
-              ? t('boq.list_subtitle_count', {
+            {/*
+              Bug #217 (mobile /boq stuck on "Loading…"): the subtitle previously
+              gated on ``allBoqs`` truthiness alone, but the per-project boqs
+              query is ``enabled`` only after ``scopedProjects`` resolves and
+              has at least one entry — so on first paint (and forever if the
+              user has zero projects) ``allBoqs`` stays ``undefined`` and the
+              subtitle hangs on "Loading…". On a slow mobile connection that
+              extends the empty-skeleton window past the user's patience and
+              the page reads as broken. Drive the spinner from the actual
+              ``isLoading`` query state instead, and fall back to a real
+              "0 estimates" count once the query has settled (or was never
+              enabled because there are no projects yet).
+            */}
+            {isLoading
+              ? t('common.loading')
+              : t('boq.list_subtitle_count', {
                   defaultValue: '{{boqCount}} estimates across {{projectCount}} projects',
-                  boqCount: allBoqs.length,
+                  boqCount: allBoqs?.length ?? 0,
                   projectCount: projects?.length ?? 0,
-                })
-              : t('common.loading')}
+                })}
           </p>
         </div>
         <div className="flex items-center gap-2">

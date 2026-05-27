@@ -368,6 +368,9 @@ export function ContractsPage() {
         <select
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
+          aria-label={t('a11y.contracts.project_filter', {
+            defaultValue: 'Filter contracts by project',
+          })}
           className={clsx(inputCls, 'max-w-[260px]')}
         >
           <option value="">
@@ -398,6 +401,9 @@ export function ContractsPage() {
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as ContractType | '')}
+            aria-label={t('a11y.contracts.type_filter', {
+              defaultValue: 'Filter contracts by type',
+            })}
             className={clsx(inputCls, 'max-w-[200px]')}
           >
             <option value="">
@@ -417,6 +423,9 @@ export function ContractsPage() {
           <select
             value={effectiveClaimsContract}
             onChange={(e) => setClaimsContractId(e.target.value)}
+            aria-label={t('a11y.contracts.claims_contract_filter', {
+              defaultValue: 'Filter by claims contract',
+            })}
             className={clsx(inputCls, 'max-w-[260px]')}
           >
             {contracts.map((c) => (
@@ -430,6 +439,9 @@ export function ContractsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label={t('a11y.contracts.status_filter', {
+            defaultValue: 'Filter contracts by status',
+          })}
           className={clsx(inputCls, 'max-w-[180px]')}
         >
           <option value="">

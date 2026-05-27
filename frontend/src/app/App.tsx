@@ -956,7 +956,10 @@ export default function App() {
         <Route path="/projects/:projectId/bi-dashboards" element={<P title="BI Dashboards"><BIDashboardsPage /></P>} />
 
         {/* Convenience route aliases — redirect to canonical paths */}
-        <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        {/* `/dashboard` renders DashboardPage directly. The earlier alias
+            redirected to `/`, but BUG-215 made `/` redirect authed users to
+            `/projects`, leaving DashboardPage unreachable. */}
+        <Route path="/dashboard" element={<P title="Dashboard"><DashboardPage /></P>} />
         <Route path="/change-orders" element={<Navigate to="/changeorders" replace />} />
         <Route path="/punch-list" element={<Navigate to="/punchlist" replace />} />
         {/* Variations (FIDIC/JCT VOs) — distinct from generic change-orders;

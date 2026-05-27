@@ -581,6 +581,9 @@ export function AssembliesPage() {
             <select
               value={category}
               onChange={(e) => handleCategoryChange(e.target.value)}
+              aria-label={t('a11y.assemblies.category_filter', {
+                defaultValue: 'Filter assemblies by category',
+              })}
               className="h-10 w-full appearance-none rounded-lg border border-border bg-surface-primary pl-3 pr-9 text-sm text-content-primary transition-all duration-fast ease-oe focus:outline-none focus:ring-2 focus:ring-oe-blue focus:border-transparent hover:border-content-tertiary sm:w-44"
             >
               {CATEGORY_VALUES.map((c) => (
@@ -1647,15 +1650,27 @@ function AssemblyCard({
           </div>
           <div className="flex items-center gap-1">
             <button
+              type="button"
               onClick={(e) => { e.stopPropagation(); setPreviewOpen(true); }}
               className="opacity-0 group-hover:opacity-100 flex h-6 w-6 items-center justify-center rounded-md text-content-tertiary hover:bg-surface-secondary hover:text-content-primary transition-all"
               title={t('assemblies.quick_preview', { defaultValue: 'Quick preview' })}
+              aria-label={t('a11y.assemblies.quick_preview', {
+                defaultValue: 'Quick preview of {{name}}',
+                name: assembly.name,
+              })}
             >
               <Eye size={14} />
             </button>
             <button
+              type="button"
               onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
               className="opacity-0 group-hover:opacity-100 flex h-6 w-6 items-center justify-center rounded-md text-content-tertiary hover:bg-surface-secondary hover:text-content-primary transition-all"
+              aria-label={t('a11y.assemblies.card_actions', {
+                defaultValue: 'Actions for assembly {{name}}',
+                name: assembly.name,
+              })}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
             >
               <MoreHorizontal size={14} />
             </button>

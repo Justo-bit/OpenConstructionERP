@@ -222,7 +222,7 @@ export function ChangeOrdersPulseWidget({
   const navigate = useNavigate();
   const { data, isLoading } = useGracefulQuery<ChangeOrderSummary>(
     ['proj-widget-co', projectId],
-    `/v1/changeorders/summary?project_id=${projectId}`,
+    `/v1/changeorders/summary/?project_id=${projectId}`,
   );
 
   const title = t('project.widget.change-orders.title', {
