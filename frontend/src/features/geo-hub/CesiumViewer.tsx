@@ -19,9 +19,9 @@
  *   absent so a freshly-anchored project doesn't error out.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe2, Download } from 'lucide-react';
+import { Globe2, Download, AlertTriangle, RefreshCw } from 'lucide-react';
 
 import {
   clusterProjects,
@@ -333,9 +333,24 @@ export function CesiumViewer({
   const onCameraChangeRef = useRef(onCameraChange);
   onMouseMoveRef.current = onMouseMove;
   onCameraChangeRef.current = onCameraChange;
+  // ``absent`` = ``import('cesium')`` itself failed (community build w/o
+  //   the optional dep — actionable hint: ``npm install cesium``).
+  // ``init_failed`` = module loaded but ``new Viewer()`` threw — most
+  //   commonly WebGL blocked / disabled / hardware-accel off, but also
+  //   covers transient init bugs. Distinct UI so we don't mislead users
+  //   into running ``npm install`` when the real fix is WebGL.
   const [cesiumStatus, setCesiumStatus] = useState<
-    'pending' | 'loaded' | 'absent'
+    'pending' | 'loaded' | 'absent' | 'init_failed'
   >('pending');
+  // Bumped to force a fresh viewer-init attempt after a transient failure
+  // (e.g. user enabled hardware acceleration → clicks Retry). Resets the
+  // status back to 'pending' first so the loading spinner replaces the
+  // error card while the retry is in flight.
+  const [reloadKey, setReloadKey] = useState<number>(0);
+  const retryViewer = useCallback(() => {
+    setCesiumStatus('pending');
+    setReloadKey((k) => k + 1);
+  }, []);
 
   // Stable string signature of the viewer-relevant inputs. Re-running
   // the effect on every parent re-render (React Query returns a new
@@ -601,7 +616,10 @@ export function CesiumViewer({
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[geo_hub] Cesium viewer init failed', err);
-        setCesiumStatus('absent');
+        // The module imported fine — this is a runtime init failure
+        // (WebGL blocked, GPU disabled, transient bug). Distinct status
+        // so the UI offers a retry button rather than an install hint.
+        setCesiumStatus('init_failed');
       }
     })();
 
@@ -652,8 +670,10 @@ export function CesiumViewer({
     };
     // ``signature`` collapses ``mapConfig`` into a stable string that
     // only changes when something the viewer actually renders changes.
+    // ``reloadKey`` is bumped by the retry button so a user-initiated
+    // retry after init_failed forces a fresh attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature]);
+  }, [signature, reloadKey]);
 
   // Stable signature for the pin layers — derived from the ids of each
   // pin so a refetch with identical content does not re-run the effect.
@@ -1189,7 +1209,10 @@ export function CesiumViewer({
       )}
       {cesiumStatus === 'absent' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center p-6">
-          <div className="relative w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-slate-900/70 p-6 text-center text-slate-100 shadow-xl backdrop-blur-md ring-1 ring-white/5">
+          <div
+            role="alert"
+            className="relative w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-slate-900/70 p-6 text-center text-slate-100 shadow-xl backdrop-blur-md ring-1 ring-white/5"
+          >
             <div
               aria-hidden
               className="pointer-events-none absolute -inset-px rounded-xl bg-gradient-to-br from-amber-500/30 to-orange-500/20 opacity-60 blur-2xl ring-1 ring-amber-400/20"
@@ -1212,6 +1235,55 @@ export function CesiumViewer({
               <code className="mt-4 inline-block rounded-sm bg-slate-800/80 px-2 py-1 font-mono text-xs text-slate-200 ring-1 ring-white/10">
                 npm install cesium
               </code>
+            </div>
+          </div>
+        </div>
+      )}
+      {cesiumStatus === 'init_failed' && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center p-6">
+          <div
+            role="alert"
+            className="relative w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-slate-900/70 p-6 text-center text-slate-100 shadow-xl backdrop-blur-md ring-1 ring-white/5"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -inset-px rounded-xl bg-gradient-to-br from-red-500/30 to-rose-500/20 opacity-60 blur-2xl ring-1 ring-red-400/20"
+            />
+            <div className="relative">
+              <div className="mx-auto mb-4 inline-flex h-10 w-10 items-center justify-center rounded-md bg-red-500/15 text-red-300 ring-1 ring-red-400/30">
+                <AlertTriangle size={18} strokeWidth={2} />
+              </div>
+              <h3 className="text-base font-semibold text-white">
+                {t('geo_hub.cesium_init_failed_title', {
+                  defaultValue: 'Could not start the 3D globe',
+                })}
+              </h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
+                {t('geo_hub.cesium_init_failed_hint', {
+                  defaultValue:
+                    'The 3D globe runtime loaded but failed to initialise. This usually means WebGL is blocked or hardware acceleration is disabled in your browser.',
+                })}
+              </p>
+              <button
+                type="button"
+                onClick={retryViewer}
+                data-testid="geo-hub-cesium-retry"
+                className={[
+                  'mt-5 inline-flex items-center gap-1.5 rounded-md',
+                  'bg-white px-3 py-1.5 text-xs font-semibold text-slate-900',
+                  'shadow-sm transition hover:bg-slate-100',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60',
+                ].join(' ')}
+              >
+                <RefreshCw size={13} strokeWidth={2.25} />
+                {t('common.retry', { defaultValue: 'Retry' })}
+              </button>
+              <p className="mt-3 text-2xs text-slate-400">
+                {t('geo_hub.cesium_init_failed_check', {
+                  defaultValue:
+                    'Tip: enable hardware acceleration in your browser settings, then click Retry.',
+                })}
+              </p>
             </div>
           </div>
         </div>

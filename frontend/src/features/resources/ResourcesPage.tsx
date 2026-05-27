@@ -31,6 +31,11 @@ import {
   Flame,
   AlertOctagon,
   ArrowRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Filter,
 } from 'lucide-react';
 import {
   Button,
@@ -203,11 +208,96 @@ function WorkflowIntro() {
 
 /* ─── Page ─── */
 
+/* ─── Persisted sort/filter state ─────────────────────────────────────
+ *
+ * Each user gets their preferred sort key/direction and status filter
+ * sticky across navigations. We use sessionStorage (not localStorage)
+ * so a fresh tab starts clean, mirroring how the requests-tab sort
+ * works elsewhere on this page.
+ */
+type ResourceSortKey = 'code' | 'name' | 'resource_type' | 'status' | 'default_cost_rate';
+type SortDir = 'asc' | 'desc';
+
+const RES_SORT_STORAGE_KEY = 'oe.res.sort';
+const RES_STATUS_STORAGE_KEY = 'oe.res.statusFilter';
+const RES_CURRENCY_STORAGE_KEY = 'oe.res.currencyFilter';
+
+function loadStoredSort(): { key: ResourceSortKey; dir: SortDir } {
+  try {
+    const raw = sessionStorage.getItem(RES_SORT_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { key: ResourceSortKey; dir: SortDir };
+      if (parsed && parsed.key && parsed.dir) return parsed;
+    }
+  } catch {
+    /* ignore — corrupt JSON falls through to default */
+  }
+  return { key: 'code', dir: 'asc' };
+}
+
+function buildResourcesCsv(rows: Resource[]): string {
+  // Minimal, locale-safe CSV — escape quotes and wrap every cell, RFC-4180.
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const header = ['code', 'name', 'type', 'status', 'rate', 'currency', 'notes'];
+  const lines = [header.map(esc).join(',')];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.code,
+        r.name,
+        r.resource_type,
+        r.status,
+        r.default_cost_rate,
+        r.currency,
+        r.notes,
+      ]
+        .map(esc)
+        .join(','),
+    );
+  }
+  return lines.join('\r\n');
+}
+
+function downloadCsv(filename: string, csv: string) {
+  // BOM ensures Excel opens UTF-8 correctly (German / Russian / Greek
+  // umlauts in code/name would otherwise mojibake).
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function ResourcesPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('resources');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<ResourceType | ''>('');
+  const [statusFilter, setStatusFilter] = useState<ResourceStatus | ''>(() => {
+    try {
+      return (
+        (sessionStorage.getItem(RES_STATUS_STORAGE_KEY) as ResourceStatus | '') ?? ''
+      );
+    } catch {
+      return '';
+    }
+  });
+  const [currencyFilter, setCurrencyFilter] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem(RES_CURRENCY_STORAGE_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const [sortState, setSortState] = useState<{ key: ResourceSortKey; dir: SortDir }>(
+    () => loadStoredSort(),
+  );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [proposeOpen, setProposeOpen] = useState(false);
@@ -215,6 +305,29 @@ export function ResourcesPage() {
   // dialog sit at page-root and survive table re-renders.
   const [editTarget, setEditTarget] = useState<Resource | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Resource | null>(null);
+
+  // Persist sort + filters across remounts.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(RES_SORT_STORAGE_KEY, JSON.stringify(sortState));
+    } catch {
+      /* storage quota / disabled — non-fatal */
+    }
+  }, [sortState]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(RES_STATUS_STORAGE_KEY, statusFilter);
+    } catch {
+      /* non-fatal */
+    }
+  }, [statusFilter]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(RES_CURRENCY_STORAGE_KEY, currencyFilter);
+    } catch {
+      /* non-fatal */
+    }
+  }, [currencyFilter]);
   // Requests tab — lifted up so the page-header "New Request" button can open
   // the modal owned by the tab. Persisted across tab switches.
   const [newRequestOpen, setNewRequestOpen] = useState(false);
@@ -233,6 +346,58 @@ export function ResourcesPage() {
         title: t('resources.deleted_ok', { defaultValue: 'Resource deleted' }),
       });
       setDeleteTarget(null);
+    },
+    onError: (err) => addToast({ type: 'error', title: getErrorMessage(err) }),
+  });
+
+  /* Inline rate edit — optimistically PATCH a single field. Errors roll
+     back via invalidate (we don't need a manual snapshot because the
+     query has staleTime 0). */
+  const inlineRateMut = useMutation({
+    mutationFn: ({ id, rate }: { id: string; rate: number }) =>
+      updateResource(id, { default_cost_rate: rate }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['resources', 'list'] });
+    },
+    onError: (err) => {
+      addToast({ type: 'error', title: getErrorMessage(err) });
+      qc.invalidateQueries({ queryKey: ['resources', 'list'] });
+    },
+  });
+
+  /* Bulk delete — mirrors AssignmentsTab pattern. Promise.allSettled
+     so a single 409 doesn't kill the others. */
+  const bulkDeleteMut = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(ids.map((id) => deleteResource(id)));
+      return {
+        total: ids.length,
+        failed: results.filter((r) => r.status === 'rejected').length,
+      };
+    },
+    onSuccess: ({ total, failed }) => {
+      qc.invalidateQueries({ queryKey: ['resources', 'list'] });
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      if (failed === 0) {
+        addToast({
+          type: 'success',
+          title: t('resources.bulk_delete_resources_ok', {
+            defaultValue: '{{count}} resources deleted',
+            count: total,
+          }),
+        });
+      } else {
+        addToast({
+          type: 'warning',
+          title: t('resources.bulk_delete_partial', {
+            defaultValue: '{{ok}} of {{total}} deleted, {{failed}} failed',
+            ok: total - failed,
+            total,
+            failed,
+          }),
+        });
+      }
     },
     onError: (err) => addToast({ type: 'error', title: getErrorMessage(err) }),
   });
@@ -265,10 +430,22 @@ export function ResourcesPage() {
 
   const allResources: Resource[] = resourcesQ.data ?? [];
 
+  // Distinct currencies in the loaded set — drives the currency-filter
+  // dropdown. Sorted for stable order across renders.
+  const availableCurrencies = useMemo(() => {
+    const seen = new Set<string>();
+    for (const r of allResources) {
+      if (r.currency) seen.add(r.currency);
+    }
+    return Array.from(seen).sort();
+  }, [allResources]);
+
   const filteredResources = useMemo(() => {
-    const s = search.toLowerCase();
-    return allResources.filter((r) => {
+    const s = search.trim().toLowerCase();
+    const filtered = allResources.filter((r) => {
       if (typeFilter && r.resource_type !== typeFilter) return false;
+      if (statusFilter && r.status !== statusFilter) return false;
+      if (currencyFilter && r.currency !== currencyFilter) return false;
       if (!s) return true;
       return (
         r.name.toLowerCase().includes(s) ||
@@ -276,7 +453,48 @@ export function ResourcesPage() {
         r.notes.toLowerCase().includes(s)
       );
     });
-  }, [allResources, search, typeFilter]);
+    const dir = sortState.dir === 'asc' ? 1 : -1;
+    const { key } = sortState;
+    return filtered.slice().sort((a, b) => {
+      let cmp = 0;
+      if (key === 'default_cost_rate') {
+        cmp = (Number(a.default_cost_rate) || 0) - (Number(b.default_cost_rate) || 0);
+      } else {
+        // Locale-aware string sort — handles diacritics & non-Latin codes
+        // (CWICR has Cyrillic/CJK in some seeds).
+        cmp = String(a[key] ?? '').localeCompare(String(b[key] ?? ''), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+      }
+      return cmp * dir;
+    });
+  }, [allResources, search, typeFilter, statusFilter, currencyFilter, sortState]);
+
+  // Drop selections that fall outside the visible filtered set so the
+  // "Selected: N" counter never lies and the bulk-delete confirmation
+  // always matches the rendered checkboxes.
+  useEffect(() => {
+    const visible = new Set(filteredResources.map((r) => r.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredResources]);
+
+  const hasActiveFilters =
+    !!search || !!typeFilter || !!statusFilter || !!currencyFilter;
+  const clearAllFilters = () => {
+    setSearch('');
+    setTypeFilter('');
+    setStatusFilter('');
+    setCurrencyFilter('');
+  };
 
   const isLoading = tab === 'resources' && resourcesQ.isLoading;
 
@@ -368,8 +586,13 @@ export function ResourcesPage() {
                 type="button"
                 onClick={() => {
                   setTab(tabItem.id);
+                  // Search resets per-tab (each tab has its own logical
+                  // search scope). Type/status/currency stay because the
+                  // user explicitly persisted them via sessionStorage.
                   setSearch('');
-                  setTypeFilter('');
+                  if (tabItem.id !== 'resources') {
+                    setTypeFilter('');
+                  }
                 }}
                 className={clsx(
                   'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
@@ -388,24 +611,49 @@ export function ResourcesPage() {
 
       {tab === 'resources' && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Filter toolbar — search + type + status + currency + clear */}
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="search"
+            aria-label={t('resources.filter_toolbar_aria', {
+              defaultValue: 'Filter resources',
+            })}
+          >
             <div className="relative flex-1 min-w-[200px] max-w-md">
               <Search
                 size={14}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-content-tertiary"
+                aria-hidden="true"
               />
               <input
                 type="text"
-                placeholder={t('common.search', { defaultValue: 'Search…' })}
+                placeholder={t('resources.search_placeholder', {
+                  defaultValue: 'Search code, name or notes…',
+                })}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className={clsx(inputCls, 'pl-8')}
+                className={clsx(inputCls, 'pl-8 pr-8')}
+                aria-label={t('common.search', { defaultValue: 'Search' })}
+                data-testid="resources-search"
               />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  aria-label={t('common.clear', { defaultValue: 'Clear' })}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-content-tertiary hover:bg-surface-secondary hover:text-content-primary"
+                  data-testid="resources-search-clear"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value as ResourceType | '')}
-              className={clsx(inputCls, 'max-w-[200px]')}
+              className={clsx(inputCls, 'max-w-[180px]')}
+              aria-label={t('resources.filter_type', { defaultValue: 'Filter by type' })}
+              data-testid="resources-type-filter"
             >
               <option value="">
                 {t('resources.all_types', { defaultValue: 'All types' })}
@@ -423,6 +671,83 @@ export function ResourcesPage() {
                 {t('resources.type_subcontractor', { defaultValue: 'Subcontractor' })}
               </option>
             </select>
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as ResourceStatus | '')
+              }
+              className={clsx(inputCls, 'max-w-[180px]')}
+              aria-label={t('resources.filter_status', {
+                defaultValue: 'Filter by status',
+              })}
+              data-testid="resources-status-filter"
+            >
+              <option value="">
+                {t('resources.all_statuses', { defaultValue: 'All statuses' })}
+              </option>
+              <option value="active">
+                {t('resources.status_active', { defaultValue: 'Active' })}
+              </option>
+              <option value="on_leave">
+                {t('resources.status_on_leave', { defaultValue: 'On leave' })}
+              </option>
+              <option value="inactive">
+                {t('resources.status_inactive', { defaultValue: 'Inactive' })}
+              </option>
+            </select>
+            {availableCurrencies.length > 1 && (
+              <select
+                value={currencyFilter}
+                onChange={(e) => setCurrencyFilter(e.target.value)}
+                className={clsx(inputCls, 'max-w-[140px]')}
+                aria-label={t('resources.filter_currency', {
+                  defaultValue: 'Filter by currency',
+                })}
+                data-testid="resources-currency-filter"
+              >
+                <option value="">
+                  {t('resources.all_currencies', {
+                    defaultValue: 'All currencies',
+                  })}
+                </option>
+                {availableCurrencies.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            )}
+            {hasActiveFilters && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Filter size={12} />}
+                onClick={clearAllFilters}
+                data-testid="resources-clear-filters"
+                aria-label={t('resources.clear_filters_aria', {
+                  defaultValue: 'Clear all filters',
+                })}
+              >
+                {t('resources.clear_filters', { defaultValue: 'Clear filters' })}
+              </Button>
+            )}
+            <div
+              className="ms-auto text-xs tabular-nums text-content-tertiary"
+              aria-live="polite"
+              role="status"
+              data-testid="resources-result-count"
+            >
+              {hasActiveFilters
+                ? t('resources.result_count_filtered', {
+                    defaultValue: '{{shown}} of {{total}}',
+                    shown: filteredResources.length,
+                    total: allResources.length,
+                  })
+                : t('resources.result_count', {
+                    defaultValue: '{{count}} resources',
+                    count: allResources.length,
+                  })}
+            </div>
           </div>
 
           <Card padding="none">
@@ -443,13 +768,101 @@ export function ResourcesPage() {
                 }}
               />
             ) : (
-              <ResourceTable
-                rows={filteredResources}
-                onSelect={(id) => setSelectedId(id)}
-                onEdit={(r) => setEditTarget(r)}
-                onDelete={(r) => setDeleteTarget(r)}
-                emptyAction={() => setCreateOpen(true)}
-              />
+              <>
+                {/* Bulk action bar — visible when at least one row is selected */}
+                {selectedIds.size > 0 && (
+                  <div
+                    className="flex items-center gap-2 border-b border-border-light bg-oe-blue-subtle/40 px-4 py-2 text-xs"
+                    data-testid="resources-bulk-bar"
+                  >
+                    <span className="font-medium">
+                      {t('resources.selected_count', {
+                        defaultValue: '{{count}} selected',
+                        count: selectedIds.size,
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds(new Set())}
+                      className="text-content-tertiary hover:text-content-primary"
+                    >
+                      {t('common.clear', { defaultValue: 'Clear' })}
+                    </button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="ms-auto"
+                      icon={<Download size={12} />}
+                      onClick={() => {
+                        const selectedRows = filteredResources.filter((r) =>
+                          selectedIds.has(r.id),
+                        );
+                        const stamp = new Date().toISOString().slice(0, 10);
+                        downloadCsv(
+                          `resources-${stamp}.csv`,
+                          buildResourcesCsv(selectedRows),
+                        );
+                      }}
+                      data-testid="resources-bulk-export"
+                    >
+                      {t('resources.bulk_export_csv', {
+                        defaultValue: 'Export CSV',
+                      })}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="!text-rose-600 hover:!bg-rose-50"
+                      icon={<Trash2 size={12} />}
+                      onClick={() => setBulkDeleteOpen(true)}
+                      data-testid="resources-bulk-delete"
+                      disabled={bulkDeleteMut.isPending}
+                    >
+                      {t('resources.bulk_delete', { defaultValue: 'Delete selected' })}
+                    </Button>
+                  </div>
+                )}
+                <ResourceTable
+                  rows={filteredResources}
+                  total={allResources.length}
+                  hasActiveFilters={hasActiveFilters}
+                  search={search}
+                  selectedIds={selectedIds}
+                  onToggleOne={(id) =>
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                  onToggleAll={() =>
+                    setSelectedIds((prev) =>
+                      prev.size === filteredResources.length
+                        ? new Set()
+                        : new Set(filteredResources.map((r) => r.id)),
+                    )
+                  }
+                  sortKey={sortState.key}
+                  sortDir={sortState.dir}
+                  onSort={(key) =>
+                    setSortState((prev) =>
+                      prev.key === key
+                        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+                        : { key, dir: 'asc' },
+                    )
+                  }
+                  onSelect={(id) => setSelectedId(id)}
+                  onEdit={(r) => setEditTarget(r)}
+                  onDelete={(r) => setDeleteTarget(r)}
+                  emptyAction={() => setCreateOpen(true)}
+                  onClearFilters={clearAllFilters}
+                  onInlineRateSave={(id, rate) =>
+                    inlineRateMut.mutate({ id, rate })
+                  }
+                  pendingRateId={inlineRateMut.variables?.id ?? null}
+                />
+              </>
             )}
           </Card>
         </>
@@ -509,6 +922,25 @@ export function ResourcesPage() {
         onCancel={() => setDeleteTarget(null)}
       />
 
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        title={t('resources.bulk_delete_resources_title', {
+          defaultValue: 'Delete {{count}} resources?',
+          count: selectedIds.size,
+        })}
+        message={t('resources.bulk_delete_resources_msg', {
+          defaultValue:
+            'This permanently removes {{count}} resources. Any active assignments referencing them will block their delete — those rows stay and a warning will be shown.',
+          count: selectedIds.size,
+        })}
+        confirmLabel={t('common.delete', { defaultValue: 'Delete' })}
+        cancelLabel={t('common.cancel', { defaultValue: 'Cancel' })}
+        variant="danger"
+        loading={bulkDeleteMut.isPending}
+        onConfirm={() => bulkDeleteMut.mutate(Array.from(selectedIds))}
+        onCancel={() => setBulkDeleteOpen(false)}
+      />
+
       {proposeOpen && (
         <ProposeAssignmentModal
           resources={allResources}
@@ -519,157 +951,448 @@ export function ResourcesPage() {
   );
 }
 
-/* ─── Resource table ─── */
+/* ─── Resource table ───────────────────────────────────────────────────
+ *
+ * Renders the filtered + sorted resources with:
+ *   - bulk-select checkbox column (header = indeterminate when partial)
+ *   - sortable headers (code, name, type, status, rate) with aria-sort
+ *   - inline rate edit (double-click cell → input → Enter/Esc/blur)
+ *   - per-row edit / delete buttons (data-row-action guards row click)
+ *
+ * Empty state is three-way:
+ *   1. No resources at all → CTA to create.
+ *   2. Filters active but nothing matches → CTA to clear filters.
+ *   3. Search term but nothing matches → quotes the search term.
+ */
 
-function ResourceTable({
-  rows,
-  onSelect,
-  onEdit,
-  onDelete,
-  emptyAction,
-}: {
-  rows: Resource[];
-  onSelect: (id: string) => void;
-  onEdit: (r: Resource) => void;
-  onDelete: (r: Resource) => void;
-  emptyAction: () => void;
-}) {
+interface SortableHeaderProps {
+  label: string;
+  columnKey: ResourceSortKey;
+  activeKey: ResourceSortKey;
+  dir: SortDir;
+  align?: 'left' | 'right';
+  onSort: (key: ResourceSortKey) => void;
+}
+
+function SortableHeader({
+  label,
+  columnKey,
+  activeKey,
+  dir,
+  align = 'left',
+  onSort,
+}: SortableHeaderProps) {
+  const isActive = activeKey === columnKey;
+  const Arrow = !isActive ? ArrowUpDown : dir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={clsx(
+        'px-4 py-2.5',
+        align === 'right' ? 'text-right' : 'text-left',
+      )}
+      aria-sort={isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      scope="col"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(columnKey)}
+        className={clsx(
+          'inline-flex items-center gap-1 font-medium uppercase tracking-wide transition-colors',
+          isActive ? 'text-content-primary' : 'hover:text-content-primary',
+          align === 'right' && 'flex-row-reverse',
+        )}
+        data-testid={`resources-sort-${columnKey}`}
+      >
+        {label}
+        <Arrow size={11} className={clsx(!isActive && 'opacity-40')} aria-hidden="true" />
+      </button>
+    </th>
+  );
+}
+
+interface InlineRateCellProps {
+  resource: Resource;
+  pending: boolean;
+  onSave: (id: string, rate: number) => void;
+}
+
+function InlineRateCell({ resource, pending, onSave }: InlineRateCellProps) {
   const { t } = useTranslation();
-  if (rows.length === 0) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(resource.default_cost_rate ?? '0'));
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Re-seed local state whenever the underlying row changes (e.g. server
+  // round-trip finished, or another user edited it via WebSocket).
+  useEffect(() => {
+    if (!editing) setValue(String(resource.default_cost_rate ?? '0'));
+  }, [resource.default_cost_rate, editing]);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  const commit = () => {
+    const num = Number(value);
+    if (Number.isNaN(num) || num < 0) {
+      // Reject silently and restore — the toast would be too noisy for an
+      // inline edit. The original value is back, the user sees that.
+      setValue(String(resource.default_cost_rate ?? '0'));
+      setEditing(false);
+      return;
+    }
+    if (num !== Number(resource.default_cost_rate)) {
+      onSave(resource.id, num);
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
     return (
-      <EmptyState
-        icon={<Users size={22} />}
-        title={t('resources.empty_title', { defaultValue: 'No resources yet' })}
-        description={t('resources.empty_desc', {
-          defaultValue:
-            'Add people, crews and equipment to start planning their assignments. Click + New Resource to create your first one.',
-        })}
-        action={{
-          label: t('resources.new_resource', { defaultValue: 'New Resource' }),
-          onClick: emptyAction,
+      <input
+        ref={inputRef}
+        type="number"
+        min={0}
+        step="0.01"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          else if (e.key === 'Escape') {
+            setValue(String(resource.default_cost_rate ?? '0'));
+            setEditing(false);
+          }
         }}
+        // Stop the row-click handler firing while the user types.
+        onClick={(e) => e.stopPropagation()}
+        className="w-24 rounded border border-oe-blue bg-surface-primary px-2 py-0.5 text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-oe-blue/30"
+        aria-label={t('resources.edit_rate_aria', {
+          defaultValue: 'Edit rate for {{name}}',
+          name: resource.name,
+        })}
+        data-testid={`resource-rate-input-${resource.id}`}
       />
     );
   }
   return (
-    <>
-      {/* Inline how-to hint above the grid — makes the edit / delete
-          affordance discoverable without a dedicated tour. */}
-      <div className="flex items-center gap-2 px-4 py-2 text-xs text-content-tertiary border-b border-border-light bg-surface-secondary/40">
-        <Pencil size={11} />
-        <span>
-          {t('resources.row_hint', {
+    <button
+      type="button"
+      data-row-action
+      onClick={(e) => {
+        e.stopPropagation();
+        setEditing(true);
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        setEditing(true);
+      }}
+      className={clsx(
+        'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-right tabular-nums transition-colors',
+        'hover:bg-oe-blue-subtle hover:text-oe-blue',
+        pending && 'opacity-50',
+      )}
+      title={t('resources.edit_rate_hint', {
+        defaultValue: 'Click to edit rate',
+      })}
+      data-testid={`resource-rate-${resource.id}`}
+      disabled={pending}
+    >
+      <MoneyDisplay
+        amount={Number(resource.default_cost_rate) || 0}
+        currency={resource.currency || undefined}
+      />
+      {pending && <Loader2 size={10} className="animate-spin" />}
+    </button>
+  );
+}
+
+interface ResourceTableProps {
+  rows: Resource[];
+  total: number;
+  hasActiveFilters: boolean;
+  search: string;
+  selectedIds: Set<string>;
+  onToggleOne: (id: string) => void;
+  onToggleAll: () => void;
+  sortKey: ResourceSortKey;
+  sortDir: SortDir;
+  onSort: (key: ResourceSortKey) => void;
+  onSelect: (id: string) => void;
+  onEdit: (r: Resource) => void;
+  onDelete: (r: Resource) => void;
+  emptyAction: () => void;
+  onClearFilters: () => void;
+  onInlineRateSave: (id: string, rate: number) => void;
+  pendingRateId: string | null;
+}
+
+function ResourceTable({
+  rows,
+  total,
+  hasActiveFilters: _hasActiveFilters,
+  search,
+  selectedIds,
+  onToggleOne,
+  onToggleAll,
+  sortKey,
+  sortDir,
+  onSort,
+  onSelect,
+  onEdit,
+  onDelete,
+  emptyAction,
+  onClearFilters,
+  onInlineRateSave,
+  pendingRateId,
+}: ResourceTableProps) {
+  const { t } = useTranslation();
+
+  // Three-way empty state — see header comment above.
+  if (rows.length === 0) {
+    if (total === 0) {
+      return (
+        <EmptyState
+          icon={<Users size={22} />}
+          title={t('resources.empty_title', { defaultValue: 'No resources yet' })}
+          description={t('resources.empty_desc', {
             defaultValue:
-              'Click a row to see the resource details. Use the pencil to edit, or the trash icon to delete.',
+              'Add people, crews and equipment to start planning their assignments. Click + New Resource to create your first one, or import an Excel file from the catalog page.',
+          })}
+          action={{
+            label: t('resources.new_resource', { defaultValue: 'New Resource' }),
+            onClick: emptyAction,
+          }}
+        />
+      );
+    }
+    if (search.trim()) {
+      return (
+        <EmptyState
+          icon={<Search size={22} />}
+          title={t('resources.empty_search_title', {
+            defaultValue: 'No resources match "{{q}}"',
+            q: search.trim(),
+          })}
+          description={t('resources.empty_search_desc', {
+            defaultValue:
+              'Try a shorter search, fewer filters, or check spelling. Search looks at code, name and notes.',
+          })}
+          action={{
+            label: t('resources.clear_filters', { defaultValue: 'Clear filters' }),
+            onClick: onClearFilters,
+          }}
+        />
+      );
+    }
+    return (
+      <EmptyState
+        icon={<Filter size={22} />}
+        title={t('resources.empty_filter_title', {
+          defaultValue: 'No resources match the current filters',
+        })}
+        description={t('resources.empty_filter_desc', {
+          defaultValue:
+            'Adjust the type, status or currency filter — or clear all filters to see everything.',
+        })}
+        action={{
+          label: t('resources.clear_filters', { defaultValue: 'Clear filters' }),
+          onClick: onClearFilters,
+        }}
+      />
+    );
+  }
+
+  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
+  const someSelected = selectedIds.size > 0 && selectedIds.size < rows.length;
+
+  return (
+    <>
+      {/* Inline how-to hint above the grid — makes the edit / delete /
+          inline-rate-edit affordance discoverable without a dedicated tour. */}
+      <div className="flex items-center gap-2 px-4 py-2 text-xs text-content-tertiary border-b border-border-light bg-surface-secondary/40">
+        <Pencil size={11} aria-hidden="true" />
+        <span>
+          {t('resources.row_hint_v2', {
+            defaultValue:
+              'Click a row for details. Click the rate to edit inline. Use the pencil or trash icons for full edit / delete. Click headers to sort.',
           })}
         </span>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-surface-secondary text-content-tertiary text-xs uppercase tracking-wide">
+        <table className="w-full text-sm" data-testid="resources-table">
+          <thead className="bg-surface-secondary text-content-tertiary text-xs">
             <tr>
-              <th className="px-4 py-2.5 text-left">
-                {t('resources.col_code', { defaultValue: 'Code' })}
+              <th className="px-3 py-2.5 text-left w-8" scope="col">
+                <input
+                  type="checkbox"
+                  aria-label={t('common.select_all', { defaultValue: 'Select all' })}
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelected;
+                  }}
+                  onChange={onToggleAll}
+                  data-testid="resources-select-all"
+                />
               </th>
-              <th className="px-4 py-2.5 text-left">
-                {t('resources.col_name', { defaultValue: 'Name' })}
-              </th>
-              <th className="px-4 py-2.5 text-left">
-                {t('resources.col_type', { defaultValue: 'Type' })}
-              </th>
-              <th className="px-4 py-2.5 text-left">
-                {t('resources.col_status', { defaultValue: 'Status' })}
-              </th>
-              <th className="px-4 py-2.5 text-right">
-                {t('resources.col_rate', { defaultValue: 'Rate' })}
-              </th>
-              <th className="px-4 py-2.5 text-right w-24">
+              <SortableHeader
+                label={t('resources.col_code', { defaultValue: 'Code' })}
+                columnKey="code"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+              />
+              <SortableHeader
+                label={t('resources.col_name', { defaultValue: 'Name' })}
+                columnKey="name"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+              />
+              <SortableHeader
+                label={t('resources.col_type', { defaultValue: 'Type' })}
+                columnKey="resource_type"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+              />
+              <SortableHeader
+                label={t('resources.col_status', { defaultValue: 'Status' })}
+                columnKey="status"
+                activeKey={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+              />
+              <SortableHeader
+                label={t('resources.col_rate', { defaultValue: 'Rate' })}
+                columnKey="default_cost_rate"
+                activeKey={sortKey}
+                dir={sortDir}
+                align="right"
+                onSort={onSort}
+              />
+              <th
+                className="px-4 py-2.5 text-right w-24 uppercase tracking-wide font-medium"
+                scope="col"
+              >
                 {t('resources.actions', { defaultValue: 'Actions' })}
               </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.id}
-                onClick={(e) => {
-                  const target = e.target as HTMLElement;
-                  // Don't open the drawer when the click came from one of
-                  // the per-row action buttons.
-                  if (target.closest('[data-row-action]')) return;
-                  onSelect(r.id);
-                }}
-                className="border-t border-border-light hover:bg-surface-secondary cursor-pointer group"
-                data-testid={`resource-row-${r.id}`}
-              >
-                <td className="px-4 py-2 font-mono text-xs text-content-secondary">
-                  {r.code}
-                </td>
-                <td className="px-4 py-2 font-medium text-content-primary">{r.name}</td>
-                <td className="px-4 py-2">
-                  <Badge variant={TYPE_VARIANT[r.resource_type]} size="sm">
-                    {r.resource_type}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2">
-                  <Badge
-                    variant={
-                      r.status === 'active'
-                        ? 'success'
-                        : r.status === 'on_leave'
-                          ? 'warning'
-                          : 'neutral'
-                    }
-                    dot
-                    size="sm"
-                  >
-                    {r.status}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2 text-right">
-                  <MoneyDisplay
-                    amount={Number(r.default_cost_rate) || 0}
-                    currency={r.currency || undefined}
-                  />
-                </td>
-                <td className="px-4 py-2 text-right">
-                  <div className="inline-flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                    <button
-                      type="button"
-                      data-row-action
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEdit(r);
-                      }}
-                      className="rounded p-1 text-content-secondary hover:text-oe-blue hover:bg-oe-blue-subtle"
-                      aria-label={t('common.edit', { defaultValue: 'Edit' })}
-                      title={t('resources.edit_title', {
-                        defaultValue: 'Edit resource',
+            {rows.map((r) => {
+              const isSelected = selectedIds.has(r.id);
+              return (
+                <tr
+                  key={r.id}
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    // Don't open the drawer when the click came from one of
+                    // the per-row action buttons or the checkbox.
+                    if (target.closest('[data-row-action]')) return;
+                    if (target.closest('input[type="checkbox"]')) return;
+                    onSelect(r.id);
+                  }}
+                  className={clsx(
+                    'border-t border-border-light hover:bg-surface-secondary cursor-pointer group',
+                    isSelected && 'bg-oe-blue-subtle/20',
+                  )}
+                  data-testid={`resource-row-${r.id}`}
+                  aria-selected={isSelected}
+                >
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleOne(r.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={t('common.select_row', {
+                        defaultValue: 'Select row',
                       })}
-                      data-testid={`resource-edit-${r.id}`}
+                      data-testid={`resource-select-${r.id}`}
+                    />
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs tabular-nums text-content-secondary">
+                    {r.code}
+                  </td>
+                  <td className="px-4 py-2 font-medium text-content-primary">
+                    {r.name}
+                  </td>
+                  <td className="px-4 py-2">
+                    <Badge variant={TYPE_VARIANT[r.resource_type]} size="sm">
+                      {r.resource_type}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-2">
+                    <Badge
+                      variant={
+                        r.status === 'active'
+                          ? 'success'
+                          : r.status === 'on_leave'
+                            ? 'warning'
+                            : 'neutral'
+                      }
+                      dot
+                      size="sm"
                     >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      data-row-action
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(r);
-                      }}
-                      className="rounded p-1 text-content-secondary hover:text-rose-600 hover:bg-rose-50"
-                      aria-label={t('common.delete', { defaultValue: 'Delete' })}
-                      title={t('resources.delete_title', {
-                        defaultValue: 'Delete resource',
-                      })}
-                      data-testid={`resource-delete-${r.id}`}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      {r.status}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <InlineRateCell
+                      resource={r}
+                      pending={pendingRateId === r.id}
+                      onSave={onInlineRateSave}
+                    />
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="inline-flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        data-row-action
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(r);
+                        }}
+                        className="rounded p-1 text-content-secondary hover:text-oe-blue hover:bg-oe-blue-subtle"
+                        aria-label={t('resources.edit_aria', {
+                          defaultValue: 'Edit {{name}}',
+                          name: r.name,
+                        })}
+                        title={t('resources.edit_title', {
+                          defaultValue: 'Edit resource',
+                        })}
+                        data-testid={`resource-edit-${r.id}`}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        data-row-action
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(r);
+                        }}
+                        className="rounded p-1 text-content-secondary hover:text-rose-600 hover:bg-rose-50"
+                        aria-label={t('resources.delete_aria', {
+                          defaultValue: 'Delete {{name}}',
+                          name: r.name,
+                        })}
+                        title={t('resources.delete_title', {
+                          defaultValue: 'Delete resource',
+                        })}
+                        data-testid={`resource-delete-${r.id}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

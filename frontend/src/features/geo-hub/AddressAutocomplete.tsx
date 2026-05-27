@@ -252,6 +252,14 @@ export function AddressAutocomplete({
       setHighlighted((idx) =>
         idx <= 0 ? suggestions.length - 1 : idx - 1,
       );
+    } else if (event.key === 'Home' && suggestions.length > 0) {
+      // WAI-ARIA combobox: Home jumps to the first option. Without it,
+      // long suggestion lists trap keyboard users at the bottom.
+      event.preventDefault();
+      setHighlighted(0);
+    } else if (event.key === 'End' && suggestions.length > 0) {
+      event.preventDefault();
+      setHighlighted(suggestions.length - 1);
     } else if (event.key === 'Enter') {
       if (highlighted >= 0 && highlighted < suggestions.length) {
         const picked = suggestions[highlighted];
@@ -399,6 +407,7 @@ export function AddressAutocomplete({
           aria-label={t('geo_hub.autocomplete.list_aria', {
             defaultValue: 'Address suggestions',
           })}
+          aria-busy={isLoading || undefined}
           className={[
             'absolute z-30 mt-1 w-full max-h-72 overflow-y-auto rounded-lg',
             'border border-border bg-surface-primary shadow-lg ring-1 ring-black/5',

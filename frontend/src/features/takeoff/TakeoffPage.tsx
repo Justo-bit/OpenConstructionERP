@@ -23,6 +23,8 @@ import {
   Link2,
   ArrowRight,
   Layers,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 
 import { Button, Card, Badge, Input, Skeleton } from '@/shared/ui';
@@ -465,7 +467,18 @@ function DocumentCard({
           size="sm"
           icon={<Eye size={14} />}
           disabled={isUploading || hasError}
-          onClick={() => window.open(`/api/v1/takeoff/documents/${doc.id}/download`, '_blank')}
+          aria-label={t('takeoff.view_aria', {
+            defaultValue: 'View {{name}}',
+            name: doc.filename,
+          })}
+          onClick={() => {
+            // Open in a new tab; fall back to same-tab nav if the browser
+            // blocks `window.open` (popup blocker) so the user still sees
+            // their document instead of a no-op click.
+            const url = `/api/v1/takeoff/documents/${doc.id}/download`;
+            const w = window.open(url, '_blank', 'noopener,noreferrer');
+            if (!w) window.location.href = url;
+          }}
         >
           {t('takeoff.view', 'View')}
         </Button>
@@ -720,6 +733,29 @@ function QuickMeasurementForm({
 
 /* ── Document Filmstrip ─────────────────────────────────────────────── */
 
+type FilmstripSort = 'recent' | 'name' | 'size';
+
+const PINNED_LS_KEY = 'oe-takeoff-pinned-docs';
+
+function readPinned(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(PINNED_LS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writePinned(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(PINNED_LS_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    /* localStorage may be unavailable (private mode); silently ignore. */
+  }
+}
+
 /** Bottom panel showing uploaded takeoff PDFs — light-themed, styled like BIM model filmstrip. */
 function TakeoffDocFilmstrip({
   documents,
@@ -738,6 +774,35 @@ function TakeoffDocFilmstrip({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
+  const [sortBy, setSortBy] = useState<FilmstripSort>('recent');
+  const [pinned, setPinned] = useState<Set<string>>(() => readPinned());
+
+  const togglePin = useCallback((id: string) => {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      writePinned(next);
+      return next;
+    });
+  }, []);
+
+  const sortedDocs = useMemo(() => {
+    const arr = [...documents];
+    arr.sort((a, b) => {
+      // Pinned docs always come first.
+      const aPin = pinned.has(a.id) ? 1 : 0;
+      const bPin = pinned.has(b.id) ? 1 : 0;
+      if (aPin !== bPin) return bPin - aPin;
+      if (sortBy === 'name') return a.filename.localeCompare(b.filename);
+      if (sortBy === 'size') return b.size_bytes - a.size_bytes;
+      // 'recent' — newest uploaded_at first.
+      const at = new Date(a.uploaded_at || 0).getTime();
+      const bt = new Date(b.uploaded_at || 0).getTime();
+      return bt - at;
+    });
+    return arr;
+  }, [documents, sortBy, pinned]);
 
   return (
     <div className="shrink-0 bg-surface-primary border border-border-light rounded-xl mt-3 overflow-hidden">
@@ -769,21 +834,53 @@ function TakeoffDocFilmstrip({
         style={{ maxHeight: expanded ? '120px' : '0px', opacity: expanded ? 1 : 0 }}
       >
         <div className="flex items-center gap-2 px-4 pb-2.5 overflow-x-auto">
+          {/* Sort selector — sticky-left so it stays visible while the
+              filmstrip scrolls horizontally on small viewports. */}
+          {documents.length > 1 && (
+            <label className="shrink-0 flex items-center gap-1 text-[10px] text-content-tertiary">
+              <span className="sr-only">
+                {t('takeoff.sort_by', { defaultValue: 'Sort by' })}
+              </span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as FilmstripSort)}
+                aria-label={t('takeoff.sort_by', { defaultValue: 'Sort by' })}
+                className="h-6 rounded border border-border-light bg-surface-primary px-1 text-[10px] text-content-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/40"
+                data-testid="takeoff-filmstrip-sort"
+              >
+                <option value="recent">
+                  {t('takeoff.sort_recent', { defaultValue: 'Recent' })}
+                </option>
+                <option value="name">
+                  {t('takeoff.sort_name', { defaultValue: 'Name' })}
+                </option>
+                <option value="size">
+                  {t('takeoff.sort_size', { defaultValue: 'Size' })}
+                </option>
+              </select>
+            </label>
+          )}
           {isLoading && documents.length === 0 ? (
             <Loader2 size={14} className="animate-spin text-content-tertiary" />
           ) : documents.length > 0 ? (
-            documents.map((doc) => {
+            sortedDocs.map((doc) => {
               const isActive = doc.id === activeDocId;
               const hasError = !!doc.uploadError;
               const isUploading = !!doc.uploading;
+              const isPinned = pinned.has(doc.id);
               return (
                 <button
                   key={doc.id}
                   type="button"
                   onClick={() => onSelectDoc(doc.id)}
                   disabled={isUploading || hasError}
+                  aria-label={t('takeoff.open_doc_aria', {
+                    defaultValue: 'Open {{name}}',
+                    name: doc.filename,
+                  })}
                   className={clsx(
                     'group relative shrink-0 w-44 text-start rounded-lg border transition-all duration-200 overflow-hidden',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/40',
                     hasError
                       ? 'border-semantic-error/40 bg-semantic-error-bg/40'
                       : isActive
@@ -813,6 +910,13 @@ function TakeoffDocFilmstrip({
                       >
                         {doc.filename}
                       </span>
+                      {isPinned && (
+                        <Pin
+                          size={10}
+                          className="shrink-0 text-oe-blue"
+                          aria-label={t('takeoff.pinned', { defaultValue: 'Pinned' })}
+                        />
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 text-[10px] text-content-quaternary">
                       {doc.pages > 0 && (
@@ -832,7 +936,40 @@ function TakeoffDocFilmstrip({
                       )}
                     </div>
                   </div>
-                  {/* Delete button on hover */}
+                  {/* Pin + delete buttons on hover */}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePin(doc.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        togglePin(doc.id);
+                      }
+                    }}
+                    className={clsx(
+                      'absolute top-1 right-6 p-1 rounded transition-all',
+                      isPinned
+                        ? 'text-oe-blue opacity-100'
+                        : 'text-content-quaternary hover:text-oe-blue hover:bg-oe-blue-subtle opacity-0 group-hover:opacity-100',
+                    )}
+                    title={
+                      isPinned
+                        ? t('takeoff.unpin', { defaultValue: 'Unpin' })
+                        : t('takeoff.pin', { defaultValue: 'Pin to top' })
+                    }
+                    aria-label={
+                      isPinned
+                        ? t('takeoff.unpin', { defaultValue: 'Unpin' })
+                        : t('takeoff.pin', { defaultValue: 'Pin to top' })
+                    }
+                  >
+                    {isPinned ? <PinOff size={11} /> : <Pin size={11} />}
+                  </span>
                   <span
                     role="button"
                     tabIndex={0}
@@ -848,6 +985,7 @@ function TakeoffDocFilmstrip({
                     }}
                     className="absolute top-1 right-1 p-1 rounded text-content-quaternary hover:text-semantic-error hover:bg-semantic-error-bg opacity-0 group-hover:opacity-100 transition-all"
                     title={t('common.delete', 'Delete')}
+                    aria-label={t('common.delete', 'Delete')}
                   >
                     <X size={11} />
                   </span>
@@ -947,7 +1085,9 @@ export function TakeoffPage() {
           ...prev,
           {
             id: docId,
-            filename: docName ? decodeURIComponent(docName) : 'Document',
+            filename: docName
+              ? decodeURIComponent(docName)
+              : t('takeoff.document_placeholder', { defaultValue: 'Document' }),
             pages: 0,
             size_bytes: 0,
             uploaded_at: new Date().toISOString(),
@@ -1050,7 +1190,11 @@ export function TakeoffPage() {
           `/v1/documents/${encodeURIComponent(docId)}`,
         );
         if (cancelled) return;
-        const displayName = meta.filename || meta.name || searchParams.get('name') || 'Document';
+        const displayName =
+          meta.filename ||
+          meta.name ||
+          searchParams.get('name') ||
+          t('takeoff.document_placeholder', { defaultValue: 'Document' });
         setActiveDocId(docId);
         setViewerDoc({
           url: `/api/v1/documents/${encodeURIComponent(docId)}/download/`,
@@ -1642,29 +1786,57 @@ export function TakeoffPage() {
 
       {/* Tabs — Measurements primary (first), AI second. Lower radius
           for a sharper, more "tool-like" feel; no ring-halo. */}
-      <div className="mb-3 flex gap-1 rounded-md border border-border-light/80 bg-surface-secondary/40 p-1">
+      <div
+        className="mb-3 flex gap-1 rounded-md border border-border-light/80 bg-surface-secondary/40 p-1"
+        role="tablist"
+        aria-label={t('takeoff.tabs_aria', { defaultValue: 'Takeoff sections' })}
+      >
         <button
+          id="takeoff-tab-measurements"
+          role="tab"
+          aria-selected={activeTab === 'measurements'}
+          aria-controls="takeoff-tabpanel-measurements"
+          tabIndex={activeTab === 'measurements' ? 0 : -1}
           onClick={() => setActiveTab('measurements')}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+              e.preventDefault();
+              setActiveTab('documents');
+            }
+          }}
           className={clsx(
             'flex flex-1 items-center justify-center gap-2 rounded-sm px-4 py-2 text-sm font-semibold transition-colors',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/40',
             activeTab === 'measurements'
               ? 'bg-surface-primary text-oe-blue shadow-sm'
               : 'text-content-tertiary hover:text-content-primary hover:bg-surface-primary/60',
           )}
         >
-          <Ruler size={15} strokeWidth={2.1} />
+          <Ruler size={15} strokeWidth={2.1} aria-hidden />
           {t('takeoff.tab_measurements', 'Measurements')}
         </button>
         <button
+          id="takeoff-tab-documents"
+          role="tab"
+          aria-selected={activeTab === 'documents'}
+          aria-controls="takeoff-tabpanel-documents"
+          tabIndex={activeTab === 'documents' ? 0 : -1}
           onClick={() => setActiveTab('documents')}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+              e.preventDefault();
+              setActiveTab('measurements');
+            }
+          }}
           className={clsx(
             'flex flex-1 items-center justify-center gap-2 rounded-sm px-4 py-2 text-sm font-semibold transition-colors',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-oe-blue/40',
             activeTab === 'documents'
               ? 'bg-surface-primary text-oe-blue shadow-sm'
               : 'text-content-tertiary hover:text-content-primary hover:bg-surface-primary/60',
           )}
         >
-          <Sparkles size={15} strokeWidth={2.1} />
+          <Sparkles size={15} strokeWidth={2.1} aria-hidden />
           {t('takeoff.tab_documents', 'Documents & AI')}
           {documents.length > 0 && (
             <Badge variant={activeTab === 'documents' ? 'blue' : 'neutral'} size="sm">
@@ -1676,7 +1848,11 @@ export function TakeoffPage() {
 
       {/* Tab content */}
       {activeTab === 'documents' ? (
-        <>
+        <div
+          role="tabpanel"
+          id="takeoff-tabpanel-documents"
+          aria-labelledby="takeoff-tab-documents"
+        >
           {/* Workflow steps */}
           <div className="mb-6 grid grid-cols-1 sm:grid-cols-4 gap-3">
             {[
@@ -1838,7 +2014,7 @@ export function TakeoffPage() {
             )}
           </Card>
 
-        </>
+        </div>
       ) : (
         // Viewport-bounded column so the bottom file panel is always
         // visible without scrolling the page: the viewer takes the
@@ -1853,7 +2029,12 @@ export function TakeoffPage() {
         // viewport (no page-level scrollbar) while giving the viewer the
         // most internal height — 8rem wasted ~1rem that was shrinking the
         // viewer enough to force an internal scrollbar on laptop screens.
-        <div className="flex flex-col h-[calc(100vh-var(--oe-header-height,52px)-7rem)] min-h-0 overflow-x-hidden">
+        <div
+          className="flex flex-col h-[calc(100vh-var(--oe-header-height,52px)-7rem)] min-h-0 overflow-x-hidden"
+          role="tabpanel"
+          id="takeoff-tabpanel-measurements"
+          aria-labelledby="takeoff-tab-measurements"
+        >
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
             {deepLinkNotFound && !viewerDoc ? (
               <div

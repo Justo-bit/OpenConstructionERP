@@ -221,6 +221,22 @@ function GlobalNoProjectsEmpty({
               })}
               <ArrowUpRight size={13} strokeWidth={2.25} />
             </Link>
+            {/* Secondary path for users who live in PropDev — anchoring
+                a development surfaces it here too via the same map config. */}
+            <Link
+              to="/property-dev"
+              className={[
+                'inline-flex items-center gap-1.5 rounded-md',
+                'border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200',
+                'transition hover:bg-white/5',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60',
+              ].join(' ')}
+            >
+              {t('geo_hub.empty.global_no_projects_propdev_cta', {
+                defaultValue: 'Anchor from Property Developments',
+              })}
+              <ArrowUpRight size={13} strokeWidth={2.25} />
+            </Link>
           </div>
           <p className="mt-3 text-2xs text-slate-400">
             {t('geo_hub.empty.bulk_attribution', {
@@ -468,9 +484,11 @@ function AnchoredProjectsOverlay({
                         className={[
                           'inline-flex shrink-0 items-center gap-0.5 rounded',
                           'px-1.5 py-0.5 text-2xs font-medium text-oe-blue',
-                          'opacity-0 transition group-hover:opacity-100',
+                          // Reveal on hover OR focus so keyboard users
+                          // can reach the deep-link without a mouse.
+                          'opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100',
                           'hover:bg-oe-blue/10',
-                          'focus:outline-none focus:opacity-100 focus-visible:ring-2 focus-visible:ring-oe-blue',
+                          'focus:outline-none focus:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-oe-blue',
                         ].join(' ')}
                         title={t('geo_hub.rail.open_hint', {
                           defaultValue: 'Open project map',
@@ -522,6 +540,22 @@ function GeoSearchOverlay({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState<string>('');
+
+  // Escape clears both the typed query and the active pin even when the
+  // input doesn't have focus — Esc-from-anywhere is the WAI-ARIA combobox
+  // expectation and lets keyboard users dismiss the marker without
+  // tabbing back to the X button.
+  useEffect(() => {
+    if (!pin) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setQuery('');
+        onClear();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pin, onClear]);
 
   return (
     <div

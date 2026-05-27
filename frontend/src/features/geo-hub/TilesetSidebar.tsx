@@ -157,6 +157,10 @@ function TilesetCard({
           'absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center',
           'rounded-sm text-content-tertiary opacity-0 transition',
           'hover:bg-surface-secondary hover:text-content-primary group-hover:opacity-100',
+          // Keyboard parity: reveal the button when it receives focus so
+          // users tabbing through the rail can toggle visibility without
+          // a mouse hover (the only previous way to see it).
+          'focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-oe-blue focus:outline-none',
           hidden ? 'opacity-100' : '',
         ].join(' ')}
         aria-pressed={!hidden}

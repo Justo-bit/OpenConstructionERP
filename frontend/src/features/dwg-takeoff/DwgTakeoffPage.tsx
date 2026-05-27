@@ -52,6 +52,7 @@ import {
   ListChecks,
   Ruler,
   FileDown,
+  RotateCcw,
 } from 'lucide-react';
 import { Badge, ConfirmDialog, ElementInfoPopover, type DWGElementPayload } from '@/shared/ui';
 import { useConfirm } from '@/shared/hooks/useConfirm';
@@ -817,6 +818,11 @@ export function DwgTakeoffPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  /** Visual drop-zone hover state — flips on `dragenter`/`dragover` and
+   *  back on `dragleave`/`drop`. The hero card and modal both bind to it
+   *  so the dashed border highlights while a real file is hovering, not
+   *  only on mouse-hover. */
+  const [isDragActive, setIsDragActive] = useState(false);
   const { confirm: confirmAnnotDelete, ...annotDeleteConfirmProps } = useConfirm();
   // filmstripExpanded removed in v1.8.3 — drawings are always visible
   // per UX feedback. No auto-hide, no collapse toggle.
@@ -2450,13 +2456,22 @@ export function DwgTakeoffPage() {
                       <button
                         type="button"
                         aria-label={t('dwg_takeoff.upload_aria', { defaultValue: 'Upload DWG or DXF file' })}
+                        data-testid="dwg-hero-drop-zone"
                         onDrop={(e) => {
                           e.preventDefault();
+                          setIsDragActive(false);
                           const f = e.dataTransfer.files?.[0];
                           if (f) { setUploadFile(f); setUploadName(f.name.replace(/\.[^.]+$/, '')); setShowUpload(true); }
                         }}
-                        onDragOver={(e) => e.preventDefault()}
-                        className="group/drop flex flex-col items-center justify-center gap-7 rounded-xl p-20 text-center cursor-pointer transition-all flex-1 border-2 border-dashed border-[#444c5a] bg-[#1a1d23]/60 hover:border-blue-500/50 hover:bg-blue-500/5 hover:shadow-[0_0_30px_rgba(59,130,246,0.1)] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#22252b]"
+                        onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }}
+                        onDragEnter={(e) => { e.preventDefault(); setIsDragActive(true); }}
+                        onDragLeave={() => setIsDragActive(false)}
+                        className={clsx(
+                          'group/drop flex flex-col items-center justify-center gap-7 rounded-xl p-20 text-center cursor-pointer transition-all flex-1 border-2 border-dashed focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#22252b]',
+                          isDragActive
+                            ? 'border-blue-400 bg-blue-500/15 shadow-[0_0_40px_rgba(59,130,246,0.2)] scale-[1.01]'
+                            : 'border-[#444c5a] bg-[#1a1d23]/60 hover:border-blue-500/50 hover:bg-blue-500/5 hover:shadow-[0_0_30px_rgba(59,130,246,0.1)]',
+                        )}
                         onClick={() => setShowUpload(true)}
                       >
                         <div className="w-20 h-20 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center group-hover/drop:scale-110 group-hover/drop:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all">
@@ -2544,16 +2559,28 @@ export function DwgTakeoffPage() {
                   ? new Date(selectedDrawingFromList.created_at).getTime()
                   : Date.now()
               }
+              onCancel={() => setConfirmDeleteId(selectedDrawingId)}
             />
           ) : isErrorStatus ? (
             <ConversionErrorCard
               drawingName={selectedDrawingFromList?.name || selectedDrawingFromList?.filename || ''}
               message={drawingErrorMessage}
+              onRetry={() => {
+                // Backend has no reconvert endpoint; "retry" means
+                // delete the failed row and reopen the upload modal
+                // so the user can pick the file again (or pick a
+                // different one).
+                if (selectedDrawingId) deleteMutation.mutate(selectedDrawingId);
+                setShowUpload(true);
+              }}
+              onDelete={() => setConfirmDeleteId(selectedDrawingId)}
             />
           ) : isEmptyStatus ? (
             <ConversionEmptyCard
               drawingName={selectedDrawingFromList?.name || selectedDrawingFromList?.filename || ''}
               message={drawingErrorMessage}
+              onDelete={() => setConfirmDeleteId(selectedDrawingId)}
+              onUploadAnother={() => setShowUpload(true)}
             />
           ) : loadingEntities ? (
             <div className="flex flex-1 items-center justify-center">
@@ -3745,11 +3772,15 @@ export function DwgTakeoffPage() {
             <button
               type="button"
               aria-label={t('dwg_takeoff.upload_aria', { defaultValue: 'Upload DWG or DXF file' })}
+              data-testid="dwg-modal-drop-zone"
               onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragActive(true); }}
+              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragActive(true); }}
+              onDragLeave={() => setIsDragActive(false)}
               onDrop={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                setIsDragActive(false);
                 const f = e.dataTransfer.files?.[0];
                 if (f) {
                   const ext = f.name.split('.').pop()?.toLowerCase();
@@ -3765,11 +3796,12 @@ export function DwgTakeoffPage() {
                   if (!uploadName) setUploadName(f.name.replace(/\.[^.]+$/, ''));
                 }
               }}
-              className={`w-full flex flex-col items-center gap-2 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-                uploadFile
-                  ? 'border-oe-blue bg-oe-blue/5'
-                  : 'border-border-medium hover:border-oe-blue hover:bg-blue-50/50 dark:hover:bg-blue-950/20'
-              }`}
+              className={clsx(
+                'w-full flex flex-col items-center gap-2 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all',
+                isDragActive && !uploadFile && 'border-oe-blue bg-oe-blue/10 scale-[1.01] shadow-md',
+                uploadFile && !isDragActive && 'border-oe-blue bg-oe-blue/5',
+                !uploadFile && !isDragActive && 'border-border-medium hover:border-oe-blue hover:bg-blue-50/50 dark:hover:bg-blue-950/20',
+              )}
             >
               {uploadFile ? (
                 <>
@@ -5031,20 +5063,26 @@ function UploadProgressInline() {
  * percentage. The DDC pipeline does not expose granular progress, and a
  * fake percentage that climbs to 95% and sits there for minutes is worse
  * than honest indeterminate motion + a step list + a live elapsed-time
- * counter. The cancel affordance is omitted because the backend has no
- * cancel endpoint for in-flight conversions (the asyncio task runs the
- * DwgExporter subprocess to completion); we surface that in microcopy
- * instead of offering a button that wouldn't actually stop the work. */
+ * counter.
+ *
+ * Cancel: the backend has no "abort conversion" endpoint (the asyncio
+ * task runs DwgExporter to completion), so "Cancel" here actually means
+ * "delete this drawing row" — the conversion continues server-side but
+ * the user gets back to the upload flow immediately. This matches user
+ * intent ("I changed my mind, get me out of here") without pretending
+ * to kill a subprocess we don't control. */
 function ConversionProgressCard({
   drawingName,
   filename,
   status,
   startedAt,
+  onCancel,
 }: {
   drawingName: string;
   filename: string;
   status: string | null;
   startedAt: number;
+  onCancel?: () => void;
 }) {
   const { t } = useTranslation();
   const [, force] = useState(0);
@@ -5104,12 +5142,26 @@ function ConversionProgressCard({
     },
   ];
 
+  // Live-region announcement: changes whenever the backend status flips
+  // (uploaded → processing → ready/error). Screen readers hear "Converting
+  // your drawing…" / "Step 2 of 4 — extracting entities" etc., instead of
+  // silently rendering a spinner. Kept terse so it doesn't drone on.
+  const liveAnnouncement = t('dwg_takeoff.conv_aria_live', {
+    defaultValue: 'Converting {{name}}, step {{step}} of 4, {{elapsed}} elapsed',
+    name: drawingName || filename,
+    step: currentStep,
+    elapsed: elapsedLabel,
+  });
+
   return (
     <div className="flex flex-1 items-center justify-center overflow-y-auto p-6">
       <div
         data-testid="dwg-conversion-progress-card"
         className="w-full max-w-xl rounded-2xl border border-border-light bg-surface-elevated p-6 shadow-xl"
+        role="status"
+        aria-live="polite"
       >
+        <span className="sr-only">{liveAnnouncement}</span>
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-oe-blue/10 border border-oe-blue/20 flex items-center justify-center shrink-0">
             <Loader2 size={20} className="text-oe-blue animate-spin" />
@@ -5130,8 +5182,18 @@ function ConversionProgressCard({
           </span>
         </div>
 
-        {/* Indeterminate progress bar — honest motion without a fake %. */}
-        <div className="mt-5 h-1.5 rounded-full bg-surface-tertiary overflow-hidden relative">
+        {/* Indeterminate progress bar — honest motion without a fake %.
+            role="progressbar" with no aria-valuenow signals
+            "indeterminate" to assistive tech (per ARIA 1.2). */}
+        <div
+          className="mt-5 h-1.5 rounded-full bg-surface-tertiary overflow-hidden relative"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={t('dwg_takeoff.conv_progress_label', {
+            defaultValue: 'Conversion progress (indeterminate)',
+          })}
+        >
           <div
             className="absolute inset-y-0 w-1/3 rounded-full bg-oe-blue"
             style={{
@@ -5203,6 +5265,24 @@ function ConversionProgressCard({
               'You can safely navigate to other pages — conversion runs on the server. The drawing will be ready here when you come back.',
           })}
         </div>
+
+        {/* Cancel — only when the parent wired a handler. Note that this
+            removes the drawing row but does NOT abort the backend
+            asyncio task (no API for that); the microcopy is explicit. */}
+        {onCancel && (
+          <div className="mt-4 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={onCancel}
+              data-testid="dwg-conversion-cancel"
+              className="text-[11px] font-medium text-content-tertiary hover:text-red-500 transition-colors underline-offset-2 hover:underline"
+            >
+              {t('dwg_takeoff.conv_cancel', {
+                defaultValue: 'Cancel — remove this drawing',
+              })}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -5211,9 +5291,13 @@ function ConversionProgressCard({
 function ConversionErrorCard({
   drawingName,
   message,
+  onRetry,
+  onDelete,
 }: {
   drawingName: string;
   message: string | null;
+  onRetry?: () => void;
+  onDelete?: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -5221,6 +5305,8 @@ function ConversionErrorCard({
       <div
         data-testid="dwg-conversion-error-card"
         className="w-full max-w-xl rounded-2xl border border-red-500/30 bg-red-500/5 p-6 shadow-xl"
+        role="alert"
+        aria-live="assertive"
       >
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
@@ -5240,6 +5326,36 @@ function ConversionErrorCard({
                     'The server could not parse this file. Try re-saving as a newer DWG/DXF version or upload a different file.',
                 })}
             </p>
+            {(onRetry || onDelete) && (
+              <div className="mt-4 flex items-center gap-2">
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    data-testid="dwg-conversion-retry"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-oe-blue text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-oe-blue-dark transition-colors"
+                  >
+                    <RotateCcw size={12} />
+                    {t('dwg_takeoff.conv_retry', {
+                      defaultValue: 'Retry — upload again',
+                    })}
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    data-testid="dwg-conversion-error-delete"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-500/30 text-red-500 text-[11px] font-medium px-3 py-1.5 hover:bg-red-500/10 transition-colors"
+                  >
+                    <Trash2 size={12} />
+                    {t('dwg_takeoff.conv_delete', {
+                      defaultValue: 'Delete drawing',
+                    })}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -5250,9 +5366,13 @@ function ConversionErrorCard({
 function ConversionEmptyCard({
   drawingName,
   message,
+  onDelete,
+  onUploadAnother,
 }: {
   drawingName: string;
   message: string | null;
+  onDelete?: () => void;
+  onUploadAnother?: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -5260,6 +5380,8 @@ function ConversionEmptyCard({
       <div
         data-testid="dwg-conversion-empty-card"
         className="w-full max-w-xl rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6 shadow-xl"
+        role="status"
+        aria-live="polite"
       >
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -5279,6 +5401,36 @@ function ConversionEmptyCard({
                     'This DWG/DXF parsed successfully but contains no drawable entities. The file may contain only metadata or be a template.',
                 })}
             </p>
+            {(onUploadAnother || onDelete) && (
+              <div className="mt-4 flex items-center gap-2">
+                {onUploadAnother && (
+                  <button
+                    type="button"
+                    onClick={onUploadAnother}
+                    data-testid="dwg-conversion-empty-upload"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-oe-blue text-white text-[11px] font-semibold px-3 py-1.5 hover:bg-oe-blue-dark transition-colors"
+                  >
+                    <Upload size={12} />
+                    {t('dwg_takeoff.conv_upload_another', {
+                      defaultValue: 'Upload another drawing',
+                    })}
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    data-testid="dwg-conversion-empty-delete"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-medium px-3 py-1.5 hover:bg-amber-500/10 transition-colors"
+                  >
+                    <Trash2 size={12} />
+                    {t('dwg_takeoff.conv_delete', {
+                      defaultValue: 'Delete drawing',
+                    })}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

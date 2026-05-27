@@ -113,9 +113,16 @@ export const useDwgUploadStore = create<DwgUploadState>((set, get) => {
    *  "false loaded" bug the user reported ("показывает что проект
    *  загружен — но ничего не показывается и только потом через 5 минут
    *  происходит загрузка"). Max 20 min — beyond that the zombie
-   *  janitor below sweeps the job. */
+   *  janitor below sweeps the job.
+   *
+   *  Polling cadence uses gentle exponential back-off: 3.5 s for the
+   *  first 30 s (catches fast DXF parses snappily), then ramps to a
+   *  ceiling of 15 s for long DDC conversions so we don't hammer the
+   *  backend with hundreds of GETs over a 5-minute parse. */
   async function pollUntilReady(jobId: string, drawingId: string): Promise<void> {
-    const POLL_MS = 3500;
+    const FAST_POLL_MS = 3500;
+    const MAX_POLL_MS = 15_000;
+    const FAST_WINDOW_MS = 30_000;
     const TIMEOUT_MS = 20 * 60 * 1000;
     const startedAt = Date.now();
 
@@ -163,7 +170,18 @@ export const useDwgUploadStore = create<DwgUploadState>((set, get) => {
         // Transient network blip — keep polling. The 20-min ceiling
         // means we still bail eventually if the backend is gone.
       }
-      await new Promise((r) => setTimeout(r, POLL_MS));
+      // Exponential back-off: tight cadence for the first 30s so a
+      // fast DXF parse feels instant, then ramp linearly to MAX_POLL_MS
+      // for long DDC conversions to keep server load proportional.
+      const elapsed = Date.now() - startedAt;
+      const wait =
+        elapsed < FAST_WINDOW_MS
+          ? FAST_POLL_MS
+          : Math.min(
+              MAX_POLL_MS,
+              FAST_POLL_MS + Math.round((elapsed - FAST_WINDOW_MS) / 4),
+            );
+      await new Promise((r) => setTimeout(r, wait));
     }
 
     // Hit the 20-min ceiling without status flipping — surface as a
