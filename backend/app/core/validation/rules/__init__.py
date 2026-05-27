@@ -2380,6 +2380,105 @@ class SINAPIValidCode(ValidationRule):
         return results
 
 
+# ── NBR 12721 Rules (Brazil — ABNT cost-group hierarchy) ───────────────
+#
+# ABNT NBR 12721 defines the cost-classification structure used by
+# Brazilian construction estimators alongside SINAPI compositions. A
+# project that follows the standard tags each BOQ position with one of
+# the canonical sections (S1 = serviços preliminares, S2 = infra-estrutura,
+# S3 = supra-estrutura, S4 = vedações, S5 = cobertura, S6 = instalações,
+# S7 = revestimentos, S8 = pavimentação, S9 = esquadrias, S10 = pintura,
+# S11 = serviços complementares). Recognising these as a first-class
+# classification scheme (next to DIN 276 / NRM / MasterFormat) gives the
+# Brazilian estimator a way to validate scope completeness against ABNT.
+
+
+class NBR12721ClassificationRequired(ValidationRule):
+    rule_id = "nbr.classification_required"
+    name = "NBR 12721 Classification Required"
+    standard = "nbr"
+    severity = Severity.WARNING
+    category = RuleCategory.COMPLIANCE
+    description = "BOQ positions should carry an ABNT NBR 12721 section code (S1–S11)"
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        locale = _get_locale(context)
+        results: list[RuleResult] = []
+        for pos in _get_positions(context):
+            code = (pos.get("classification") or {}).get("nbr", "")
+            passed = bool(code)
+            if passed:
+                message = _ok(locale)
+                suggestion = None
+            else:
+                message = translate(
+                    "nbr.classification_required.fail",
+                    locale=locale,
+                    ordinal=pos.get("ordinal", "?"),
+                )
+                suggestion = translate(
+                    "nbr.classification_required.suggestion",
+                    locale=locale,
+                )
+            results.append(
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=passed,
+                    message=message,
+                    element_ref=pos.get("id"),
+                    suggestion=suggestion,
+                )
+            )
+        return results
+
+
+class NBR12721ValidSection(ValidationRule):
+    rule_id = "nbr.valid_section"
+    name = "Valid NBR 12721 Section"
+    standard = "nbr"
+    severity = Severity.WARNING
+    category = RuleCategory.COMPLIANCE
+    description = "NBR 12721 section codes must be one of S1..S11"
+
+    VALID_SECTIONS = {f"S{n}" for n in range(1, 12)}
+    _PATTERN = re.compile(r"^S(1[0-1]|[1-9])(\.\d+)*$", re.IGNORECASE)
+
+    async def validate(self, context: ValidationContext) -> list[RuleResult]:
+        locale = _get_locale(context)
+        results: list[RuleResult] = []
+        for pos in _get_positions(context):
+            code = str((pos.get("classification") or {}).get("nbr", "")).strip()
+            if not code:
+                continue
+            passed = bool(self._PATTERN.match(code))
+            message = (
+                _ok(locale)
+                if passed
+                else translate(
+                    "nbr.valid_section.fail",
+                    locale=locale,
+                    code=code,
+                    ordinal=pos.get("ordinal", "?"),
+                )
+            )
+            results.append(
+                RuleResult(
+                    rule_id=self.rule_id,
+                    rule_name=self.name,
+                    severity=self.severity,
+                    category=self.category,
+                    passed=passed,
+                    message=message,
+                    element_ref=pos.get("id"),
+                    details={"given_code": code},
+                )
+            )
+        return results
+
+
 # ── GESN Rules (Russia/CIS) ─────────────────────────────────────────────
 
 
@@ -4480,6 +4579,9 @@ def register_builtin_rules() -> None:
         # SINAPI (Brazil)
         (SINAPICodeRequired(), None),
         (SINAPIValidCode(), None),
+        # NBR 12721 (Brazil — ABNT cost-group hierarchy)
+        (NBR12721ClassificationRequired(), None),
+        (NBR12721ValidSection(), None),
         # GESN (Russia/CIS)
         (GESNCodeRequired(), None),
         (GESNValidCode(), None),

@@ -341,6 +341,10 @@ CWICR_V3_CATALOGUES: tuple[CwicrV3Catalogue, ...] = (
         ddc_path="PT___DDC_CWICR/BR_SAOPAULO_workitems_costs_resources_EMBEDDINGS_BGEM3_V3_DDC_CWICR.snapshot",
         size_mb=420,
         available=False,
+        # Brazil's de-facto reference cost base is Caixa/IBGE SINAPI; pin it
+        # so a project that picks the São Paulo catalogue without an explicit
+        # standard still gets the right validation pack at import time.
+        default_classification_standard="sinapi",
     ),
     CwicrV3Catalogue(
         region="AO_LUANDA",

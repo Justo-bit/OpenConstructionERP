@@ -175,7 +175,12 @@ type InvoiceSubTab = 'payable' | 'receivable';
  *  project's resolved currency is merged in dynamically so a project priced
  *  in e.g. BRL/INR still has its own currency selectable. */
 const COMMON_CURRENCIES = [
-  'EUR', 'USD', 'GBP', 'CHF', 'PLN', 'CZK', 'SEK', 'NOK', 'DKK', 'AED', 'SAR',
+  // Construction-market headliners. BRL added 2026-05-27 in response to
+  // a Brazilian user reporting "there is no invoice support for BRL" —
+  // the picker still allowed entering BRL via the project-currency
+  // injection below, but having it in the shortlist saves the click and
+  // signals first-class support.
+  'EUR', 'USD', 'GBP', 'CHF', 'BRL', 'PLN', 'CZK', 'SEK', 'NOK', 'DKK', 'AED', 'SAR',
 ] as const;
 
 function currencyOptions(active: string): string[] {

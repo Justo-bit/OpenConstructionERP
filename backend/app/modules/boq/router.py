@@ -2501,6 +2501,11 @@ def _build_rule_sets(
         "nrm": "nrm",
         "masterformat": "masterformat",
         "sinapi": "sinapi",
+        # NBR 12721 (Brazil ABNT cost-group hierarchy) — picked up when a
+        # Brazilian project sets classification_standard="nbr" explicitly.
+        # SINAPI rules also fire via the BR region rules below; the two
+        # rule packs are complementary, not redundant.
+        "nbr": "nbr",
         "gesn": "gesn",
         "dpgf": "dpgf",
         "onorm": "onorm",
@@ -3002,11 +3007,14 @@ async def ai_chat_boq(
 def _get_classification_code(classification: dict[str, Any]) -> str:
     """Extract the most relevant classification code for display.
 
-    Checks din276, nrm, masterformat in order.
+    Checks din276, nrm, masterformat, sinapi, nbr in order. SINAPI/NBR are
+    appended (not prepended) so non-BR projects keep their existing
+    presentation; BR-only projects rarely carry a din276/nrm/masterformat
+    code at the same time so the fallback still wins for them.
     """
     if not classification:
         return ""
-    for key in ("din276", "nrm", "masterformat"):
+    for key in ("din276", "nrm", "masterformat", "sinapi", "nbr"):
         val = classification.get(key, "")
         if val:
             return str(val)
@@ -4278,6 +4286,14 @@ _COLUMN_ALIASES: dict[str, list[str]] = {
         "cost code",
         "cost group",
         "class",
+        # Brazilian estimators commonly label the classification column as
+        # one of these in Excel exports from Orçafascio / Sienge / planilhas
+        # padrão SINAPI — recognising them avoids force-mapping to "ordinal".
+        "sinapi",
+        "código sinapi",
+        "codigo sinapi",
+        "nbr",
+        "nbr 12721",
     ],
 }
 

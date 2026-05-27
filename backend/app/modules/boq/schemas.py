@@ -1505,7 +1505,14 @@ class ClassifyRequest(BaseModel):
 
     description: str = Field(..., min_length=1, max_length=1000)
     unit: str = ""
-    project_standard: str = Field(default="din276", pattern=r"^(din276|nrm|masterformat)$")
+    # Epic — Brazil (BRL invoice support feedback 2026-05-27): added ``nbr``
+    # and ``sinapi`` so estimators on a Brazilian project can ask the
+    # classifier for ABNT NBR 12721 cost groups or SINAPI composition codes
+    # instead of being silently DIN-276'd by the default.
+    project_standard: str = Field(
+        default="din276",
+        pattern=r"^(din276|nrm|masterformat|nbr|sinapi)$",
+    )
 
 
 class ClassificationSuggestion(BaseModel):
@@ -1544,7 +1551,13 @@ class ClassifyElementsRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     elements: list[CADElementInput] = Field(..., min_length=1, max_length=10000)
-    standard: str = Field(default="din276", pattern=r"^(din276|nrm|masterformat)$")
+    # Epic — Brazil (2026-05-27): widened to accept ``nbr`` (ABNT NBR 12721)
+    # and ``sinapi`` so a CAD/BIM upload on a BR project can map to the
+    # Brazilian classification systems instead of defaulting to DIN 276.
+    standard: str = Field(
+        default="din276",
+        pattern=r"^(din276|nrm|masterformat|nbr|sinapi)$",
+    )
 
 
 class ClassifiedElement(BaseModel):

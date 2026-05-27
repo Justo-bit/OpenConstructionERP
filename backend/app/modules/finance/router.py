@@ -4,6 +4,7 @@ Endpoints:
     GET    /                    — List invoices with filters
     POST   /                    — Create invoice (auth required)
     GET    /invoices/export      — Export invoices as Excel
+    GET    /invoices/{id}/br-pdf — Brazilian-styled invoice PDF (RPS layout)
     GET    /payments             — List payments
     POST   /payments             — Create payment (auth required)
     GET    /budgets              — List budgets
@@ -441,6 +442,92 @@ async def export_invoices(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="invoices_export.xlsx"'},
+    )
+
+
+# ── Brazilian-styled invoice PDF (Tier-1 — pre-NF-e bridge) ─────────────────
+#
+# Path lives under ``/invoices/{invoice_id}/br-pdf/`` so FastAPI's static
+# prefix ``/invoices/`` wins over the bare ``/{invoice_id}`` parametric
+# route. See ``br_invoice_pdf.py`` for the rendering logic and the
+# disclaimer text explaining why this PDF is NOT a fiscal document
+# (NF-e / NFS-e SEFAZ integration is Tier-2 — see
+# ``__brazil_tier2_followups.md``).
+
+
+@router.get(
+    "/invoices/{invoice_id}/br-pdf/",
+    summary="Export invoice as Brazil-styled PDF (RPS layout)",
+    description=(
+        "Render the invoice as a one-page PDF in the Brazilian RPS "
+        "(Recibo Provisório de Serviços) layout, with CNPJ / IE / Razão "
+        "Social / código de serviço / retenções fields. NOT a fiscal "
+        "document — for full NF-e / NFS-e SEFAZ output see Tier-2 roadmap."
+    ),
+    response_description="application/pdf stream",
+)
+async def export_invoice_br_pdf(
+    invoice_id: uuid.UUID,
+    session: SessionDep,
+    user_id: CurrentUserId = None,  # type: ignore[assignment]
+    _perm: None = Depends(RequirePermission("finance.read")),
+    service: FinanceService = Depends(_get_service),
+) -> StreamingResponse:
+    """Render a Brazilian-styled invoice PDF and stream it back."""
+    from app.modules.finance.br_invoice_pdf import render_br_invoice_pdf
+
+    invoice = await _require_invoice_access(session, invoice_id, user_id)
+    fresh = await service.get_invoice(invoice_id)
+
+    # Project context (best-effort — never block the PDF on project lookup)
+    project_dict: dict[str, Any] = {}
+    try:
+        from app.modules.projects.repository import ProjectRepository
+
+        proj = await ProjectRepository(session).get_by_id(fresh.project_id)
+        if proj is not None:
+            project_dict = {
+                "name": getattr(proj, "name", "") or "",
+                "code": getattr(proj, "code", "") or "",
+            }
+    except Exception:  # noqa: BLE001 — header is decorative
+        logger.debug("BR invoice PDF: project lookup failed", exc_info=True)
+
+    invoice_dict: dict[str, Any] = {
+        "invoice_number": fresh.invoice_number,
+        "invoice_direction": fresh.invoice_direction,
+        "invoice_date": fresh.invoice_date,
+        "due_date": fresh.due_date,
+        "amount_subtotal": fresh.amount_subtotal,
+        "tax_amount": fresh.tax_amount,
+        "retention_amount": fresh.retention_amount,
+        "amount_total": fresh.amount_total,
+        "notes": fresh.notes,
+        "metadata": dict(fresh.metadata_ or {}),
+    }
+    line_items: list[dict[str, Any]] = [
+        {
+            "description": li.description,
+            "unit": li.unit,
+            "quantity": li.quantity,
+            "unit_rate": li.unit_rate,
+            "amount": li.amount,
+        }
+        for li in (fresh.line_items or [])
+    ]
+
+    pdf_bytes = render_br_invoice_pdf(
+        invoice=invoice_dict,
+        line_items=line_items,
+        project=project_dict or None,
+    )
+
+    invoice_number = (invoice.invoice_number or "invoice").replace("/", "-")
+    filename = f"RPS_{invoice_number}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
